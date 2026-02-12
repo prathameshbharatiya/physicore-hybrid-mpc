@@ -1,0 +1,5 @@
+{
+  "name": "PhysiCore AI: Multiphysics Robotics Simulator",
+  "description": "A high-fidelity physics simulation engine and robot training platform inspired by massive multiphysics datasets like The Well and PhysGaia. Features real-time rigid body dynamics, fluid particles, and textile constraints powered by Gemini for intelligent robot control.",
+  "requestFramePermissions": []
+}
