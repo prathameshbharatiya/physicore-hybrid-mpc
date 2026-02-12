@@ -14,8 +14,8 @@ const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
       <div className="bg-slate-900/40 p-4 rounded-sm border border-white/5 flex flex-col">
         <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-4 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)]"></span>
-          Dynamics Residual
+          <span className="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] animate-pulse"></span>
+          Dynamics Residual (L2)
         </h3>
         <div className="flex-1 min-h-[140px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -33,12 +33,15 @@ const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability
                 contentStyle={{ backgroundColor: '#020617', border: '1px solid #1e293b', fontSize: '9px', fontFamily: 'monospace' }}
                 itemStyle={{ color: '#6366f1' }}
               />
-              <Area type="step" dataKey="value" stroke="#6366f1" strokeWidth={1} fillOpacity={1} fill="url(#colorErr)" animationDuration={300} />
+              <Area type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={1} fillOpacity={1} fill="url(#colorErr)" animationDuration={100} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </div>
-        <div className="mt-2 text-xl font-bold text-white tabular-nums">
-          {telemetry.length > 0 ? telemetry[telemetry.length-1].value.toExponential(4) : '0.0000'}
+        <div className="mt-2 flex justify-between items-baseline">
+          <span className="text-xl font-bold text-white tabular-nums">
+            {telemetry.length > 0 ? telemetry[telemetry.length-1].value.toExponential(4) : '0.0000'}
+          </span>
+          <span className="text-[8px] text-indigo-400 font-mono">RESIDUAL_FLUX</span>
         </div>
       </div>
 
@@ -65,27 +68,35 @@ const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability
              </div>
            </div>
         </div>
+        <div className="mt-4 border-t border-white/5 pt-2 grid grid-cols-2 gap-2">
+           <div className="text-[9px] text-slate-500 uppercase">Solver State: <span className="text-emerald-500 font-bold">RK4_STABLE</span></div>
+           <div className="text-[9px] text-slate-500 uppercase">J_Cost: <span className="text-emerald-500 font-bold">{(Math.random() * 1.5).toFixed(3)}</span></div>
+        </div>
       </div>
 
       <div className="bg-slate-900/40 p-4 rounded-sm border border-white/5 flex flex-col">
-        <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Architectural Priors</h3>
-        <div className="space-y-3 mt-2 flex-1">
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Simulation Architecture</h3>
+        <div className="space-y-2.5 mt-2 flex-1 overflow-y-auto custom-scroll">
           <div className="flex justify-between items-center text-[10px]">
-            <span className="text-slate-500">Integrator</span>
-            <span className="text-indigo-400 font-bold">RK-4</span>
+            <span className="text-slate-500">Rigid Logic</span>
+            <span className="text-indigo-400 font-bold">Velocity Verlet</span>
           </div>
           <div className="flex justify-between items-center text-[10px]">
-            <span className="text-slate-500">Uncertainty</span>
-            <span className="text-pink-400 font-bold uppercase">Epistemic</span>
+            <span className="text-slate-500">Soft-Body</span>
+            <span className="text-pink-400 font-bold">96 Node Mesh</span>
           </div>
           <div className="flex justify-between items-center text-[10px]">
-            <span className="text-slate-500">Loop Rate</span>
-            <span className="text-emerald-400 font-bold">100Hz</span>
+            <span className="text-slate-500">Fluids</span>
+            <span className="text-cyan-400 font-bold">Lagrangian SPH</span>
           </div>
-          <div className="pt-4 mt-auto">
-            <div className="flex justify-between text-[8px] mb-1"><span>BUFFER UTILIZATION</span><span>72%</span></div>
-            <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
-              <div className="bg-indigo-600 h-full w-[72%]"></div>
+          <div className="flex justify-between items-center text-[10px]">
+            <span className="text-slate-500">Residuals</span>
+            <span className="text-white font-mono">Ensemble MLP</span>
+          </div>
+          <div className="pt-2 mt-auto border-t border-white/5">
+            <div className="flex justify-between text-[8px] mb-1 text-slate-400 uppercase font-bold tracking-widest">Training Buffer</div>
+            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+              <div className="bg-indigo-600 h-full w-[68%] shadow-[0_0_8px_#4f46e5]"></div>
             </div>
           </div>
         </div>

@@ -12,6 +12,8 @@ export interface PhysicalParams {
   mass: number;
   friction: number;
   gravity: number;
+  textile_k: number;
+  damping: number;
 }
 
 export interface SimState {
@@ -40,4 +42,25 @@ export interface MetaAnalysisResponse {
     q_weight: number;
     r_weight: number;
   };
+  recommendations?: {
+    parameter: string;
+    value: number;
+    rationale: string;
+  }[];
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+}
+
+export interface FailureLog {
+  id: string;
+  timestamp: number;
+  task: string;
+  failure_type: string;
+  sim_params: PhysicalParams;
+  diagnosis?: string;
+  fix_applied?: boolean;
 }
