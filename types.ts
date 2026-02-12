@@ -23,7 +23,7 @@ export interface SimState {
   stability: number;
   time: number;
   controlAction: ControlInput;
-  uncertainty: number; // Epistemic uncertainty from ensemble
+  uncertainty: number;
   isBenchmarking: boolean;
 }
 

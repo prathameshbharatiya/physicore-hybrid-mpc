@@ -26,9 +26,10 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
     engineRef.current = engine;
     engine.world.gravity.y = 0; 
 
-    const { width, height } = containerRef.current.getBoundingClientRect();
-    const actualWidth = width || 800;
-    const actualHeight = height || 600;
+    // Use getBoundingClientRect for more accurate sizing, with fallbacks
+    const rect = containerRef.current.getBoundingClientRect();
+    const actualWidth = rect.width || window.innerWidth * 0.6 || 800;
+    const actualHeight = rect.height || window.innerHeight * 0.6 || 600;
 
     const render = Matter.Render.create({
       element: containerRef.current,
@@ -50,14 +51,16 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
     });
     robotRef.current = robot;
 
-    const ground = Matter.Bodies.rectangle(actualWidth / 2, actualHeight + 25, actualWidth, 50, { isStatic: true, render: { fillStyle: '#0f172a' } });
+    const ground = Matter.Bodies.rectangle(actualWidth / 2, actualHeight + 25, actualWidth, 50, { 
+      isStatic: true, 
+      render: { fillStyle: '#0f172a' } 
+    });
     Matter.Composite.add(engine.world, [robot, ground]);
 
     const runner = Matter.Runner.create();
     Matter.Runner.run(runner, engine);
     Matter.Render.run(render);
 
-    // Throttled control loop (approx 30Hz) to allow UI breathing room
     const controlLoop = setInterval(() => {
       const b = robotRef.current;
       if (!b) return;
@@ -125,7 +128,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
   }, [mode]);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-slate-950 border border-slate-900 rounded-sm">
+    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-slate-950/50 border border-slate-900 rounded-sm">
       <canvas ref={canvasRef} className="block w-full h-full" />
     </div>
   );

@@ -15,6 +15,8 @@ const App: React.FC = () => {
   const [telemetry, setTelemetry] = useState<TelemetryPoint[]>([]);
   const [metaAnalysis, setMetaAnalysis] = useState<MetaAnalysisResponse | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isMatterLoaded, setIsMatterLoaded] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
   
   const [target, setTarget] = useState<[number, number]>([400, 300]);
   const [controlAction, setControlAction] = useState<ControlInput>([0, 0]);
@@ -25,6 +27,17 @@ const App: React.FC = () => {
   const historyRef = useRef<SimState[]>([]);
   const lastStateRef = useRef<StateVector | null>(null);
   const benchmarkRef = useRef<{ active: boolean, startTime: number }>({ active: false, startTime: 0 });
+
+  useEffect(() => {
+    const checkMatter = () => {
+      if ((window as any).Matter) {
+        setIsMatterLoaded(true);
+      } else {
+        setTimeout(checkMatter, 100);
+      }
+    };
+    checkMatter();
+  }, []);
 
   const handleStateUpdate = useCallback((state: SimState) => {
     if (lastStateRef.current) {
@@ -70,11 +83,9 @@ const App: React.FC = () => {
     setTimeout(() => { benchmarkRef.current.active = false; }, 8000);
   };
 
-  // Fixed MetaAnalysis Effect: Use an interval that doesn't clear on every simState update
   useEffect(() => {
     const triggerAnalysis = async () => {
-      // Use the latest history value from the ref to avoid dependency on simState
-      if (historyRef.current.length < 10 || isAnalyzing) return;
+      if (historyRef.current.length < 10 || isAnalyzing || quotaExceeded) return;
       
       setIsAnalyzing(true);
       try {
@@ -87,23 +98,28 @@ const App: React.FC = () => {
             r: result.suggestedCostTweaks.r_weight
           });
         }
-      } catch (err) {
-        console.error("Meta-analyst failed:", err);
+      } catch (err: any) {
+        if (err.message === "QUOTA_EXHAUSTED") {
+          setQuotaExceeded(true);
+          // Try again in 2 minutes
+          setTimeout(() => setQuotaExceeded(false), 120000);
+        }
+        console.error("Meta-analyst component failed:", err);
       } finally {
         setIsAnalyzing(false);
       }
     };
 
-    const interval = setInterval(triggerAnalysis, 15000);
+    const interval = setInterval(triggerAnalysis, 20000); // Increased interval to 20s
     return () => clearInterval(interval);
-  }, []); // Only run once on mount
+  }, [isAnalyzing, quotaExceeded]);
 
   return (
-    <div className="flex h-screen w-screen bg-slate-950 text-slate-400 overflow-hidden font-mono">
-      <aside className="w-80 bg-slate-900/50 border-r border-white/5 flex flex-col p-6 shadow-2xl z-20">
+    <div className="flex h-screen w-screen bg-slate-950 text-slate-400 overflow-hidden font-mono selection:bg-indigo-500/30">
+      <aside className="w-80 bg-slate-900/50 border-r border-white/5 flex flex-col p-6 shadow-2xl z-20 shrink-0">
         <header className="mb-8">
           <div className="flex items-center gap-2 text-white font-black text-xl italic tracking-tighter">
-            <div className="w-8 h-8 bg-indigo-700 rounded-sm flex items-center justify-center not-italic text-sm shadow-[0_0_15px_rgba(79,70,229,0.4)]">Φ</div>
+            <div className="w-8 h-8 bg-indigo-700 rounded-sm flex items-center justify-center not-italic text-sm shadow-[0_0_20px_rgba(79,70,229,0.3)]">Φ</div>
             PHYSICORE <span className="text-indigo-400 font-light">HYBRID</span>
           </div>
           <p className="text-[9px] text-slate-600 mt-2 uppercase tracking-widest">Ensemble Predictive Control</p>
@@ -164,6 +180,7 @@ const App: React.FC = () => {
                 setPhysicsPriors({ mass: 1, friction: 0.1, gravity: 0.5 });
                 historyRef.current = [];
                 setTelemetry([]);
+                setQuotaExceeded(false);
              }}
              className="w-full py-2 border border-slate-800 text-slate-600 text-[9px] font-bold uppercase hover:border-slate-700 hover:text-slate-400 transition-colors rounded"
            >
@@ -172,17 +189,24 @@ const App: React.FC = () => {
         </footer>
       </aside>
 
-      <main className="flex-1 flex flex-col p-8 relative bg-black/40 backdrop-blur-3xl">
-        <div className="flex-1 relative mb-8 group rounded shadow-2xl overflow-hidden border border-white/5">
-          <SimulationCanvas 
-            mode={mode} 
-            onStateUpdate={handleStateUpdate} 
-            target={target}
-            controlAction={controlAction}
-            physicsPriors={physicsPriors}
-          />
+      <main className="flex-1 flex flex-col p-8 relative bg-black/20 backdrop-blur-3xl min-w-0">
+        <div className="flex-1 relative mb-8 group rounded shadow-2xl overflow-hidden border border-white/5 bg-slate-950">
+          {isMatterLoaded ? (
+            <SimulationCanvas 
+              mode={mode} 
+              onStateUpdate={handleStateUpdate} 
+              target={target}
+              controlAction={controlAction}
+              physicsPriors={physicsPriors}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-slate-950 text-indigo-500 flex-col gap-4">
+              <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+              <span className="text-[10px] uppercase tracking-widest animate-pulse">Initializing Matter Engine...</span>
+            </div>
+          )}
           
-          <div className="absolute inset-0 cursor-crosshair"
+          <div className="absolute inset-0 cursor-crosshair z-10"
             onMouseMove={(e) => { if (e.buttons === 1) {
               const rect = e.currentTarget.getBoundingClientRect();
               setTarget([e.clientX - rect.left, e.clientY - rect.top]);
@@ -194,15 +218,15 @@ const App: React.FC = () => {
           />
 
           {simState?.isBenchmarking && (
-            <div className="absolute inset-0 bg-indigo-900/10 pointer-events-none flex items-center justify-center backdrop-blur-[1px]">
-              <div className="bg-slate-950/80 border-2 border-indigo-500 px-10 py-6 text-indigo-400 font-black text-2xl animate-pulse shadow-2xl flex flex-col items-center">
+            <div className="absolute inset-0 bg-indigo-900/10 pointer-events-none flex items-center justify-center backdrop-blur-[1px] z-20">
+              <div className="bg-slate-950/90 border-2 border-indigo-500 px-10 py-6 text-indigo-400 font-black text-2xl animate-pulse shadow-2xl flex flex-col items-center">
                 <span>BENCHMARKING ADAPTATION</span>
                 <span className="text-[10px] mt-2 tracking-[0.3em] font-light opacity-60 italic">Shift Detected in System Flux</span>
               </div>
             </div>
           )}
 
-          <div className="absolute top-6 left-6 pointer-events-none space-y-2">
+          <div className="absolute top-6 left-6 pointer-events-none space-y-2 z-20">
             <div className="bg-slate-950/90 border border-white/10 p-4 rounded-sm backdrop-blur-xl shadow-2xl">
               <div className="text-[10px] text-indigo-400 font-bold mb-1 tracking-widest uppercase flex items-center gap-2">
                 <span className="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-ping"></span>
@@ -217,7 +241,7 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="h-64 grid grid-cols-12 gap-6 shrink-0">
+        <div className="h-64 grid grid-cols-12 gap-6 shrink-0 min-h-0">
            <div className="col-span-7 h-full">
              <Dashboard telemetry={telemetry} avgVelocity={simState?.current[2] || 0} stability={simState?.stability || 0} />
            </div>
@@ -225,10 +249,22 @@ const App: React.FC = () => {
            <div className="col-span-5 bg-slate-900/30 border border-white/5 rounded-sm p-5 flex flex-col overflow-hidden shadow-inner">
               <div className="flex justify-between items-center mb-4 border-b border-white/5 pb-2">
                 <h3 className="text-[10px] font-black text-slate-400 tracking-widest uppercase italic">Meta-Analyst Intelligence</h3>
-                {isAnalyzing && <div className="flex gap-1"><div className="w-1 h-3 bg-indigo-600/50 animate-pulse"></div><div className="w-1 h-3 bg-indigo-600/50 animate-pulse delay-100"></div></div>}
+                {(isAnalyzing || quotaExceeded) && (
+                  <div className="flex gap-1">
+                    <div className={`w-1 h-3 ${quotaExceeded ? 'bg-amber-600' : 'bg-indigo-600/50 animate-pulse'}`}></div>
+                    <div className={`w-1 h-3 ${quotaExceeded ? 'bg-amber-600' : 'bg-indigo-600/50 animate-pulse delay-100'}`}></div>
+                  </div>
+                )}
               </div>
 
               <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scroll">
+                {quotaExceeded ? (
+                  <div className="p-3 bg-amber-950/20 border border-amber-900/30 rounded text-amber-500 text-[10px]">
+                    <span className="font-bold block mb-1">LIMIT REACHED</span>
+                    The Gemini Meta-Analyst is currently cool-down (429 Quota). Local physics processing continues.
+                  </div>
+                ) : null}
+
                 {metaAnalysis ? (
                   <>
                     <p className="text-[11px] text-indigo-200 leading-relaxed italic border-l-2 border-indigo-600/50 pl-4 py-1">
