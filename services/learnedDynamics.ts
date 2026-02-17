@@ -40,6 +40,10 @@ class TinyMLP {
       this.b3[i] -= lr * dOut[i];
     }
   }
+
+  public getWeights() {
+    return { w1: this.w1, b1: this.b1, w2: this.w2, b2: this.b2, w3: this.w3, b3: this.b3 };
+  }
 }
 
 export class EnsembleLearnedModel {
@@ -55,6 +59,13 @@ export class EnsembleLearnedModel {
   public train(x: StateVector, u: ControlInput, xNext: StateVector, xPhysics: StateVector) {
     const residual = xNext.map((v, i) => v - xPhysics[i]);
     this.models.forEach(m => m.train(x, u, residual));
+  }
+
+  public getWeightsExport() {
+    return this.models.map((m, idx) => ({
+      model_id: `ensemble_node_${idx}`,
+      parameters: m.getWeights()
+    }));
   }
 }
 
