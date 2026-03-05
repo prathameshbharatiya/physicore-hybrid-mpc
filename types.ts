@@ -1,4 +1,20 @@
 
+export enum RobotDomain {
+  AVIATION = 'AVIATION',
+  ROCKETS = 'ROCKETS',
+  INDUSTRIAL = 'INDUSTRIAL',
+  ROBOTICS = 'ROBOTICS'
+}
+
+export interface IntegrationConfig {
+  domain: RobotDomain;
+  purpose: string;
+  safetyStandard: string;
+  limitations: string[];
+  rules: string[];
+  isConnected: boolean;
+}
+
 export enum SimMode {
   MPC_STABILIZATION = 'MPC_STABILIZATION',
   SYSTEM_IDENTIFICATION = 'SYSTEM_IDENTIFICATION',

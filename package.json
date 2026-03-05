@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
     "@google/genai": "^1.41.0",
+    "motion": "^12.35.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "recharts": "2.12.7"

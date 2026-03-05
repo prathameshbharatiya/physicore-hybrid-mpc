@@ -4,7 +4,8 @@ import SimulationCanvas from './components/SimulationCanvas';
 import Dashboard from './components/Dashboard';
 import ChatInterface from './components/ChatInterface';
 import ParameterEditor from './components/ParameterEditor';
-import { SimMode, SimState, TelemetryPoint, StateVector, ControlInput, MetaAnalysisResponse, ChatMessage, PhysicalParams } from './types';
+import { SimMode, SimState, TelemetryPoint, StateVector, ControlInput, MetaAnalysisResponse, ChatMessage, PhysicalParams, RobotDomain, IntegrationConfig } from './types';
+import { motion, AnimatePresence } from 'motion/react';
 import { computeMPCAction } from './services/optimizer';
 import { updateSystemID } from './services/systemID';
 import { ensembleDynamics } from './services/learnedDynamics';
@@ -12,92 +13,212 @@ import { performRILAnalysis } from './services/geminiService';
 import { stepDynamicsRK4 } from './services/physicsLogic';
 import { logFailure } from './services/failureDB';
 
-const PhysicoreDiscovery: React.FC<{ onEnter: () => void }> = ({ onEnter }) => {
+const PhysicoreDiscovery: React.FC<{ onComplete: (config: IntegrationConfig) => void }> = ({ onComplete }) => {
+  const [step, setStep] = useState(0);
+  const [config, setConfig] = useState<IntegrationConfig>({
+    domain: RobotDomain.ROBOTICS,
+    purpose: '',
+    safetyStandard: '',
+    limitations: [],
+    rules: [],
+    isConnected: false
+  });
+
+  const [wizardAnswers, setWizardAnswers] = useState({
+    purpose: '',
+    safety: '',
+    limit: '',
+    rule: ''
+  });
+
+  const handleNext = () => setStep(s => s + 1);
+  const handleBack = () => setStep(s => s - 1);
+
+  const finish = () => {
+    onComplete({
+      ...config,
+      purpose: wizardAnswers.purpose,
+      safetyStandard: wizardAnswers.safety,
+      limitations: [wizardAnswers.limit],
+      rules: [wizardAnswers.rule],
+      isConnected: true
+    });
+  };
+
+  const domains = [
+    { id: RobotDomain.AVIATION, label: 'Aviation', icon: '✈️', desc: 'UAVs, Fixed-wing, and VTOL systems.' },
+    { id: RobotDomain.ROCKETS, label: 'Rockets', icon: '🚀', desc: 'Orbital launch vehicles and ballistic probes.' },
+    { id: RobotDomain.INDUSTRIAL, label: 'Industrial', icon: '🏭', desc: 'Manufacturing arms and factory automation.' },
+    { id: RobotDomain.ROBOTICS, label: 'Robotics', icon: '🤖', desc: 'Humanoids, AMRs, and general research.' },
+  ];
+
   return (
-    <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6 md:p-12 overflow-y-auto">
+    <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center p-6 md:p-12 overflow-y-auto font-sans">
       <div className="absolute inset-0 opacity-20 pointer-events-none bg-[linear-gradient(#1e293b_1px,transparent_1px),linear-gradient(90deg,#1e293b_1px,transparent_1px)] [background-size:40px_40px]"></div>
       
-      <div className="max-w-6xl w-full relative z-10">
-        <div className="grid lg:grid-cols-2 gap-20 items-center">
-          <div>
-            <div className="inline-block px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded text-indigo-400 text-[10px] font-bold tracking-[0.4em] uppercase mb-8">
-              Industrial Simulation Core v2.4.1
-            </div>
-            <h1 className="text-6xl md:text-8xl font-black text-white italic tracking-tighter mb-6 leading-none">
-              PHYSI<span className="text-indigo-500">CORE</span>
-            </h1>
-            <p className="text-slate-400 text-xl font-light leading-relaxed mb-10 max-w-lg">
-              Industrial-grade <span className="text-white font-medium">Self-Healing Physics Engine</span>. Stop guessing friction. Let AI align your simulation to your hardware.
-            </p>
-            
-            <div className="space-y-8 mb-12">
-              <div className="flex gap-5">
-                <div className="w-12 h-12 shrink-0 bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center font-black text-indigo-400 shadow-[0_0_20px_rgba(79,70,229,0.2)]">01</div>
-                <div>
-                  <h4 className="text-white font-bold text-sm uppercase tracking-widest">Close the Reality Gap</h4>
-                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">Identify mismatches between analytical RK4 models and real-world sensor streams. Our RIL layer reconciles discrepancies in real-time.</p>
-                </div>
-              </div>
-              <div className="flex gap-5">
-                <div className="w-12 h-12 shrink-0 bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center font-black text-indigo-400 shadow-[0_0_20px_rgba(79,70,229,0.2)]">02</div>
-                <div>
-                  <h4 className="text-white font-bold text-sm uppercase tracking-widest">Ensemble Residual Learning</h4>
-                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">Train on the "Physics Residual"—the nonlinear noise of your specific factory floor. No more "Ideal Case" assumptions.</p>
-                </div>
-              </div>
-              <div className="flex gap-5">
-                <div className="w-12 h-12 shrink-0 bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center font-black text-indigo-400 shadow-[0_0_20px_rgba(79,70,229,0.2)]">03</div>
-                <div>
-                  <h4 className="text-white font-bold text-sm uppercase tracking-widest">Hardware Portability</h4>
-                  <p className="text-slate-500 text-xs mt-1 leading-relaxed">Export optimized weights and calibrated priors as production-ready JSON/ONNX bridges for your edge controllers.</p>
-                </div>
-              </div>
-            </div>
-
-            <button 
-              onClick={onEnter} 
-              className="group px-12 py-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black text-sm uppercase tracking-[0.2em] transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-4 rounded-sm"
+      <div className="max-w-4xl w-full relative z-10">
+        <AnimatePresence mode="wait">
+          {step === 0 && (
+            <motion.div 
+              key="step0"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-12"
             >
-              Initialize Control Core
-              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            </button>
-          </div>
-
-          <div className="hidden lg:block relative">
-            <div className="aspect-square bg-slate-900/40 border border-white/10 rounded-xl p-10 backdrop-blur-3xl overflow-hidden relative shadow-[0_0_120px_rgba(79,70,229,0.1)]">
-              <div className="absolute top-0 left-0 w-full p-6 border-b border-white/5 font-mono text-[10px] text-slate-500 flex justify-between uppercase tracking-widest">
-                <span>Kernel: PhysiCore-v2.4</span>
-                <span className="text-emerald-500 animate-pulse">● System_Online</span>
-              </div>
-              <div className="h-full flex flex-col justify-center items-center text-center">
-                <div className="w-64 h-64 border-[3px] border-indigo-500/10 border-t-indigo-500 rounded-full animate-[spin_6s_linear_infinite] mb-12 relative flex items-center justify-center">
-                   <div className="w-48 h-48 border border-indigo-500/5 rounded-full animate-[spin_10s_linear_infinite_reverse]"></div>
-                   <div className="absolute flex flex-col items-center">
-                      <span className="text-indigo-400 text-2xl font-black italic tracking-tighter">HYBRID</span>
-                      <span className="text-indigo-500/50 text-[10px] font-bold uppercase tracking-[0.3em]">Dynamics Loop</span>
-                   </div>
+              <div className="text-center">
+                <div className="inline-block px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded text-indigo-400 text-[10px] font-bold tracking-[0.4em] uppercase mb-8">
+                  Kernel v2.4.1 • Integration Bridge
                 </div>
-                <div className="space-y-4 w-full">
-                  <div className="flex justify-between text-[10px] text-slate-500 uppercase font-mono px-4">
-                    <span>Solver_Stability</span>
-                    <span className="text-indigo-400">99.98%</span>
-                  </div>
-                  <div className="w-full bg-slate-800/50 h-1 rounded-full overflow-hidden">
-                    <div className="bg-indigo-500 h-full w-[99%]" />
-                  </div>
+                <h1 className="text-6xl font-black text-white italic tracking-tighter mb-4">
+                  SELECT <span className="text-indigo-500 text-7xl">DOMAIN</span>
+                </h1>
+                <p className="text-slate-400 text-lg font-light max-w-xl mx-auto">
+                  PhysiCore adapts its safety kernels and physics priors based on your hardware domain.
+                </p>
+                <div className="mt-8 flex justify-center gap-4">
+                  <label className="px-6 py-3 bg-slate-900 border border-white/10 hover:border-indigo-500 text-slate-400 text-xs uppercase tracking-widest cursor-pointer transition-all">
+                    Upload Robot Config (.json)
+                    <input type="file" className="hidden" onChange={() => {
+                      // Simulate file upload
+                      onComplete({
+                        domain: RobotDomain.ROCKETS,
+                        purpose: 'Orbital Insertion',
+                        safetyStandard: 'AS9100',
+                        limitations: ['Max Thrust: 1.2MN'],
+                        rules: ['No-fly zone: Sector 7'],
+                        isConnected: true
+                      });
+                    }} />
+                  </label>
+                  <div className="flex items-center text-slate-700 text-[10px] uppercase tracking-widest">or use integration tool</div>
                 </div>
               </div>
-            </div>
-          </div>
-        </div>
 
-        <div className="mt-24 text-[10px] text-slate-700 font-mono flex justify-between uppercase tracking-widest border-t border-white/5 pt-10">
-          <div className="flex gap-10">
-            <span>Uplink: Primary_Active</span>
-            <span>Region: Edge_Local</span>
-          </div>
-          <span>Built for professional robotics teams.</span>
-        </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {domains.map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => { setConfig({ ...config, domain: d.id }); handleNext(); }}
+                    className={`p-6 text-left border transition-all group ${config.domain === d.id ? 'bg-indigo-600/20 border-indigo-500' : 'bg-slate-900/40 border-white/5 hover:border-white/20'}`}
+                  >
+                    <div className="text-3xl mb-4">{d.icon}</div>
+                    <h3 className="text-white font-bold uppercase tracking-widest text-sm mb-2">{d.label}</h3>
+                    <p className="text-slate-500 text-xs leading-relaxed">{d.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          )}
+
+          {step === 1 && (
+            <motion.div 
+              key="step1"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="space-y-10"
+            >
+              <div className="flex items-center gap-4 mb-8">
+                <button onClick={handleBack} className="p-2 hover:bg-white/5 rounded text-slate-400">← Back</button>
+                <div className="h-px flex-1 bg-white/10"></div>
+                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest">Step 02: Integration Tool</span>
+              </div>
+
+              <div className="space-y-8">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">01. Primary Mission Objective</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. High-altitude cargo delivery"
+                    className="w-full bg-slate-900 border border-white/10 p-4 text-white focus:border-indigo-500 outline-none transition-all"
+                    value={wizardAnswers.purpose}
+                    onChange={e => setWizardAnswers({...wizardAnswers, purpose: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">02. Safety Standard Compliance</label>
+                  <select 
+                    className="w-full bg-slate-900 border border-white/10 p-4 text-white focus:border-indigo-500 outline-none transition-all"
+                    value={wizardAnswers.safety}
+                    onChange={e => setWizardAnswers({...wizardAnswers, safety: e.target.value})}
+                  >
+                    <option value="">Select Standard</option>
+                    <option value="ISO 10218">ISO 10218 (Industrial Robotics)</option>
+                    <option value="DO-178C">DO-178C (Airborne Systems)</option>
+                    <option value="AS9100">AS9100 (Aerospace Quality)</option>
+                    <option value="MIL-STD-882E">MIL-STD-882E (System Safety)</option>
+                  </select>
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">03. Critical Operational Limit</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Max Velocity: 450m/s"
+                    className="w-full bg-slate-900 border border-white/10 p-4 text-white focus:border-indigo-500 outline-none transition-all"
+                    value={wizardAnswers.limit}
+                    onChange={e => setWizardAnswers({...wizardAnswers, limit: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">04. Deployment Constraint</label>
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Human proximity < 2m prohibited"
+                    className="w-full bg-slate-900 border border-white/10 p-4 text-white focus:border-indigo-500 outline-none transition-all"
+                    value={wizardAnswers.rule}
+                    onChange={e => setWizardAnswers({...wizardAnswers, rule: e.target.value})}
+                  />
+                </div>
+              </div>
+
+              <button 
+                onClick={handleNext}
+                disabled={!wizardAnswers.purpose || !wizardAnswers.safety}
+                className="w-full py-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] transition-all disabled:opacity-50"
+              >
+                Configure Bridge →
+              </button>
+            </motion.div>
+          )}
+
+          {step === 2 && (
+            <motion.div 
+              key="step2"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.05 }}
+              className="text-center space-y-12"
+            >
+              <div className="w-32 h-32 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto flex items-center justify-center">
+                <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center">
+                  <span className="text-3xl">🔗</span>
+                </div>
+              </div>
+              
+              <div className="space-y-4">
+                <h2 className="text-4xl font-black text-white italic tracking-tighter uppercase">Establishing <span className="text-indigo-500">Hardware Link</span></h2>
+                <p className="text-slate-400 text-lg font-light max-w-lg mx-auto">
+                  PhysiCore is now bridging with your {config.domain.toLowerCase()} hardware. No code changes required.
+                </p>
+              </div>
+
+              <div className="bg-slate-900/60 border border-white/5 p-8 rounded-xl text-left font-mono text-xs space-y-2 max-w-md mx-auto">
+                <div className="text-emerald-500">✓ Domain: {config.domain}</div>
+                <div className="text-emerald-500">✓ Safety Kernel: {wizardAnswers.safety}</div>
+                <div className="text-emerald-500">✓ Telemetry Bridge: ACTIVE</div>
+                <div className="text-slate-500 animate-pulse mt-4">Waiting for hardware handshake...</div>
+              </div>
+
+              <button 
+                onClick={finish}
+                className="px-12 py-6 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] transition-all shadow-2xl"
+              >
+                Initialize Simulation
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -119,6 +240,8 @@ const App: React.FC = () => {
   const [costWeights, setCostWeights] = useState({ q: 1.5, r: 0.05 });
   const [uncertainty, setUncertainty] = useState(0);
 
+  const [integration, setIntegration] = useState<IntegrationConfig | null>(null);
+
   const historyRef = useRef<SimState[]>([]);
   const lastStateRef = useRef<StateVector | null>(null);
 
@@ -131,6 +254,8 @@ const App: React.FC = () => {
   }, []);
 
   const handleStateUpdate = useCallback((state: SimState) => {
+    if (!integration?.isConnected) return;
+
     if (lastStateRef.current) {
       const xPhys = stepDynamicsRK4(lastStateRef.current, controlAction, physicsPriors);
       ensembleDynamics.train(lastStateRef.current, controlAction, state.current, xPhys);
@@ -233,7 +358,7 @@ class PhysicoreBridge:
     }, 1800);
   };
 
-  if (!hasEntered) return <PhysicoreDiscovery onEnter={() => setHasEntered(true)} />;
+  if (!hasEntered) return <PhysicoreDiscovery onComplete={(cfg) => { setIntegration(cfg); setHasEntered(true); }} />;
 
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-400 overflow-hidden font-mono selection:bg-indigo-500/40">
@@ -243,10 +368,24 @@ class PhysicoreBridge:
             <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center not-italic text-xs shadow-[0_0_20px_rgba(79,70,229,0.3)]">P</div>
             PHYSI<span className="text-indigo-400 font-light italic tracking-tight">CORE</span>
           </div>
-          <p className="text-[9px] text-slate-600 mt-2 uppercase tracking-[0.4em] font-bold">Reality Bridging Unit</p>
+          <div className="mt-4 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-sm">
+            <div className="flex justify-between items-center mb-1">
+              <span className="text-[8px] text-indigo-400 uppercase tracking-widest font-bold">Active Domain</span>
+              <span className="text-[10px] text-white font-bold">{integration?.domain}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[8px] text-indigo-400 uppercase tracking-widest font-bold">Link Status</span>
+              <span className="text-[10px] text-emerald-500 font-bold animate-pulse">CONNECTED</span>
+            </div>
+          </div>
         </header>
 
         <div className="flex-1 space-y-6 overflow-y-auto pr-2 custom-scroll">
+          <div className="bg-slate-950/40 border border-white/5 p-4 rounded-sm">
+            <h3 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Safety Kernel</h3>
+            <div className="text-[11px] text-white font-bold mb-1">{integration?.safetyStandard}</div>
+            <div className="text-[9px] text-slate-600 italic">Enforcing {integration?.limitations[0]}</div>
+          </div>
           <ParameterEditor 
             params={physicsPriors} 
             onChange={(u) => setPhysicsPriors(p => ({ ...p, ...u }))}
@@ -294,6 +433,7 @@ class PhysicoreBridge:
               target={target}
               controlAction={controlAction}
               physicsPriors={physicsPriors}
+              integration={integration}
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-indigo-500 text-[10px] uppercase tracking-[0.5em] gap-6">
@@ -330,7 +470,7 @@ class PhysicoreBridge:
 
         <div className="h-72 grid grid-cols-12 gap-8 shrink-0 min-h-0">
            <div className="col-span-7 h-full">
-             <Dashboard telemetry={telemetry} avgVelocity={simState?.current[2] || 0} stability={simState?.stability || 0} />
+             <Dashboard telemetry={telemetry} avgVelocity={simState?.current[2] || 0} stability={simState?.stability || 0} integration={integration} />
            </div>
            <div className="col-span-5 h-full">
              <ChatInterface onQuery={handleQuery} messages={messages} isAnalyzing={isAnalyzing} />

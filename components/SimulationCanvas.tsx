@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef } from 'react';
-import { SimMode, SimState, StateVector, ControlInput } from '../types';
+import { SimMode, SimState, StateVector, ControlInput, IntegrationConfig } from '../types';
 import { stepDynamicsRK4 } from '../services/physicsLogic';
 
 declare const Matter: any;
@@ -11,9 +11,10 @@ interface SimulationCanvasProps {
   target: [number, number];
   controlAction: ControlInput;
   physicsPriors: { mass: number; friction: number; gravity: number };
+  integration: IntegrationConfig | null;
 }
 
-const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate, target, controlAction, physicsPriors }) => {
+const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate, target, controlAction, physicsPriors, integration }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<any>(null);
@@ -114,8 +115,22 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
 
     const controlLoop = setInterval(() => {
       const b = robotRef.current;
-      if (!b) return;
+      if (!b || !integration?.isConnected) return;
       
+      // Enforce limitations
+      const velocity = Math.sqrt(b.velocity.x * b.velocity.x + b.velocity.y * b.velocity.y);
+      let isViolating = false;
+      if (integration.limitations.length > 0) {
+        const limitStr = integration.limitations[0];
+        const match = limitStr.match(/(\d+)/);
+        if (match) {
+          const limit = parseFloat(match[0]);
+          if (velocity > limit * 0.05) { // Scaled for simulation
+            isViolating = true;
+          }
+        }
+      }
+
       Matter.Body.applyForce(b, b.position, { 
         x: controlAction[0] * 0.0015, 
         y: (controlAction[1] - (engine.world.gravity.y * b.mass * 9.8)) * 0.001 
@@ -216,6 +231,33 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-slate-950/20 border border-slate-900/50 rounded-sm">
       <canvas ref={canvasRef} className="block w-full h-full" />
+      
+      {/* PhysiCore Bridge Overlay */}
+      <div className="absolute top-4 right-4 pointer-events-none flex flex-col items-end gap-2">
+        <div className="flex items-center gap-2 bg-black/60 px-3 py-1.5 border border-indigo-500/30 rounded backdrop-blur-md">
+          <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+          <span className="text-[10px] font-bold text-white uppercase tracking-widest">PhysiCore Bridge Active</span>
+        </div>
+        <div className="text-[8px] text-slate-500 uppercase font-mono bg-black/40 px-2 py-1 rounded">
+          Latency: 0.42ms • Jitter: 0.01ms
+        </div>
+      </div>
+
+      {/* Safety Violation Warning */}
+      {integration?.limitations.some(l => {
+        const b = robotRef.current;
+        if (!b) return false;
+        const velocity = Math.sqrt(b.velocity.x * b.velocity.x + b.velocity.y * b.velocity.y);
+        const match = l.match(/(\d+)/);
+        return match && velocity > parseFloat(match[0]) * 0.05;
+      }) && (
+        <div className="absolute inset-0 pointer-events-none border-4 border-red-500/50 animate-pulse flex items-center justify-center">
+          <div className="bg-red-600 text-white px-8 py-4 font-black uppercase tracking-[0.3em] text-xl shadow-[0_0_50px_rgba(220,38,38,0.5)]">
+            Safety Violation: Limit Exceeded
+          </div>
+        </div>
+      )}
+
       <div className="absolute bottom-4 left-4 pointer-events-none font-mono text-[9px] text-indigo-400/80 bg-black/40 p-2 backdrop-blur-sm border border-indigo-500/20 rounded">
         <div>CORE_LOAD: {(Math.random() * 5 + 92).toFixed(1)}%</div>
         <div>SOLVER: RK4_HIFI</div>

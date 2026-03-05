@@ -1,15 +1,25 @@
 
 import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TelemetryPoint } from '../types';
+import { TelemetryPoint, IntegrationConfig, RobotDomain } from '../types';
 
 interface DashboardProps {
   telemetry: TelemetryPoint[];
   avgVelocity: number;
   stability: number;
+  integration: IntegrationConfig | null;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability }) => {
+const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability, integration }) => {
+  const getDomainSpecificLabel = () => {
+    switch (integration?.domain) {
+      case RobotDomain.ROCKETS: return 'Thrust Vectoring';
+      case RobotDomain.AVIATION: return 'Aero-Surface Control';
+      case RobotDomain.INDUSTRIAL: return 'Torque Compensation';
+      default: return 'Rigid Logic';
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 h-full">
       <div className="bg-slate-900/40 p-4 rounded-sm border border-white/5 flex flex-col">
@@ -78,7 +88,7 @@ const Dashboard: React.FC<DashboardProps> = ({ telemetry, avgVelocity, stability
         <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-2">Deployed Architecture</h3>
         <div className="space-y-2.5 mt-2 flex-1 overflow-y-auto custom-scroll">
           <div className="flex justify-between items-center text-[10px]">
-            <span className="text-slate-500">Rigid Logic</span>
+            <span className="text-slate-500">{getDomainSpecificLabel()}</span>
             <span className="text-indigo-400 font-bold">Velocity Verlet</span>
           </div>
           <div className="flex justify-between items-center text-[10px]">
