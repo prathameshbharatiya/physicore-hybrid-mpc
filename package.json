@@ -10,7 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^1.41.0",
+    "@google/genai": "^1.44.0",
     "@tailwindcss/vite": "^4.2.1",
     "lucide-react": "^0.577.0",
     "motion": "^12.35.0",
