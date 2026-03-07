@@ -233,6 +233,7 @@ export default function App() {
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [isSystemConnected, setIsSystemConnected] = useState(false);
 
   const [isLaunching, setIsLaunching] = useState(false);
 
@@ -322,7 +323,7 @@ export default function App() {
 
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-2.0-flash",
+        model: "gemini-3-flash-preview",
         contents: newHistory.map(m => ({
           role: m.role === 'ai' ? 'model' : 'user',
           parts: [{ text: m.content }]
@@ -414,6 +415,7 @@ export default function App() {
       timestamp: formatTime(new Date()) 
     };
     setConversationHistory(prev => [...prev, testMsg]);
+    setIsSystemConnected(true);
   };
 
   // --- RENDERERS ---
@@ -979,20 +981,22 @@ export default function App() {
         <aside className="w-[320px] border-r border-border bg-bg flex flex-col shrink-0 overflow-hidden">
           <div className="p-6 border-b border-border space-y-4">
             <div className="flex items-center justify-between">
-              <span className="micro-label text-green">System Status</span>
+              <span className={`micro-label ${isSystemConnected ? 'text-green' : 'text-textDim'}`}>System Status</span>
               <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green rounded-full animate-pulse" />
-                <span className="font-mono text-[10px] text-green">LIVE</span>
+                <div className={`w-2 h-2 rounded-full ${isSystemConnected ? 'bg-green animate-pulse' : 'bg-red'}`} />
+                <span className={`font-mono text-[10px] ${isSystemConnected ? 'text-green' : 'text-red'}`}>
+                  {isSystemConnected ? 'LIVE' : 'DISCONNECTED'}
+                </span>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 bg-bgRaised border border-borderDim">
                 <div className="micro-label text-textDim">CPU LOAD</div>
-                <div className="font-mono text-lg text-white">12.4%</div>
+                <div className="font-mono text-lg text-white">{isSystemConnected ? '12.4%' : '0.0%'}</div>
               </div>
               <div className="p-3 bg-bgRaised border border-borderDim">
                 <div className="micro-label text-textDim">LATENCY</div>
-                <div className="font-mono text-lg text-white">0.4ms</div>
+                <div className="font-mono text-lg text-white">{isSystemConnected ? '0.4ms' : '--'}</div>
               </div>
             </div>
           </div>
@@ -1034,7 +1038,7 @@ export default function App() {
                 <div className="font-mono text-[9px] text-textSecondary uppercase">Energy: 12.4J / 15.0J</div>
               </div>
               <div className="space-y-2">
-                {[
+                {isSystemConnected ? [
                   { time: '23:34:01', msg: 'LYAPUNOV_BOUND_CHECK: OK' },
                   { time: '23:34:05', msg: 'MPC_TRAJECTORY_VALIDATED' },
                   { time: '23:34:12', msg: 'SYSID_CONVERGENCE_STABLE' },
@@ -1044,7 +1048,11 @@ export default function App() {
                     <span className="text-textDim">{log.time}</span>
                     <span className="text-textSecondary">{log.msg}</span>
                   </div>
-                ))}
+                )) : (
+                  <div className="flex items-center justify-center h-20 border border-dashed border-borderDim">
+                    <span className="font-mono text-[9px] text-textDim uppercase">Waiting for telemetry...</span>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -1075,7 +1083,29 @@ export default function App() {
               </button>
             </div>
 
-            <DashboardCanvas />
+            <DashboardCanvas isConnected={isSystemConnected} />
+
+            {!isSystemConnected && (
+              <div className="absolute inset-0 z-20 bg-void/40 backdrop-blur-[2px] flex items-center justify-center">
+                <div className="p-8 border border-border bg-bg/90 max-w-[320px] text-center space-y-6">
+                  <div className="w-12 h-12 border border-textDim flex items-center justify-center text-textDim mx-auto">
+                    <Wifi size={24} className="animate-pulse" />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="font-display text-lg font-bold text-white tracking-widest uppercase">Hardware Offline</h3>
+                    <p className="font-body text-xs text-textSecondary leading-relaxed">
+                      Physics intelligence engine is idle. Connect your system via the Integration Engineer to stream live telemetry.
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setView('integrator')}
+                    className="w-full py-2 bg-white text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-green transition-all"
+                  >
+                    ⬡ OPEN INTEGRATOR
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="absolute bottom-6 left-6 right-6 z-10 flex justify-between items-end">
               <div className="space-y-4">
@@ -1293,7 +1323,7 @@ const HeroCanvas = () => {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
 };
 
-const DashboardCanvas = () => {
+const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -1303,7 +1333,6 @@ const DashboardCanvas = () => {
     if (!ctx) return;
 
     let frame = 0;
-    let particles: { x: number; y: number; vx: number; vy: number; life: number }[] = [];
     let target = { x: canvas.width / 2, y: canvas.height / 2 };
     let robot = { x: canvas.width / 2, y: canvas.height / 2 };
 
@@ -1331,6 +1360,17 @@ const DashboardCanvas = () => {
       }
       for (let y = 0; y < canvas.height; y += 40) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      if (!isConnected) {
+        // Static noise/searching effect when disconnected
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+        for (let i = 0; i < 5; i++) {
+          const x = Math.random() * canvas.width;
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+        }
+        requestAnimationFrame(animate);
+        return;
       }
 
       // Target
@@ -1389,7 +1429,7 @@ const DashboardCanvas = () => {
 
     animate();
     return () => window.removeEventListener('resize', resize);
-  }, []);
+  }, [isConnected]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
 };
