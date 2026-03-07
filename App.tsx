@@ -30,7 +30,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator';
+type View = 'home' | 'integrator' | 'dashboard';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -65,22 +65,127 @@ const formatTime = (date: Date) => {
 // --- COMPONENTS ---
 
 const SyntaxHighlighter = ({ code }: { code: string }) => {
-  // Simple syntax highlighting for the demo
-  const lines = code.split('\n');
-  return (
-    <div className="font-mono text-[11px] leading-relaxed">
-      {lines.map((line, i) => {
-        let styledLine = line
-          .replace(/\b(def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|import|from|as|in|is|not|and|or|True|False|None)\b/g, `<span style="color: ${COLORS.cyan}">$1</span>`)
-          .replace(/(".*?"|'.*?')/g, `<span style="color: #88DD88">$1</span>`)
-          .replace(/(#.*)/g, `<span style="color: ${COLORS.textDim}; font-style: italic">$1</span>`)
-          .replace(/\b(\d+)\b/g, `<span style="color: ${COLORS.amber}">$1</span>`);
+  const highlightCode = (text: string) => {
+    // Escape HTML
+    let escaped = text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
 
-        return (
-          <div key={i} dangerouslySetInnerHTML={{ __html: styledLine || '&nbsp;' }} />
-        );
-      })}
-    </div>
+    // Keywords
+    const keywords = /\b(def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|is|not|and|or|True|False|None|public|private|protected|static|void|int|float|double|bool|string|char|using|namespace|std|vector|cout|endl|ros|rclcpp|node|publisher|subscriber|timer|callback|msg|srv|action|uint32_t|float32_t|double_t|bool_t|auto|const|constexpr|struct|enum|union|typedef|extern|inline|virtual|override|final|explicit|mutable|volatile|register|thread_local|alignas|alignof|sizeof|typeid|typename|template|concept|requires|decltype|noexcept|static_assert|static_cast|dynamic_cast|const_cast|reinterpret_cast|new|delete|this|throw|try|catch|operator|friend|export|module|import|co_await|co_yield|co_return)\b/g;
+    escaped = escaped.replace(keywords, `<span style="color: ${COLORS.cyan}">$1</span>`);
+
+    // Strings
+    escaped = escaped.replace(/(&quot;.*?&quot;|&#039;.*?&#039;)/g, `<span style="color: #88DD88">$1</span>`);
+
+    // Comments
+    escaped = escaped.replace(/(\/\/.*|#.*|\/\*[\s\S]*?\*\/)/g, `<span style="color: ${COLORS.textDim}; font-style: italic">$1</span>`);
+
+    // Numbers
+    escaped = escaped.replace(/\b(\d+)\b/g, `<span style="color: ${COLORS.amber}">$1</span>`);
+
+    // Types/Classes (approximate)
+    escaped = escaped.replace(/\b([A-Z][a-zA-Z0-9_]*)\b/g, `<span style="color: ${COLORS.blue}">$1</span>`);
+
+    return escaped;
+  };
+
+  return (
+    <pre className="font-mono text-[11px] leading-relaxed whitespace-pre overflow-x-auto">
+      <code dangerouslySetInnerHTML={{ __html: highlightCode(code) }} />
+    </pre>
+  );
+};
+
+const IntegrationActionPanel = ({ files, onTest, onContinue }: { files: GeneratedFile[], onTest: () => void, onContinue: () => void }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleDownloadAll = () => {
+    files.forEach((file, index) => {
+      setTimeout(() => {
+        const element = document.createElement("a");
+        const blob = new Blob([file.content], { type: 'text/plain' });
+        element.href = URL.createObjectURL(blob);
+        element.download = file.filename;
+        document.body.appendChild(element);
+        element.click();
+        document.body.removeChild(element);
+      }, index * 200);
+    });
+  };
+
+  const handleCopyCommand = () => {
+    const cmd = "npm install @physicore/kernel && physicore init --platform=ros2";
+    navigator.clipboard.writeText(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-8 border border-green bg-greenDim/20 p-6 space-y-6"
+    >
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 bg-green text-black flex items-center justify-center">
+          <Zap size={18} />
+        </div>
+        <div>
+          <h3 className="font-display text-sm font-bold text-green tracking-widest uppercase">INTEGRATION ACTION PANEL</h3>
+          <p className="font-body text-[10px] text-textSecondary uppercase">Code generation complete. Select next action.</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <button 
+          onClick={handleDownloadAll}
+          className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
+        >
+          <div className="flex flex-col items-start">
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">DOWNLOAD PACKAGE</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">All generated files (.zip)</span>
+          </div>
+          <DownloadCloud size={20} />
+        </button>
+
+        <button 
+          onClick={handleCopyCommand}
+          className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
+        >
+          <div className="flex flex-col items-start">
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">{copied ? 'COMMAND COPIED' : 'COPY START COMMAND'}</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">Quick-start CLI command</span>
+          </div>
+          {copied ? <Check size={20} /> : <Terminal size={20} />}
+        </button>
+
+        <button 
+          onClick={onTest}
+          className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
+        >
+          <div className="flex flex-col items-start">
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">TEST CONNECTION</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">Verify HIL / Digital Twin link</span>
+          </div>
+          <Wifi size={20} />
+        </button>
+
+        <button 
+          onClick={onContinue}
+          className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
+        >
+          <div className="flex flex-col items-start">
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">CONTINUE IN APP</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">Open PhysiCore Dashboard</span>
+          </div>
+          <ExternalLink size={20} />
+        </button>
+      </div>
+    </motion.div>
   );
 };
 
@@ -129,6 +234,16 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
 
+  const [isLaunching, setIsLaunching] = useState(false);
+
+  const handleLaunchApp = () => {
+    setIsLaunching(true);
+    setTimeout(() => {
+      setIsLaunching(false);
+      setView('dashboard');
+    }, 3000);
+  };
+
   // Scroll tracking
   useEffect(() => {
     if (view !== 'home') return;
@@ -161,6 +276,38 @@ export default function App() {
       revealObserver.disconnect();
     };
   }, [view]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [conversationHistory, isTyping]);
+
+  const parseAIResponse = (text: string) => {
+    const parts = [];
+    let lastIndex = 0;
+    const regex = /\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+      // Add text before code block
+      if (match.index > lastIndex) {
+        parts.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+      }
+      // Add code block
+      parts.push({ type: 'code', filename: match[1], content: match[2].trim() });
+      lastIndex = regex.lastIndex;
+    }
+
+    // Add remaining text
+    if (lastIndex < text.length) {
+      parts.push({ type: 'text', content: text.substring(lastIndex) });
+    }
+
+    return parts;
+  };
 
   // AI Logic
   const handleSendMessage = async (text?: string) => {
@@ -242,7 +389,7 @@ export default function App() {
           return { filename: parts![1], content: parts![2].trim(), extension: parts![1].split('.').pop() || '' };
         });
         setGeneratedFiles(prev => [...prev, ...newFiles]);
-        setIntegrationPhase(3);
+        setIntegrationPhase(4); // Transition to action panel phase
       }
 
     } catch (error) {
@@ -252,6 +399,21 @@ export default function App() {
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const handleTestConnection = () => {
+    const testMsg: Message = { 
+      role: 'ai', 
+      content: `> INTEGRATION ENGINEER: INITIATING CONNECTION TEST...
+      [SYSTEM] PINGING PHYSICORE KERNEL... SUCCESS (0.4ms)
+      [SYSTEM] VERIFYING SENTINEL HANDSHAKE... SUCCESS
+      [SYSTEM] CHECKING ROS2 BRIDGE... ACTIVE
+      [SYSTEM] STREAMING TELEMETRY... 60Hz STABLE
+      
+      CONNECTION VERIFIED. SYSTEM IS LIVE.`, 
+      timestamp: formatTime(new Date()) 
+    };
+    setConversationHistory(prev => [...prev, testMsg]);
   };
 
   // --- RENDERERS ---
@@ -267,40 +429,60 @@ export default function App() {
           <span className="font-mono text-[10px] text-textDim">v3.0</span>
         </div>
         <div className="h-4 w-px bg-border mx-2" />
-        <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">Physics Intelligence Engine</span>
+        <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">
+          {view === 'dashboard' ? 'LIVE MISSION CONTROL' : 'Physics Intelligence Engine'}
+        </span>
       </div>
 
-      <div className="hidden lg:flex items-center gap-8">
-        {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL'].map(item => (
-          <a 
-            key={item} 
-            href={`#${item.toLowerCase()}`}
-            className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? 'text-green border-b border-green' : 'text-textSecondary hover:text-textPrimary'}`}
-            onClick={(e) => {
-              if (view !== 'home') {
+      {view !== 'dashboard' && (
+        <div className="hidden lg:flex items-center gap-8">
+          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL'].map(item => (
+            <a 
+              key={item} 
+              href={`#${item.toLowerCase()}`}
+              className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? (item === 'SENTINEL' ? 'text-amber border-b border-amber' : 'text-green border-b border-green') : 'text-textSecondary hover:text-textPrimary'}`}
+              onClick={(e) => {
                 e.preventDefault();
-                setView('home');
-                setTimeout(() => {
+                if (view !== 'home') {
+                  setView('home');
+                  setTimeout(() => {
+                    document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                  }, 100);
+                } else {
                   document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
-                }, 100);
-              }
-            }}
-          >
-            {item}
-          </a>
-        ))}
-      </div>
+                }
+              }}
+            >
+              {item}
+            </a>
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-4">
-        <button 
-          onClick={() => setView('integrator')}
-          className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
-        >
-          ⬡ INTEGRATION ENGINEER
-        </button>
-        <button className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all">
-          ▣ LAUNCH APP
-        </button>
+        {view === 'dashboard' ? (
+          <button 
+            onClick={() => setView('home')}
+            className="px-4 py-1.5 border border-red text-red font-display text-[11px] font-bold uppercase tracking-widest hover:bg-red hover:text-black transition-all"
+          >
+            ▣ EXIT DASHBOARD
+          </button>
+        ) : (
+          <>
+            <button 
+              onClick={() => setView('integrator')}
+              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
+            >
+              ⬡ INTEGRATION ENGINEER
+            </button>
+            <button 
+              onClick={handleLaunchApp}
+              className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all"
+            >
+              ▣ LAUNCH APP
+            </button>
+          </>
+        )}
       </div>
     </nav>
   );
@@ -339,7 +521,7 @@ export default function App() {
 
           <div className="reveal reveal-stagger-4 flex flex-col sm:flex-row gap-4 justify-center">
             <button onClick={() => setView('integrator')} className="btn-primary h-14 text-sm">⬡ START INTEGRATION →</button>
-            <button className="btn-outline h-14 text-sm">▣ LAUNCH PHYSICORE APP</button>
+            <button onClick={handleLaunchApp} className="btn-outline h-14 text-sm">▣ LAUNCH PHYSICORE APP</button>
           </div>
         </div>
 
@@ -488,34 +670,57 @@ export default function App() {
       </section>
 
       {/* SENTINEL */}
-      <section id="sentinel" className="bg-bg py-32 px-6">
-        <div className="max-w-[1100px] mx-auto grid md:grid-cols-2 gap-20 items-center">
-          <div className="space-y-8">
-            <div className="reveal border-l-2 border-amber pl-4">
-              <span className="micro-label text-amber">Sentinel OS</span>
+      <section id="sentinel" className="bg-bg py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-24">
+          <div className="grid md:grid-cols-2 gap-20 items-center">
+            <div className="space-y-8">
+              <div className="reveal border-l-2 border-amber pl-4">
+                <span className="micro-label text-amber">Governance & Safety</span>
+              </div>
+              <h2 className="reveal reveal-stagger-1 font-display text-5xl md:text-6xl font-bold text-white leading-tight">
+                Sentinel OS. <br />
+                <span className="text-textSecondary">The Governance Kernel.</span>
+              </h2>
+              <div className="reveal reveal-stagger-2 space-y-6 font-body text-textSecondary leading-relaxed text-lg">
+                <p>PhysiCore provides the intelligence, but Sentinel OS provides the authority. It is a Universal Neural-Symbolic Governance Kernel designed for high-stakes robotics deployment.</p>
+                <p>Sentinel sits between the AI's high-level intent and the physical motor controllers, acting as a real-time safety monitor that cannot be bypassed by the neural stack.</p>
+              </div>
             </div>
-            <h2 className="reveal reveal-stagger-1 font-display text-4xl md:text-5xl font-bold text-white">Safety governance <br />for the real world.</h2>
-            <div className="reveal reveal-stagger-2 space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>PhysiCore is the physics layer of Sentinel OS — a Universal Neural-Symbolic Governance Kernel that sits between AI intent and physical motors.</p>
-              <p>When PhysiCore's confidence drops below threshold, Sentinel's Lyapunov kernel intercepts the control signal and clamps it to the nearest safe value — before it reaches the hardware.</p>
+            <div className="reveal reveal-stagger-3">
+              <SentinelDiagram />
             </div>
-            <div className="reveal reveal-stagger-3 space-y-4">
-              {[
-                'Lyapunov stability kernel — 10kHz inner loop',
-                'Degraded state machine — NOMINAL→FALLBACK',
-                'Forensic governance certificates — SHA-256',
-                'DO-178C / NASA-STD-8739.8 compliance export'
-              ].map((t, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="w-1.5 h-1.5 bg-amber" />
-                  <span className="font-body text-sm text-textSecondary">{t}</span>
-                </div>
-              ))}
-            </div>
-            <button className="reveal reveal-stagger-4 btn-outline border-amber text-amber w-full h-12">LEARN ABOUT SENTINEL →</button>
           </div>
-          <div className="reveal reveal-stagger-3">
-            <SentinelDiagram />
+
+          <div className="grid md:grid-cols-4 gap-6">
+            {[
+              { title: 'Lyapunov Kernel', desc: '10kHz safety loop monitors system energy states to ensure stability bounds are never exceeded.', icon: ShieldCheck },
+              { title: 'Degraded State', desc: 'Automatic transition to safe-state machines (NOMINAL → CAUTIOUS → FALLBACK) during anomalies.', icon: AlertTriangle },
+              { title: 'Forensic Ledger', desc: 'Every control decision is signed with SHA-256 and logged to a tamper-proof governance ledger.', icon: FileJson },
+              { title: 'Compliance Export', desc: 'Auto-generate DO-178C and NASA-STD-8739.8 compliance artifacts for regulatory approval.', icon: CheckCircle2 },
+            ].map((item, i) => (
+              <div key={i} className="reveal p-6 border border-border bg-bgRaised space-y-4 group hover:border-amber transition-all">
+                <item.icon className="text-amber" size={24} />
+                <h3 className="font-display text-sm font-bold text-white tracking-widest uppercase">{item.title}</h3>
+                <p className="font-body text-xs text-textSecondary leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="reveal border border-amber/20 bg-amberDim/10 p-10 flex flex-col md:flex-row items-center justify-between gap-10">
+            <div className="space-y-4 max-w-[600px]">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">Why Sentinel is Necessary</h3>
+              <p className="font-body text-sm text-textSecondary leading-relaxed">
+                In regulated environments, "black box" AI is a liability. Sentinel provides the symbolic safety layer required for certification. It translates complex neural outputs into verifiable physical constraints, ensuring your robot never performs an action that violates its Lyapunov stability envelope.
+              </p>
+            </div>
+            <div className="shrink-0 space-y-4">
+              <div className="p-4 border border-amber/30 bg-bg font-mono text-[10px] text-amber space-y-2">
+                <div className="flex justify-between gap-10"><span>CERTIFICATE ID:</span> <span>SENT-882-X</span></div>
+                <div className="flex justify-between gap-10"><span>STATUS:</span> <span className="text-green">VERIFIED</span></div>
+                <div className="flex justify-between gap-10"><span>GOVERNANCE:</span> <span>ACTIVE</span></div>
+              </div>
+              <button className="btn-outline border-amber text-amber w-full hover:bg-amber hover:text-black">LEARN ABOUT SENTINEL →</button>
+            </div>
           </div>
         </div>
       </section>
@@ -541,6 +746,29 @@ export default function App() {
           <button onClick={() => setView('integrator')} className="reveal reveal-stagger-4 bg-cyan text-black px-12 py-5 font-display text-lg font-bold uppercase tracking-widest hover:bg-white transition-all w-full md:w-auto">
             ⬡ OPEN INTEGRATION ENGINEER →
           </button>
+        </div>
+      </section>
+
+      {/* FINAL CTA */}
+      <section className="bg-bg py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto text-center space-y-12">
+          <h2 className="reveal font-display text-4xl md:text-6xl font-bold text-white uppercase tracking-tighter">
+            Ready to deploy?
+          </h2>
+          <div className="reveal reveal-stagger-1 flex flex-col sm:flex-row gap-4 justify-center">
+            <button onClick={() => setView('integrator')} className="btn-primary h-16 px-12 text-lg">
+              ⬡ INTEGRATE PHYSICORE
+            </button>
+            <button 
+              onClick={() => window.open('https://sentinel-lac.vercel.app/', '_blank')}
+              className="btn-outline border-amber text-amber h-16 px-12 text-lg hover:bg-amber hover:text-black"
+            >
+              LEARN MORE ABOUT SENTINEL
+            </button>
+          </div>
+          <p className="reveal reveal-stagger-2 font-mono text-[10px] text-textDim uppercase tracking-widest">
+            PhysiCore v3.0 — Part of the Sentinel OS Ecosystem
+          </p>
         </div>
       </section>
 
@@ -632,9 +860,22 @@ export default function App() {
               </div>
               <div className="space-y-2">
                 {generatedFiles.map((f, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 border border-borderDim bg-bgRaised">
-                    <span className="font-mono text-[10px] text-textSecondary">{f.filename}</span>
-                    <button className="text-cyan hover:text-white transition-colors"><Download size={14} /></button>
+                  <div key={i} className="flex items-center justify-between p-2 border border-borderDim bg-bgRaised group">
+                    <span className="font-mono text-[10px] text-textSecondary group-hover:text-white transition-colors">{f.filename}</span>
+                    <button 
+                      onClick={() => {
+                        const element = document.createElement("a");
+                        const blob = new Blob([f.content], { type: 'text/plain' });
+                        element.href = URL.createObjectURL(blob);
+                        element.download = f.filename;
+                        document.body.appendChild(element);
+                        element.click();
+                        document.body.removeChild(element);
+                      }}
+                      className="text-cyan hover:text-white transition-colors"
+                    >
+                      <Download size={14} />
+                    </button>
                   </div>
                 ))}
               </div>
@@ -654,7 +895,7 @@ export default function App() {
 
       {/* RIGHT PANEL */}
       <div className="flex-1 flex flex-col bg-bgInset relative">
-        <div className="flex-1 overflow-y-auto custom-scroll p-8 pb-24">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scroll p-8 pb-24">
           <div className="max-w-[700px] mx-auto space-y-12">
             {conversationHistory.length === 0 ? (
               <div className="flex flex-col items-center justify-center pt-20 text-center space-y-8">
@@ -679,27 +920,35 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              conversationHistory.map((m, i) => (
-                <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                  {m.role === 'ai' && <span className="font-mono text-[10px] text-cyan mb-2 uppercase tracking-widest">{"> INTEGRATION ENGINEER:"}</span>}
-                  <div className={`max-w-[85%] space-y-4 ${m.role === 'ai' ? 'font-body text-sm text-textPrimary leading-relaxed' : 'font-body text-sm text-textPrimary bg-bgRaised p-4 border border-border'}`}>
-                    {m.content.includes('[CODE:') ? (
-                      <div>
-                        <p className="mb-4">{m.content.split('[CODE:')[0]}</p>
-                        {m.content.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g)?.map((match, idx) => {
-                          const parts = match.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/);
-                          if (!parts) return null;
-                          return <CodeBlock key={idx} filename={parts[1]} content={parts[2].trim()} />;
-                        })}
-                        <p className="mt-4">{m.content.split('[/CODE]')[1]}</p>
+              <>
+                {conversationHistory.map((m, i) => {
+                  const parsedResponse = parseAIResponse(m.content);
+                  return (
+                    <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      {m.role === 'ai' && <span className="font-mono text-[10px] text-cyan mb-2 uppercase tracking-widest">{"> INTEGRATION ENGINEER:"}</span>}
+                      <div className={`max-w-[85%] space-y-4 ${m.role === 'ai' ? 'font-body text-sm text-textPrimary leading-relaxed' : 'font-body text-sm text-textPrimary bg-bgRaised p-4 border border-border'}`}>
+                        {parsedResponse.map((part, idx) => (
+                          part.type === 'code' ? (
+                            <CodeBlock key={idx} filename={part.filename!} content={part.content!} />
+                          ) : (
+                            <p key={idx} className={part.content!.includes('?') ? 'bg-bgRaised border-l-2 border-cyan p-4' : ''}>
+                              {part.content!.replace('> INTEGRATION ENGINEER:', '').trim()}
+                            </p>
+                          )
+                        ))}
                       </div>
-                    ) : (
-                      <p className={m.content.includes('?') ? 'bg-bgRaised border-l-2 border-cyan p-4' : ''}>{m.content.replace('> INTEGRATION ENGINEER:', '').trim()}</p>
-                    )}
-                  </div>
-                  <span className="font-mono text-[8px] text-textDim mt-2">{m.timestamp}</span>
-                </div>
-              ))
+                      <span className="font-mono text-[8px] text-textDim mt-2">{m.timestamp}</span>
+                    </div>
+                  );
+                })}
+                {integrationPhase === 4 && (
+                  <IntegrationActionPanel 
+                    files={generatedFiles} 
+                    onTest={handleTestConnection}
+                    onContinue={() => setView('dashboard')}
+                  />
+                )}
+              </>
             )}
             {isTyping && (
               <div className="flex flex-col items-start animate-pulse">
@@ -723,6 +972,180 @@ export default function App() {
     </div>
   );
 
+  const renderDashboard = () => (
+    <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
+      <div className="flex-1 flex overflow-hidden">
+        {/* SIDEBAR: SYSTEM STATUS */}
+        <aside className="w-[320px] border-r border-border bg-bg flex flex-col shrink-0 overflow-hidden">
+          <div className="p-6 border-b border-border space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="micro-label text-green">System Status</span>
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-green rounded-full animate-pulse" />
+                <span className="font-mono text-[10px] text-green">LIVE</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-3 bg-bgRaised border border-borderDim">
+                <div className="micro-label text-textDim">CPU LOAD</div>
+                <div className="font-mono text-lg text-white">12.4%</div>
+              </div>
+              <div className="p-3 bg-bgRaised border border-borderDim">
+                <div className="micro-label text-textDim">LATENCY</div>
+                <div className="font-mono text-lg text-white">0.4ms</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scroll p-6 space-y-8">
+            <section className="space-y-4">
+              <div className="border-l-2 border-cyan pl-3">
+                <span className="micro-label">SystemID Estimates</span>
+              </div>
+              <div className="space-y-4">
+                {[
+                  { label: 'ESTIMATED MASS', val: '2.714 kg', delta: '+8.5%', color: COLORS.green },
+                  { label: 'FRICTION COEFF', val: '0.412 μ', delta: '+17.7%', color: COLORS.amber },
+                  { label: 'ACTUATOR EFF', val: '94.2%', delta: '-1.2%', color: COLORS.cyan },
+                ].map((item, i) => (
+                  <div key={i} className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="micro-label text-textDim">{item.label}</span>
+                      <span className="font-mono text-[10px]" style={{ color: item.color }}>{item.delta}</span>
+                    </div>
+                    <div className="font-mono text-sm text-white">{item.val}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="space-y-4">
+              <div className="border-l-2 border-amber pl-3">
+                <span className="micro-label">Sentinel Governance</span>
+              </div>
+              <div className="p-4 bg-amberDim/10 border border-amber/20 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-display text-[10px] font-bold text-amber tracking-widest uppercase">Stability Kernel</span>
+                  <span className="font-mono text-[9px] text-green">NOMINAL</span>
+                </div>
+                <div className="h-1 w-full bg-border">
+                  <div className="h-full bg-amber w-[85%]" />
+                </div>
+                <div className="font-mono text-[9px] text-textSecondary uppercase">Energy: 12.4J / 15.0J</div>
+              </div>
+              <div className="space-y-2">
+                {[
+                  { time: '23:34:01', msg: 'LYAPUNOV_BOUND_CHECK: OK' },
+                  { time: '23:34:05', msg: 'MPC_TRAJECTORY_VALIDATED' },
+                  { time: '23:34:12', msg: 'SYSID_CONVERGENCE_STABLE' },
+                  { time: '23:34:18', msg: 'SENTINEL_HEARTBEAT_ACK' },
+                ].map((log, i) => (
+                  <div key={i} className="flex gap-3 font-mono text-[9px]">
+                    <span className="text-textDim">{log.time}</span>
+                    <span className="text-textSecondary">{log.msg}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </aside>
+
+        {/* MAIN CONTENT: SIMULATION & CHARTS */}
+        <main className="flex-1 flex flex-col bg-bgInset overflow-hidden">
+          {/* SIMULATION VIEW */}
+          <div className="flex-1 relative border-b border-border">
+            <div className="absolute top-6 left-6 z-10 space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 border border-green flex items-center justify-center text-green">
+                  <Maximize2 size={20} />
+                </div>
+                <div>
+                  <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">Live Simulation View</h2>
+                  <p className="font-mono text-[10px] text-textDim uppercase">RK4 Integrator @ 60Hz | MPC Lookahead</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="absolute top-6 right-6 z-10 flex gap-2">
+              <button className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
+                <RefreshCw size={16} />
+              </button>
+              <button className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
+                <Settings size={16} />
+              </button>
+            </div>
+
+            <DashboardCanvas />
+
+            <div className="absolute bottom-6 left-6 right-6 z-10 flex justify-between items-end">
+              <div className="space-y-4">
+                <div className="flex gap-4">
+                  <div className="p-3 bg-bg/80 backdrop-blur-md border border-border space-y-1">
+                    <div className="micro-label text-textDim">MPC HORIZON</div>
+                    <div className="font-mono text-xs text-cyan">12 STEPS</div>
+                  </div>
+                  <div className="p-3 bg-bg/80 backdrop-blur-md border border-border space-y-1">
+                    <div className="micro-label text-textDim">ENSEMBLE σ</div>
+                    <div className="font-mono text-xs text-green">0.014</div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-4">
+                <div className="p-4 bg-bg/80 backdrop-blur-md border border-border flex items-center gap-4">
+                  <div className="text-right">
+                    <div className="micro-label text-textDim">Target Position</div>
+                    <div className="font-mono text-xs text-white">X: 412.4 Y: 188.2</div>
+                  </div>
+                  <div className="w-10 h-10 border border-border flex items-center justify-center text-textDim">
+                    <Crosshair size={20} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* BOTTOM PANEL: CHARTS */}
+          <div className="h-[280px] bg-bg border-t border-border flex divide-x divide-border">
+            <div className="flex-1 p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="micro-label text-cyan">L2 Prediction Residual</span>
+                <span className="font-mono text-[10px] text-textDim">CONVERGENCE: 0.023</span>
+              </div>
+              <div className="h-[180px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={Array.from({ length: 20 }, (_, i) => ({ x: i, y: Math.exp(-i / 5) * 0.8 + Math.random() * 0.05 }))}>
+                    <defs>
+                      <linearGradient id="colorResidual" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.cyan} stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor={COLORS.cyan} stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
+                    <Area type="monotone" dataKey="y" stroke={COLORS.cyan} fillOpacity={1} fill="url(#colorResidual)" isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="flex-1 p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <span className="micro-label text-green">Control Effort (N)</span>
+                <span className="font-mono text-[10px] text-textDim">PEAK: 14.2N</span>
+              </div>
+              <div className="h-[180px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={Array.from({ length: 20 }, (_, i) => ({ x: i, y: 5 + Math.random() * 10 }))}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
+                    <Bar dataKey="y" fill={COLORS.green} isAnimationActive={false} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full h-full">
       {renderNav()}
@@ -731,9 +1154,55 @@ export default function App() {
           <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderHome()}
           </motion.div>
-        ) : (
+        ) : view === 'integrator' ? (
           <motion.div key="integrator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderIntegrator()}
+          </motion.div>
+        ) : (
+          <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderDashboard()}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isLaunching && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-void/90 backdrop-blur-xl flex items-center justify-center p-6"
+          >
+            <div className="max-w-[400px] w-full space-y-8 text-center">
+              <div className="relative w-24 h-24 mx-auto">
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-0 border-2 border-green border-t-transparent"
+                />
+                <div className="absolute inset-0 flex items-center justify-center text-green">
+                  <Cpu size={32} className="animate-pulse" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-display text-xl font-bold text-white tracking-widest uppercase">Initializing PhysiCore</h3>
+                <p className="font-mono text-[10px] text-textSecondary uppercase tracking-widest">Loading RK4 Kernel & Sentinel Handshake...</p>
+              </div>
+              <div className="h-1 w-full bg-border overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: '100%' }}
+                  transition={{ duration: 2.5 }}
+                  className="h-full bg-green"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {['KERNEL_OK', 'SENTINEL_OK', 'MPC_OK', 'SYSID_OK'].map(status => (
+                  <div key={status} className="flex items-center gap-2 font-mono text-[8px] text-green/60">
+                    <Check size={8} /> {status}
+                  </div>
+                ))}
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -822,6 +1291,107 @@ const HeroCanvas = () => {
   }, []);
 
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
+};
+
+const DashboardCanvas = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let frame = 0;
+    let particles: { x: number; y: number; vx: number; vy: number; life: number }[] = [];
+    let target = { x: canvas.width / 2, y: canvas.height / 2 };
+    let robot = { x: canvas.width / 2, y: canvas.height / 2 };
+
+    const resize = () => {
+      const parent = canvas.parentElement;
+      if (parent) {
+        canvas.width = parent.clientWidth;
+        canvas.height = parent.clientHeight;
+      }
+    };
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    const animate = () => {
+      frame++;
+      ctx.fillStyle = COLORS.bgInset;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = '#121212';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // Target
+      if (frame % 120 === 0) {
+        target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
+      }
+
+      // Robot Physics (Simplified RK4-ish feel)
+      const dx = target.x - robot.x;
+      const dy = target.y - robot.y;
+      robot.x += dx * 0.05;
+      robot.y += dy * 0.05;
+
+      // MPC Trajectory (Prediction)
+      ctx.strokeStyle = COLORS.cyan;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(robot.x, robot.y);
+      let px = robot.x;
+      let py = robot.y;
+      for (let i = 0; i < 12; i++) {
+        px += (target.x - px) * 0.1;
+        py += (target.y - py) * 0.1;
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Ensemble Nodes (Shadows)
+      [0.8, 1.2].forEach(scale => {
+        ctx.strokeStyle = 'rgba(0, 255, 136, 0.1)';
+        ctx.beginPath();
+        ctx.arc(robot.x + (Math.random() - 0.5) * 10, robot.y + (Math.random() - 0.5) * 10, 15, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // Robot
+      ctx.strokeStyle = COLORS.green;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(robot.x - 20, robot.y - 20, 40, 40);
+      ctx.fillStyle = COLORS.greenDim;
+      ctx.fillRect(robot.x - 20, robot.y - 20, 40, 40);
+      
+      // Target Reticle
+      ctx.strokeStyle = COLORS.amber;
+      ctx.beginPath();
+      ctx.arc(target.x, target.y, 10, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(target.x - 15, target.y); ctx.lineTo(target.x + 15, target.y);
+      ctx.moveTo(target.x, target.y - 15); ctx.lineTo(target.x, target.y + 15);
+      ctx.stroke();
+
+      requestAnimationFrame(animate);
+    };
+
+    animate();
+    return () => window.removeEventListener('resize', resize);
+  }, []);
+
+  return <canvas ref={canvasRef} className="w-full h-full" />;
 };
 
 const RealityGapDiagram = () => (
