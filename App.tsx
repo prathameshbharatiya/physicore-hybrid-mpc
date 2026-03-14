@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
@@ -13,12 +13,39 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
   ResponsiveContainer, BarChart, Bar, ReferenceLine
 } from 'recharts';
-
 import { GoogleGenAI } from "@google/genai";
 
 // --- CONSTANTS ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "YOUR_API_KEY";
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "") {
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) {
+    console.error("GEMINI_API_KEY is missing");
+    return { success: false, text: null };
+  }
+
+  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  const model = "gemini-3-flash-preview";
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: history.length > 0 ? history : [{ parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction,
+        temperature: 0.2,
+        maxOutputTokens: 2000,
+      },
+    });
+
+    if (response.text) {
+      return { success: true, text: response.text };
+    }
+    throw new Error('INVALID_RESPONSE');
+  } catch (err) {
+    console.error("Gemini SDK Call Failed:", err);
+    return { success: false, text: null };
+  }
+}
 
 const COLORS = {
   void: '#080808', bg: '#0C0C0C', bgRaised: '#111111', bgInset: '#0A0A0A',
@@ -65,37 +92,47 @@ const formatTime = (date: Date) => {
 // --- COMPONENTS ---
 
 const SyntaxHighlighter = ({ code }: { code: string }) => {
+  const tokens = [
+    { name: 'comment', regex: /(\/\/.*|#.*|\/\*[\s\S]*?\*\/)/, color: COLORS.textDim, italic: true },
+    { name: 'string', regex: /(".*?"|'.*?')/, color: '#88DD88' },
+    { name: 'keyword', regex: /\b(def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|is|not|and|or|True|False|None|public|private|protected|static|void|int|float|double|bool|string|char|using|namespace|std|vector|cout|endl|ros|rclcpp|node|publisher|subscriber|timer|callback|msg|srv|action|uint32_t|float32_t|double_t|bool_t|auto|const|constexpr|struct|enum|union|typedef|extern|inline|virtual|override|final|explicit|mutable|volatile|register|thread_local|alignas|alignof|sizeof|typeid|typename|template|concept|requires|decltype|noexcept|static_assert|static_cast|dynamic_cast|const_cast|reinterpret_cast|new|delete|this|throw|try|catch|operator|friend|export|module|import|co_await|co_yield|co_return)\b/, color: COLORS.cyan },
+    { name: 'number', regex: /\b(\d+)\b/, color: COLORS.amber },
+    { name: 'type', regex: /\b([A-Z][a-zA-Z0-9_]*)\b/, color: COLORS.blue },
+  ];
+
   const highlightCode = (text: string) => {
-    // Escape HTML
-    let escaped = text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+    const combinedRegex = new RegExp(tokens.map(t => `(${t.regex.source})`).join('|'), 'g');
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match;
 
-    // Keywords
-    const keywords = /\b(def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|is|not|and|or|True|False|None|public|private|protected|static|void|int|float|double|bool|string|char|using|namespace|std|vector|cout|endl|ros|rclcpp|node|publisher|subscriber|timer|callback|msg|srv|action|uint32_t|float32_t|double_t|bool_t|auto|const|constexpr|struct|enum|union|typedef|extern|inline|virtual|override|final|explicit|mutable|volatile|register|thread_local|alignas|alignof|sizeof|typeid|typename|template|concept|requires|decltype|noexcept|static_assert|static_cast|dynamic_cast|const_cast|reinterpret_cast|new|delete|this|throw|try|catch|operator|friend|export|module|import|co_await|co_yield|co_return)\b/g;
-    escaped = escaped.replace(keywords, `<span style="color: ${COLORS.cyan}">$1</span>`);
+    while ((match = combinedRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.substring(lastIndex, match.index));
+      }
 
-    // Strings
-    escaped = escaped.replace(/(&quot;.*?&quot;|&#039;.*?&#039;)/g, `<span style="color: #88DD88">$1</span>`);
+      const matchIndex = match.slice(1).findIndex(val => val !== undefined);
+      const token = tokens[matchIndex];
+      const matchedText = match[0];
 
-    // Comments
-    escaped = escaped.replace(/(\/\/.*|#.*|\/\*[\s\S]*?\*\/)/g, `<span style="color: ${COLORS.textDim}; font-style: italic">$1</span>`);
+      parts.push(
+        <span 
+          key={match.index} 
+          style={{ color: token.color, fontStyle: token.italic ? 'italic' : 'normal' }}
+        >
+          {matchedText}
+        </span>
+      );
+      lastIndex = combinedRegex.lastIndex;
+    }
 
-    // Numbers
-    escaped = escaped.replace(/\b(\d+)\b/g, `<span style="color: ${COLORS.amber}">$1</span>`);
-
-    // Types/Classes (approximate)
-    escaped = escaped.replace(/\b([A-Z][a-zA-Z0-9_]*)\b/g, `<span style="color: ${COLORS.blue}">$1</span>`);
-
-    return escaped;
+    parts.push(text.substring(lastIndex));
+    return parts;
   };
 
   return (
     <pre className="font-mono text-[11px] leading-relaxed whitespace-pre overflow-x-auto">
-      <code dangerouslySetInnerHTML={{ __html: highlightCode(code) }} />
+      <code>{highlightCode(code)}</code>
     </pre>
   );
 };
@@ -322,14 +359,12 @@ export default function App() {
     setIsTyping(true);
 
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: newHistory.map(m => ({
-          role: m.role === 'ai' ? 'model' : 'user',
-          parts: [{ text: m.content }]
-        })),
-        config: {
-          systemInstruction: `You are the PhysiCore Integration Engineer.
+      const history = newHistory.map(m => ({
+        role: m.role === 'ai' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      }));
+
+      const systemInstruction = `You are the PhysiCore Integration Engineer.
            You help robotics engineers integrate PhysiCore — a Physics Intelligence Engine — into their systems.
 
            PhysiCore capabilities you're integrating:
@@ -348,7 +383,7 @@ export default function App() {
            — When generating code: inject real values, never placeholders.
            — Code must be complete and copy-paste ready.
            — Never use markdown fences (code blocks) in responses.
-             Format code with inline syntax highlighting hints instead:
+           — Format code with inline syntax highlighting hints instead:
              Start code sections with: [CODE: filename.ext]
              End code sections with: [/CODE]
              The UI will parse these tags and apply highlighting.
@@ -361,42 +396,42 @@ export default function App() {
            ${JSON.stringify(systemProfile)}
            
            PHYSICORE VERSION: v3.0
-           CURRENT DATE: ${new Date().toISOString()}`,
-          temperature: 0.2,
-          maxOutputTokens: 2000,
+           CURRENT DATE: ${new Date().toISOString()}`;
+
+      const result = await callGemini(msg, history, systemInstruction);
+
+      if (result.success) {
+        const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
+        const aiMsg: Message = { role: 'ai', content: aiText, timestamp: formatTime(new Date()) };
+        setConversationHistory(prev => [...prev, aiMsg]);
+        
+        // Extraction logic
+        const updatedProfile = { ...systemProfile };
+        if (aiText.includes('PLATFORM:')) updatedProfile.platform = aiText.split('PLATFORM:')[1].split('\n')[0].trim();
+        if (aiText.includes('FIRMWARE:')) updatedProfile.firmware = aiText.split('FIRMWARE:')[1].split('\n')[0].trim();
+        if (aiText.includes('DOMAIN:')) updatedProfile.domain = aiText.split('DOMAIN:')[1].split('\n')[0].trim();
+        if (aiText.includes('MASS CLASS:')) updatedProfile.massClass = aiText.split('MASS CLASS:')[1].split('\n')[0].trim();
+        if (aiText.includes('CONNECTION:')) updatedProfile.connectionMode = aiText.split('CONNECTION:')[1].split('\n')[0].trim();
+        if (aiText.includes('PROTOCOLS:')) updatedProfile.protocols = aiText.split('PROTOCOLS:')[1].split('\n')[0].trim();
+        
+        setSystemProfile(updatedProfile);
+
+        // Code parsing
+        const codeMatches = aiText.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g);
+        if (codeMatches) {
+          const newFiles = codeMatches.map(match => {
+            const parts = match.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/);
+            return { filename: parts![1], content: parts![2].trim(), extension: parts![1].split('.').pop() || '' };
+          });
+          setGeneratedFiles(prev => [...prev, ...newFiles]);
+          setIntegrationPhase(4); // Transition to action panel phase
         }
-      });
-
-      const aiText = response.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
-      const aiMsg: Message = { role: 'ai', content: aiText, timestamp: formatTime(new Date()) };
-      setConversationHistory(prev => [...prev, aiMsg]);
-      
-      // Extraction logic
-      const updatedProfile = { ...systemProfile };
-      if (aiText.includes('PLATFORM:')) updatedProfile.platform = aiText.split('PLATFORM:')[1].split('\n')[0].trim();
-      if (aiText.includes('FIRMWARE:')) updatedProfile.firmware = aiText.split('FIRMWARE:')[1].split('\n')[0].trim();
-      if (aiText.includes('DOMAIN:')) updatedProfile.domain = aiText.split('DOMAIN:')[1].split('\n')[0].trim();
-      if (aiText.includes('MASS CLASS:')) updatedProfile.massClass = aiText.split('MASS CLASS:')[1].split('\n')[0].trim();
-      if (aiText.includes('CONNECTION:')) updatedProfile.connectionMode = aiText.split('CONNECTION:')[1].split('\n')[0].trim();
-      if (aiText.includes('PROTOCOLS:')) updatedProfile.protocols = aiText.split('PROTOCOLS:')[1].split('\n')[0].trim();
-      
-      setSystemProfile(updatedProfile);
-
-      // Code parsing
-      const codeMatches = aiText.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g);
-      if (codeMatches) {
-        const newFiles = codeMatches.map(match => {
-          const parts = match.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/);
-          return { filename: parts![1], content: parts![2].trim(), extension: parts![1].split('.').pop() || '' };
-        });
-        setGeneratedFiles(prev => [...prev, ...newFiles]);
-        setIntegrationPhase(4); // Transition to action panel phase
+      } else {
+        const aiMsg: Message = { role: 'ai', content: "▣ PHYSICORE: Neural link unavailable. Switching to symbolic mode.", timestamp: formatTime(new Date()) };
+        setConversationHistory(prev => [...prev, aiMsg]);
       }
-
     } catch (error) {
       console.error("AI Error:", error);
-      const errorMsg: Message = { role: 'ai', content: "> INTEGRATION ENGINEER: ERROR DETECTED. SYSTEM OFFLINE. PLEASE RETRY.", timestamp: formatTime(new Date()) };
-      setConversationHistory(prev => [...prev, errorMsg]);
     } finally {
       setIsTyping(false);
     }
@@ -803,7 +838,7 @@ export default function App() {
             <span className="micro-label text-textDim">Deploy</span>
             <div className="flex flex-col gap-3 font-body text-sm text-textSecondary">
               <button onClick={() => setView('integrator')} className="text-left hover:text-cyan transition-colors">⬡ Integration Engineer</button>
-              <button className="text-left hover:text-white transition-colors">▣ Launch App</button>
+              <button onClick={handleLaunchApp} className="text-left hover:text-white transition-colors">▣ Launch App</button>
               <button className="text-left hover:text-white transition-colors">⬇ Documentation</button>
             </div>
           </div>
