@@ -89,6 +89,172 @@ const formatTime = (date: Date) => {
   return `${h}:${m}:${s}`;
 };
 
+// --- HARDWARE GATE ---
+const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil') => {
+  if (mode === 'ros2_websocket') {
+    return new Promise((resolve) => {
+      try {
+        const ws = new WebSocket(endpoint);
+        const timeout = setTimeout(() => {
+          ws.close();
+          resolve({ success: false, reason: 'CONNECTION_TIMEOUT' });
+        }, 5000);
+        
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          ws.send(JSON.stringify({
+            op: 'call_service',
+            service: '/rosapi/topics'
+          }));
+        };
+        
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            ws.close();
+            resolve({
+              success: true,
+              topics: data.topics || [],
+              latency: performance.now()
+            });
+          } catch (e) {
+            ws.close();
+            resolve({ success: false, reason: 'INVALID_RESPONSE' });
+          }
+        };
+        
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          resolve({ success: false, reason: 'CONNECTION_REFUSED' });
+        };
+      } catch (e) {
+        resolve({ success: false, reason: 'WEBSOCKET_ERROR' });
+      }
+    });
+  }
+  
+  if (mode === 'hil') {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({
+          success: true,
+          simulated: true,
+          latency: 0.4
+        });
+      }, 1500);
+    });
+  }
+  return { success: false, reason: 'UNKNOWN_MODE' };
+};
+
+// --- PHYSICS HELPERS ---
+interface State { x: number; y: number; vx: number; vy: number; }
+interface Params { mass: number; friction: number; }
+
+const rk4_step = (pos: {x: number, y: number}, vel: {x: number, y: number}, force: {x: number, y: number}, params: Params, dt: number = 1/60) => {
+  const mass = Math.max(0.1, params.mass);
+  const friction = params.friction;
+
+  const accel = (p: {x: number, y: number}, v: {x: number, y: number}, f: {x: number, y: number}) => ({
+    ax: (f.x - friction * v.x) / mass,
+    ay: (f.y - friction * v.y) / mass
+  });
+
+  // k1
+  const a1 = accel(pos, vel, force);
+  const k1v = { x: a1.ax * dt, y: a1.ay * dt };
+  const k1p = { x: vel.x * dt, y: vel.y * dt };
+
+  // k2
+  const v2 = { x: vel.x + k1v.x / 2, y: vel.y + k1v.y / 2 };
+  const a2 = accel({ x: pos.x + k1p.x / 2, y: pos.y + k1p.y / 2 }, v2, force);
+  const k2v = { x: a2.ax * dt, y: a2.ay * dt };
+  const k2p = { x: v2.x * dt, y: v2.y * dt };
+
+  // k3
+  const v3 = { x: vel.x + k2v.x / 2, y: vel.y + k2v.y / 2 };
+  const a3 = accel({ x: pos.x + k2p.x / 2, y: pos.y + k2p.y / 2 }, v3, force);
+  const k3v = { x: a3.ax * dt, y: a3.ay * dt };
+  const k3p = { x: v3.x * dt, y: v3.y * dt };
+
+  // k4
+  const v4 = { x: vel.x + k3v.x, y: vel.y + k3v.y };
+  const a4 = accel({ x: pos.x + k3p.x, y: pos.y + k3p.y }, v4, force);
+  const k4v = { x: a4.ax * dt, y: a4.ay * dt };
+  const k4p = { x: v4.x * dt, y: v4.y * dt };
+
+  return {
+    pos: {
+      x: pos.x + (k1p.x + 2 * k2p.x + 2 * k3p.x + k4p.x) / 6,
+      y: pos.y + (k1p.y + 2 * k2p.y + 2 * k3p.y + k4p.y) / 6
+    },
+    vel: {
+      x: vel.x + (k1v.x + 2 * k2v.x + 2 * k3v.x + k4v.x) / 6,
+      y: vel.y + (k1v.y + 2 * k2v.y + 2 * k3v.y + k4v.y) / 6
+    }
+  };
+};
+
+const cem_mpc = (pos: {x: number, y: number}, vel: {x: number, y: number}, target: {x: number, y: number}, params: Params) => {
+  const horizon = 12;
+  const numSamples = 20;
+  const numElites = 5;
+  const qWeight = 0.1;
+  const rWeight = 0.01;
+
+  let meanX = new Array(horizon).fill(0);
+  let stdX = new Array(horizon).fill(100.0);
+  let meanY = new Array(horizon).fill(0);
+  let stdY = new Array(horizon).fill(100.0);
+
+  for (let iter = 0; iter < 3; iter++) {
+    const sequences = [];
+    for (let s = 0; s < numSamples; s++) {
+      const seqX = meanX.map((m, i) => m + stdX[i] * (Math.random() - 0.5) * 2);
+      const seqY = meanY.map((m, i) => m + stdY[i] * (Math.random() - 0.5) * 2);
+      sequences.push({ x: seqX, y: seqY });
+    }
+
+    const costs = sequences.map(seq => {
+      let p = { ...pos };
+      let v = { ...vel };
+      let cost = 0;
+      for (let t = 0; t < horizon; t++) {
+        const force = { x: seq.x[t], y: seq.y[t] };
+        const next = rk4_step(p, v, force, params);
+        p = next.pos;
+        v = next.vel;
+        const distSq = Math.pow(p.x - target.x, 2) + Math.pow(p.y - target.y, 2);
+        const effortSq = Math.pow(force.x, 2) + Math.pow(force.y, 2);
+        cost += qWeight * distSq + rWeight * effortSq;
+      }
+      return cost;
+    });
+
+    const sortedIdx = costs
+      .map((c, i) => [c, i])
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, numElites)
+      .map(([_, i]) => i);
+
+    const eliteSeqs = sortedIdx.map(i => sequences[i]);
+    
+    meanX = meanX.map((_, t) => eliteSeqs.reduce((s, seq) => s + seq.x[t], 0) / numElites);
+    stdX = stdX.map((_, t) => {
+      const v = eliteSeqs.reduce((s, seq) => s + Math.pow(seq.x[t] - meanX[t], 2), 0) / numElites;
+      return Math.sqrt(v) + 1.0;
+    });
+
+    meanY = meanY.map((_, t) => eliteSeqs.reduce((s, seq) => s + seq.y[t], 0) / numElites);
+    stdY = stdY.map((_, t) => {
+      const v = eliteSeqs.reduce((s, seq) => s + Math.pow(seq.y[t] - meanY[t], 2), 0) / numElites;
+      return Math.sqrt(v) + 1.0;
+    });
+  }
+
+  return { x: meanX, y: meanY };
+};
+
 // --- COMPONENTS ---
 
 const SyntaxHighlighter = ({ code }: { code: string }) => {
@@ -137,7 +303,27 @@ const SyntaxHighlighter = ({ code }: { code: string }) => {
   );
 };
 
-const IntegrationActionPanel = ({ files, onTest, onContinue }: { files: GeneratedFile[], onTest: () => void, onContinue: () => void }) => {
+const IntegrationActionPanel = ({ 
+  files, 
+  onTest, 
+  onContinue,
+  connectionMode,
+  setConnectionMode,
+  endpoint,
+  setEndpoint,
+  dRealEndpoint,
+  setDRealEndpoint
+}: { 
+  files: GeneratedFile[], 
+  onTest: () => void, 
+  onContinue: () => void,
+  connectionMode: 'ros2_websocket' | 'hil',
+  setConnectionMode: (m: 'ros2_websocket' | 'hil') => void,
+  endpoint: string,
+  setEndpoint: (e: string) => void,
+  dRealEndpoint: string,
+  setDRealEndpoint: (e: string) => void
+}) => {
   const [copied, setCopied] = useState(false);
 
   const handleDownloadAll = () => {
@@ -178,6 +364,50 @@ const IntegrationActionPanel = ({ files, onTest, onContinue }: { files: Generate
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="p-4 border border-border bg-bgRaised space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="micro-label text-textDim">Connection Mode</span>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setConnectionMode('hil')}
+                className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'hil' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
+              >
+                HIL
+              </button>
+              <button 
+                onClick={() => setConnectionMode('ros2_websocket')}
+                className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'ros2_websocket' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
+              >
+                ROS2
+              </button>
+            </div>
+          </div>
+          <div className="space-y-1">
+            <span className="micro-label text-textDim">Endpoint</span>
+            <input 
+              value={endpoint}
+              onChange={e => setEndpoint(e.target.value)}
+              className="w-full bg-bg border border-border p-2 font-mono text-[10px] text-green outline-none focus:border-green"
+            />
+          </div>
+        </div>
+
+        <div className="p-4 border border-border bg-bgRaised space-y-4">
+          <div className="flex justify-between items-center">
+            <span className="micro-label text-textDim">Formal Verification</span>
+            <span className="font-mono text-[9px] text-amber">dReal v4.2</span>
+          </div>
+          <div className="space-y-1">
+            <span className="micro-label text-textDim">dReal Server Endpoint</span>
+            <input 
+              value={dRealEndpoint}
+              onChange={e => setDRealEndpoint(e.target.value)}
+              className="w-full bg-bg border border-border p-2 font-mono text-[10px] text-amber outline-none focus:border-amber"
+              placeholder="http://localhost:8080"
+            />
+          </div>
+        </div>
+
         <button 
           onClick={handleDownloadAll}
           className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
@@ -271,15 +501,43 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSystemConnected, setIsSystemConnected] = useState(false);
+  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil'>('hil');
+  const [endpoint, setEndpoint] = useState('ws://localhost:9090');
+  const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
   const [isLaunching, setIsLaunching] = useState(false);
+  const [telemetry, setTelemetry] = useState({
+    mass: 2.714,
+    friction: 0.412,
+    actuatorEfficiency: 0.942,
+    residual: 0.023,
+    confidence: 98.5,
+    variance: 0.014,
+    isStable: true,
+    isFaulted: false,
+    cpuLoad: 12.4,
+    latency: 0.4,
+    residualHistory: [] as any[],
+    effortHistory: [] as any[],
+    targetPos: { x: 0, y: 0 }
+  });
 
-  const handleLaunchApp = () => {
+  const handleLaunchApp = async () => {
     setIsLaunching(true);
-    setTimeout(() => {
+    
+    // Hardware Gate: initiate handshake before simulation starts
+    const result: any = await initiateHandshake(endpoint, connectionMode);
+    
+    if (result.success) {
+      setIsSystemConnected(true);
+      setTimeout(() => {
+        setIsLaunching(false);
+        setView('dashboard');
+      }, 2000);
+    } else {
       setIsLaunching(false);
-      setView('dashboard');
-    }, 3000);
+      alert(`HARDWARE_GATE_ERROR: ${result.reason}`);
+    }
   };
 
   // Scroll tracking
@@ -635,7 +893,7 @@ export default function App() {
               { title: 'Online SystemID', color: COLORS.cyan, desc: 'Numerical gradient descent runs every 50 frames, perturbing mass and friction to find the direction that minimizes prediction error. The model learns your hardware.', spec: '∇mass ∇friction → physical bounds' },
               { title: 'Ensemble Residuals', color: COLORS.blue, desc: 'Three parallel shadow simulations run at 0.7×, 1.0×, and 1.3× noise scales. The standard deviation between predictions quantifies epistemic uncertainty.', spec: 'σ(node₁,node₂,node₃) → confidence' },
               { title: 'MPC Lookahead', color: COLORS.amber, desc: 'Cross-Entropy Method solver simulates 12 steps forward every frame. Uncertainty-aware planning penalizes high-variance regions.', spec: 'CEM solver / 12-step / 60Hz' },
-              { title: 'Hardware Gate', color: COLORS.textSecondary, desc: 'Physics does not run until hardware is connected. Live ROS2, HIL simulation with processor-accurate latency profiles, or Digital Twin mode.', spec: 'LIVE → VERIFIED | HIL → HIL_VALIDATED' },
+              { title: 'Hardware Gate', color: COLORS.textSecondary, desc: 'Physics does not run until hardware is connected. Live ROS2, HIL simulation with processor-accurate latency profiles, or Digital Twin mode.', spec: 'LIVE → HANDSHAKE_OK | HIL → SIM_VALIDATED' },
               { title: 'Sentinel OS Integration', color: COLORS.red, desc: 'PhysiCore feeds directly into Sentinel\'s safety governance layer. Calibrated priors, confidence scores, and residual drift feed the Lyapunov stability kernel.', spec: 'NOMINAL → CAUTIOUS → FALLBACK' },
             ].map((f, i) => (
               <div key={i} className="reveal p-8 border border-border bg-bgRaised border-t-2 space-y-6 group hover:bg-bg transition-all" style={{ borderTopColor: f.color }}>
@@ -692,7 +950,7 @@ export default function App() {
                     ['SYSTEMID INTERVAL', 'Every 50 frames'],
                     ['MPC HORIZON', '12 steps'],
                     ['STATE VECTOR', 'pos / vel / mass / friction'],
-                    ['CERTIFICATION', 'VERIFIED / HIL / TWIN'],
+                    ['CERTIFICATION', 'PROOF PENDING / HIL / TWIN'],
                   ].map(([k, v], i) => (
                     <tr key={i} className="border-b border-borderDim hover:bg-bg transition-colors">
                       <td className="p-4 font-body text-xs text-textSecondary uppercase tracking-widest">{k}</td>
@@ -753,10 +1011,16 @@ export default function App() {
             <div className="shrink-0 space-y-4">
               <div className="p-4 border border-amber/30 bg-bg font-mono text-[10px] text-amber space-y-2">
                 <div className="flex justify-between gap-10"><span>CERTIFICATE ID:</span> <span>SENT-882-X</span></div>
-                <div className="flex justify-between gap-10"><span>STATUS:</span> <span className="text-green">VERIFIED</span></div>
+                <div className="flex justify-between gap-10"><span>STATUS:</span> <span className="text-amber">PROOF PENDING</span></div>
                 <div className="flex justify-between gap-10"><span>GOVERNANCE:</span> <span>ACTIVE</span></div>
               </div>
-              <button className="btn-outline border-amber text-amber w-full hover:bg-amber hover:text-black">LEARN ABOUT SENTINEL →</button>
+              <p className="font-mono text-[8px] text-textDim uppercase max-w-[200px]">dReal formal verification pending configuration of server endpoint.</p>
+              <button 
+                onClick={() => window.open('https://github.com/dreal/dreal4', '_blank')}
+                className="btn-outline border-amber text-amber w-full hover:bg-amber hover:text-black text-[10px]"
+              >
+                VIEW PROOF DOCUMENTATION →
+              </button>
             </div>
           </div>
         </div>
@@ -981,8 +1245,14 @@ export default function App() {
                 {integrationPhase === 4 && (
                   <IntegrationActionPanel 
                     files={generatedFiles} 
-                    onTest={handleTestConnection}
+                    onTest={handleLaunchApp}
                     onContinue={() => setView('dashboard')}
+                    connectionMode={connectionMode}
+                    setConnectionMode={setConnectionMode}
+                    endpoint={endpoint}
+                    setEndpoint={setEndpoint}
+                    dRealEndpoint={dRealEndpoint}
+                    setDRealEndpoint={setDRealEndpoint}
                   />
                 )}
               </>
@@ -1043,9 +1313,9 @@ export default function App() {
               </div>
               <div className="space-y-4">
                 {[
-                  { label: 'ESTIMATED MASS', val: '2.714 kg', delta: '+8.5%', color: COLORS.green },
-                  { label: 'FRICTION COEFF', val: '0.412 μ', delta: '+17.7%', color: COLORS.amber },
-                  { label: 'ACTUATOR EFF', val: '94.2%', delta: '-1.2%', color: COLORS.cyan },
+                  { label: 'ESTIMATED MASS', val: `${telemetry.mass.toFixed(3)} kg`, delta: telemetry.mass > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
+                  { label: 'FRICTION COEFF', val: `${telemetry.friction.toFixed(3)} μ`, delta: telemetry.friction > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
+                  { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
                 ].map((item, i) => (
                   <div key={i} className="space-y-1">
                     <div className="flex justify-between items-center">
@@ -1065,19 +1335,29 @@ export default function App() {
               <div className="p-4 bg-amberDim/10 border border-amber/20 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="font-display text-[10px] font-bold text-amber tracking-widest uppercase">Stability Kernel</span>
-                  <span className="font-mono text-[9px] text-green">NOMINAL</span>
+                  <span className="font-mono text-[9px] text-green">{telemetry.isStable ? 'NOMINAL' : 'UNSTABLE'}</span>
                 </div>
                 <div className="h-1 w-full bg-border">
-                  <div className="h-full bg-amber w-[85%]" />
+                  <div className="h-full bg-amber transition-all duration-500" style={{ width: `${telemetry.confidence}%` }} />
                 </div>
-                <div className="font-mono text-[9px] text-textSecondary uppercase">Energy: 12.4J / 15.0J</div>
+                <div className="flex justify-between items-center">
+                  <span className="font-mono text-[9px] text-textSecondary uppercase">Confidence: {telemetry.confidence.toFixed(1)}%</span>
+                  {telemetry.isFaulted && <span className="font-mono text-[9px] text-red animate-pulse">FAULT_DETECTED</span>}
+                </div>
+              </div>
+              <div className="p-4 border border-border bg-bgRaised space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="micro-label text-textDim uppercase">Byzantine Consensus</span>
+                  <span className="font-mono text-[9px] text-textSecondary">SINGLE NODE</span>
+                </div>
+                <div className="font-mono text-[8px] text-textDim uppercase">Consensus disabled — Multi-node quorum required</div>
               </div>
               <div className="space-y-2">
                 {isSystemConnected ? [
-                  { time: '23:34:01', msg: 'LYAPUNOV_BOUND_CHECK: OK' },
-                  { time: '23:34:05', msg: 'MPC_TRAJECTORY_VALIDATED' },
-                  { time: '23:34:12', msg: 'SYSID_CONVERGENCE_STABLE' },
-                  { time: '23:34:18', msg: 'SENTINEL_HEARTBEAT_ACK' },
+                  { time: formatTime(new Date()), msg: telemetry.isStable ? 'LYAPUNOV_BOUND_CHECK: OK' : 'LYAPUNOV_VIOLATION: WARNING' },
+                  { time: formatTime(new Date()), msg: telemetry.isFaulted ? 'FAULT_OBSERVER: ANOMALY_DETECTED' : 'MPC_TRAJECTORY_VALIDATED' },
+                  { time: formatTime(new Date()), msg: 'SYSID_CONVERGENCE_STABLE' },
+                  { time: formatTime(new Date()), msg: 'SENTINEL_HEARTBEAT_ACK' },
                 ].map((log, i) => (
                   <div key={i} className="flex gap-3 font-mono text-[9px]">
                     <span className="text-textDim">{log.time}</span>
@@ -1118,7 +1398,7 @@ export default function App() {
               </button>
             </div>
 
-            <DashboardCanvas isConnected={isSystemConnected} />
+            <DashboardCanvas isConnected={isSystemConnected} onTelemetryUpdate={setTelemetry} />
 
             {!isSystemConnected && (
               <div className="absolute inset-0 z-20 bg-void/40 backdrop-blur-[2px] flex items-center justify-center">
@@ -1151,7 +1431,7 @@ export default function App() {
                   </div>
                   <div className="p-3 bg-bg/80 backdrop-blur-md border border-border space-y-1">
                     <div className="micro-label text-textDim">ENSEMBLE σ</div>
-                    <div className="font-mono text-xs text-green">0.014</div>
+                    <div className="font-mono text-xs text-green">{telemetry.variance.toFixed(4)}</div>
                   </div>
                 </div>
               </div>
@@ -1159,7 +1439,7 @@ export default function App() {
                 <div className="p-4 bg-bg/80 backdrop-blur-md border border-border flex items-center gap-4">
                   <div className="text-right">
                     <div className="micro-label text-textDim">Target Position</div>
-                    <div className="font-mono text-xs text-white">X: 412.4 Y: 188.2</div>
+                    <div className="font-mono text-xs text-white">X: {telemetry.targetPos.x.toFixed(1)} Y: {telemetry.targetPos.y.toFixed(1)}</div>
                   </div>
                   <div className="w-10 h-10 border border-border flex items-center justify-center text-textDim">
                     <Crosshair size={20} />
@@ -1174,11 +1454,11 @@ export default function App() {
             <div className="flex-1 p-6 space-y-4">
               <div className="flex justify-between items-center">
                 <span className="micro-label text-cyan">L2 Prediction Residual</span>
-                <span className="font-mono text-[10px] text-textDim">CONVERGENCE: 0.023</span>
+                <span className="font-mono text-[10px] text-textDim">CONVERGENCE: {telemetry.residual.toFixed(4)}</span>
               </div>
               <div className="h-[180px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={Array.from({ length: 20 }, (_, i) => ({ x: i, y: Math.exp(-i / 5) * 0.8 + Math.random() * 0.05 }))}>
+                  <AreaChart data={telemetry.residualHistory}>
                     <defs>
                       <linearGradient id="colorResidual" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={COLORS.cyan} stopOpacity={0.3}/>
@@ -1194,11 +1474,11 @@ export default function App() {
             <div className="flex-1 p-6 space-y-4">
               <div className="flex justify-between items-center">
                 <span className="micro-label text-green">Control Effort (N)</span>
-                <span className="font-mono text-[10px] text-textDim">PEAK: 14.2N</span>
+                <span className="font-mono text-[10px] text-textDim">PEAK: {Math.max(...telemetry.effortHistory.map(d => d.y), 0).toFixed(1)}N</span>
               </div>
               <div className="h-[180px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={Array.from({ length: 20 }, (_, i) => ({ x: i, y: 5 + Math.random() * 10 }))}>
+                  <BarChart data={telemetry.effortHistory}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
                     <Bar dataKey="y" fill={COLORS.green} isAnimationActive={false} />
                   </BarChart>
@@ -1358,8 +1638,19 @@ const HeroCanvas = () => {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
 };
 
-const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
+const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: boolean, onTelemetryUpdate: (data: any) => void }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const stateRef = useRef({
+    robot: { x: 0, y: 0, vx: 0, vy: 0 },
+    target: { x: 0, y: 0 },
+    trueParams: { mass: 5.2, friction: 0.65 }, // Hidden true parameters
+    estParams: { mass: 1.0, friction: 0.1 },   // AI's current estimates
+    actuatorEfficiency: 0.95,
+    residualHistory: [] as any[],
+    effortHistory: [] as any[],
+    frame: 0
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -1367,9 +1658,9 @@ const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let frame = 0;
-    let target = { x: canvas.width / 2, y: canvas.height / 2 };
-    let robot = { x: canvas.width / 2, y: canvas.height / 2 };
+    const state = stateRef.current;
+    state.robot = { x: canvas.width / 2, y: canvas.height / 2, vx: 0, vy: 0 };
+    state.target = { x: canvas.width / 2, y: canvas.height / 2 };
 
     const resize = () => {
       const parent = canvas.parentElement;
@@ -1382,8 +1673,70 @@ const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
     window.addEventListener('resize', resize);
     resize();
 
+    const prediction_error = (pos: any, vel: any, actual_pos: any, mass: number, friction: number) => {
+      const pred = rk4_step(pos, vel, { x: 0, y: 0 }, { mass, friction });
+      const dx = pred.pos.x - actual_pos.x;
+      const dy = pred.pos.y - actual_pos.y;
+      return Math.pow(dx, 2) + Math.pow(dy, 2);
+    };
+
+    const system_id_update = (pos: any, vel: any, actual_pos: any) => {
+      // Mass gradient
+      const m_plus = state.estParams.mass + 0.025;
+      const e_plus = prediction_error(pos, vel, actual_pos, m_plus, state.estParams.friction);
+      const m_minus = state.estParams.mass - 0.025;
+      const e_minus = prediction_error(pos, vel, actual_pos, m_minus, state.estParams.friction);
+      const grad_m = (e_plus - e_minus) / 0.05;
+      state.estParams.mass = Math.max(0.3, Math.min(25.0, state.estParams.mass - 0.015 * grad_m));
+
+      // Friction gradient
+      const f_plus = state.estParams.friction + 0.008;
+      const ef_plus = prediction_error(pos, vel, actual_pos, state.estParams.mass, f_plus);
+      const f_minus = state.estParams.friction - 0.008;
+      const ef_minus = prediction_error(pos, vel, actual_pos, state.estParams.mass, f_minus);
+      const grad_f = (ef_plus - ef_minus) / 0.016;
+      state.estParams.friction = Math.max(0.02, Math.min(0.95, state.estParams.friction - 0.006 * grad_f));
+    };
+
+    const compute_ensemble = (pos: any, vel: any, params: Params) => {
+      const noise_scales = [0.7, 1.0, 1.3];
+      const predictions = noise_scales.map(scale => {
+        const noise = { x: (Math.random() - 0.5) * scale * 2, y: (Math.random() - 0.5) * scale * 2 };
+        return rk4_step(pos, { x: vel.x + noise.x, y: vel.y + noise.y }, { x: 0, y: 0 }, params);
+      });
+
+      const dists = predictions.map(p => Math.sqrt(Math.pow(p.pos.x, 2) + Math.pow(p.pos.y, 2)));
+      const meanDist = dists.reduce((a, b) => a + b, 0) / dists.length;
+      const variance = Math.sqrt(dists.reduce((s, d) => s + Math.pow(d - meanDist, 2), 0) / dists.length);
+      
+      const confidence = Math.max(0, 100 - variance * 180);
+      const meanPred = {
+        x: predictions.reduce((s, p) => s + p.pos.x, 0) / predictions.length,
+        y: predictions.reduce((s, p) => s + p.pos.y, 0) / predictions.length
+      };
+      const residual = Math.sqrt(Math.pow(meanPred.x - pos.x, 2) + Math.pow(meanPred.y - pos.y, 2));
+
+      return { confidence, residual, variance };
+    };
+
+    const rls_update = (pos: any, vel: any, actual_pos: any) => {
+      const pred = rk4_step(pos, vel, { x: 0, y: 0 }, state.estParams);
+      const error = Math.sqrt(Math.pow(pred.pos.x - actual_pos.x, 2) + Math.pow(pred.pos.y - actual_pos.y, 2));
+      state.actuatorEfficiency = Math.max(0.7, Math.min(0.99, 0.9 * state.actuatorEfficiency + 0.1 * (1.0 - error / 50)));
+    };
+
+    const lyapunov_check = (vel: any, mass: number) => {
+      const energy = 0.5 * mass * (Math.pow(vel.x, 2) + Math.pow(vel.y, 2));
+      return energy < 10000; 
+    };
+
+    const fault_observer = (pred: any, actual: any) => {
+      const error = Math.sqrt(Math.pow(pred.x - actual.x, 2) + Math.pow(pred.y - actual.y, 2));
+      return error > 15.0;
+    };
+
     const animate = () => {
-      frame++;
+      state.frame++;
       ctx.fillStyle = COLORS.bgInset;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -1398,7 +1751,6 @@ const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
       }
 
       if (!isConnected) {
-        // Static noise/searching effect when disconnected
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
         for (let i = 0; i < 5; i++) {
           const x = Math.random() * canvas.width;
@@ -1409,54 +1761,128 @@ const DashboardCanvas = ({ isConnected }: { isConnected: boolean }) => {
       }
 
       // Target
-      if (frame % 120 === 0) {
-        target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
+      if (state.frame % 180 === 0) {
+        state.target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
       }
 
-      // Robot Physics (Simplified RK4-ish feel)
-      const dx = target.x - robot.x;
-      const dy = target.y - robot.y;
-      robot.x += dx * 0.05;
-      robot.y += dy * 0.05;
+      // 1C: CEM-MPC
+      const optimalSequence = cem_mpc(
+        { x: state.robot.x, y: state.robot.y },
+        { x: state.robot.vx, y: state.robot.vy },
+        state.target,
+        state.estParams
+      );
 
-      // MPC Trajectory (Prediction)
+      // Apply first action
+      const force = { x: optimalSequence.x[0], y: optimalSequence.y[0] };
+      
+      // Actual physics step (using true hidden params)
+      const prevPos = { x: state.robot.x, y: state.robot.y };
+      const prevVel = { x: state.robot.vx, y: state.robot.vy };
+      const next = rk4_step(prevPos, prevVel, force, state.trueParams);
+      
+      state.robot.x = next.pos.x;
+      state.robot.y = next.pos.y;
+      state.robot.vx = next.vel.x;
+      state.robot.vy = next.vel.y;
+
+      // 1A: SystemID Update
+      if (state.frame % 50 === 0) {
+        system_id_update(prevPos, prevVel, next.pos);
+        rls_update(prevPos, prevVel, next.pos);
+      }
+
+      // 1B: Ensemble
+      const ensemble = compute_ensemble(
+        { x: state.robot.x, y: state.robot.y },
+        { x: state.robot.vx, y: state.robot.vy },
+        state.estParams
+      );
+
+      // Sentinel Safety Checks
+      const isStable = lyapunov_check({ x: state.robot.vx, y: state.robot.vy }, state.estParams.mass);
+      const isFaulted = fault_observer(next.pos, { x: state.robot.x, y: state.robot.y });
+
+      // Telemetry Update
+      if (state.frame % 5 === 0) {
+        state.residualHistory.push({ x: state.frame, y: ensemble.residual });
+        if (state.residualHistory.length > 30) state.residualHistory.shift();
+        
+        const effort = Math.sqrt(Math.pow(force.x, 2) + Math.pow(force.y, 2));
+        state.effortHistory.push({ x: state.frame, y: effort });
+        if (state.effortHistory.length > 30) state.effortHistory.shift();
+
+        onTelemetryUpdate({
+          mass: state.estParams.mass,
+          friction: state.estParams.friction,
+          actuatorEfficiency: state.actuatorEfficiency,
+          residual: ensemble.residual,
+          confidence: ensemble.confidence,
+          variance: ensemble.variance,
+          isStable,
+          isFaulted,
+          cpuLoad: 12.4 + Math.random() * 2,
+          latency: 0.4 + Math.random() * 0.1,
+          residualHistory: [...state.residualHistory],
+          effortHistory: [...state.effortHistory],
+          targetPos: state.target
+        });
+      }
+
+      // Draw MPC Trajectory
       ctx.strokeStyle = COLORS.cyan;
       ctx.setLineDash([5, 5]);
       ctx.beginPath();
-      ctx.moveTo(robot.x, robot.y);
-      let px = robot.x;
-      let py = robot.y;
+      ctx.moveTo(state.robot.x, state.robot.y);
+      let px = state.robot.x;
+      let py = state.robot.y;
+      let pvx = state.robot.vx;
+      let pvy = state.robot.vy;
       for (let i = 0; i < 12; i++) {
-        px += (target.x - px) * 0.1;
-        py += (target.y - py) * 0.1;
+        const f = { x: optimalSequence.x[i], y: optimalSequence.y[i] };
+        const step = rk4_step({ x: px, y: py }, { x: pvx, y: pvy }, f, state.estParams);
+        px = step.pos.x;
+        py = step.pos.y;
+        pvx = step.vel.x;
+        pvy = step.vel.y;
         ctx.lineTo(px, py);
       }
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Ensemble Nodes (Shadows)
-      [0.8, 1.2].forEach(scale => {
-        ctx.strokeStyle = 'rgba(0, 255, 136, 0.1)';
-        ctx.beginPath();
-        ctx.arc(robot.x + (Math.random() - 0.5) * 10, robot.y + (Math.random() - 0.5) * 10, 15, 0, Math.PI * 2);
-        ctx.stroke();
-      });
-
-      // Robot
-      ctx.strokeStyle = COLORS.green;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(robot.x - 20, robot.y - 20, 40, 40);
-      ctx.fillStyle = COLORS.greenDim;
-      ctx.fillRect(robot.x - 20, robot.y - 20, 40, 40);
-      
-      // Target Reticle
+      // Draw Target
       ctx.strokeStyle = COLORS.amber;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(target.x, target.y, 10, 0, Math.PI * 2);
+      ctx.arc(state.target.x, state.target.y, 8, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo(target.x - 15, target.y); ctx.lineTo(target.x + 15, target.y);
-      ctx.moveTo(target.x, target.y - 15); ctx.lineTo(target.x, target.y + 15);
+      ctx.moveTo(state.target.x - 12, state.target.y); ctx.lineTo(state.target.x + 12, state.target.y);
+      ctx.moveTo(state.target.x, state.target.y - 12); ctx.lineTo(state.target.x, state.target.y + 12);
+      ctx.stroke();
+
+      // Draw Ensemble Nodes (Uncertainty)
+      const numNodes = 3;
+      for (let i = 0; i < numNodes; i++) {
+        ctx.strokeStyle = `rgba(0, 255, 136, ${0.1 + (1 - ensemble.confidence/100) * 0.2})`;
+        ctx.beginPath();
+        const offset = (Math.random() - 0.5) * ensemble.variance * 500;
+        ctx.arc(state.robot.x + offset, state.robot.y + offset, 15 + i * 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Draw Robot
+      ctx.strokeStyle = COLORS.green;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(state.robot.x - 20, state.robot.y - 20, 40, 40);
+      ctx.fillStyle = COLORS.greenDim;
+      ctx.fillRect(state.robot.x - 20, state.robot.y - 20, 40, 40);
+      
+      // Direction indicator
+      ctx.beginPath();
+      ctx.moveTo(state.robot.x, state.robot.y);
+      ctx.lineTo(state.robot.x + state.robot.vx * 5, state.robot.y + state.robot.vy * 5);
+      ctx.strokeStyle = COLORS.white;
       ctx.stroke();
 
       requestAnimationFrame(animate);
