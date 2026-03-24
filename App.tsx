@@ -20,7 +20,7 @@ async function callGemini(prompt: string, history: any[] = [], systemInstruction
   const API_KEY = process.env.GEMINI_API_KEY;
   if (!API_KEY) {
     console.error("GEMINI_API_KEY is missing");
-    return { success: false, text: null };
+    return { success: false, text: null, error: 'GEMINI_API_KEY_MISSING' };
   }
 
   const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -38,12 +38,12 @@ async function callGemini(prompt: string, history: any[] = [], systemInstruction
     });
 
     if (response.text) {
-      return { success: true, text: response.text };
+      return { success: true, text: response.text, error: null };
     }
     throw new Error('INVALID_RESPONSE');
-  } catch (err) {
+  } catch (err: any) {
     console.error("Gemini SDK Call Failed:", err);
-    return { success: false, text: null };
+    return { success: false, text: null, error: err.message || 'UNKNOWN_ERROR' };
   }
 }
 
@@ -506,6 +506,8 @@ export default function App() {
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
   const [isLaunching, setIsLaunching] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState({
     mass: 2.714,
     friction: 0.412,
@@ -521,6 +523,59 @@ export default function App() {
     effortHistory: [] as any[],
     targetPos: { x: 0, y: 0 }
   });
+
+  const performMetaAnalysis = async () => {
+    if (quotaExceeded) return;
+
+    try {
+      const prompt = `
+        PHYSICORE META-ANALYST: REAL-TIME TELEMETRY DIAGNOSTICS
+        
+        CURRENT SYSTEM STATE:
+        - Estimated Mass: ${telemetry.mass.toFixed(3)} kg
+        - Estimated Friction: ${telemetry.friction.toFixed(3)} μ
+        - Actuator Efficiency: ${(telemetry.actuatorEfficiency * 100).toFixed(1)}%
+        - Prediction Residual: ${telemetry.residual.toFixed(4)}
+        - Ensemble Confidence: ${telemetry.confidence.toFixed(1)}%
+        - Ensemble Variance: ${telemetry.variance.toFixed(4)}
+        - Stability Status: ${telemetry.isStable ? 'NOMINAL' : 'UNSTABLE'}
+        - Fault Status: ${telemetry.isFaulted ? 'ANOMALY_DETECTED' : 'CLEAN'}
+        
+        TASK:
+        1. Provide a concise (max 3 sentences) high-level interpretation of the system's current physical health.
+        2. Suggest ONE specific tuning adjustment for the MPC cost function or SystemID learning rate based on the residual and variance.
+        3. Identify any potential "Reality Gap" issues if the residual is high.
+        
+        FORMAT:
+        - Use a professional, technical tone.
+        - Prefix with '> META-ANALYST:'.
+      `;
+
+      const result = await callGemini(prompt, [], "You are the PhysiCore Meta-Analyst, a high-level diagnostic AI for advanced robotics control systems.");
+      
+      if (result.success) {
+        setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
+        setQuotaExceeded(false);
+      } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
+        setQuotaExceeded(true);
+        // Reset quota exceeded after 2 minutes
+        setTimeout(() => setQuotaExceeded(false), 120000);
+      }
+    } catch (error) {
+      console.error("Meta-Analysis Error:", error);
+    }
+  };
+
+  useEffect(() => {
+    let interval: any;
+    if (isSystemConnected && view === 'dashboard' && !quotaExceeded) {
+      // Initial analysis
+      performMetaAnalysis();
+      // Periodic analysis every 30 seconds to avoid hitting rate limits too hard
+      interval = setInterval(performMetaAnalysis, 30000);
+    }
+    return () => clearInterval(interval);
+  }, [isSystemConnected, view, quotaExceeded]);
 
   const handleLaunchApp = async () => {
     setIsLaunching(true);
@@ -662,6 +717,7 @@ export default function App() {
         const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
         const aiMsg: Message = { role: 'ai', content: aiText, timestamp: formatTime(new Date()) };
         setConversationHistory(prev => [...prev, aiMsg]);
+        setQuotaExceeded(false);
         
         // Extraction logic
         const updatedProfile = { ...systemProfile };
@@ -684,6 +740,11 @@ export default function App() {
           setGeneratedFiles(prev => [...prev, ...newFiles]);
           setIntegrationPhase(4); // Transition to action panel phase
         }
+      } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
+        setQuotaExceeded(true);
+        const aiMsg: Message = { role: 'ai', content: "▣ PHYSICORE: Neural link throttled. Quota exceeded. Symbolic safety layer active. Please wait 120s.", timestamp: formatTime(new Date()) };
+        setConversationHistory(prev => [...prev, aiMsg]);
+        setTimeout(() => setQuotaExceeded(false), 120000);
       } else {
         const aiMsg: Message = { role: 'ai', content: "▣ PHYSICORE: Neural link unavailable. Switching to symbolic mode.", timestamp: formatTime(new Date()) };
         setConversationHistory(prev => [...prev, aiMsg]);
@@ -1269,11 +1330,18 @@ export default function App() {
           <input 
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-            className="flex-1 bg-transparent border-b border-border py-2 font-mono text-xs text-cyan outline-none focus:border-cyan transition-colors"
-            placeholder="> DESCRIBE YOUR SYSTEM OR ASK ANYTHING..."
+            onKeyDown={e => e.key === 'Enter' && !quotaExceeded && handleSendMessage()}
+            className={`flex-1 bg-transparent border-b ${quotaExceeded ? 'border-red text-red' : 'border-border text-cyan'} py-2 font-mono text-xs outline-none focus:border-cyan transition-colors`}
+            placeholder={quotaExceeded ? "> NEURAL QUOTA EXHAUSTED. PLEASE WAIT..." : "> DESCRIBE YOUR SYSTEM OR ASK ANYTHING..."}
+            disabled={quotaExceeded}
           />
-          <button onClick={() => handleSendMessage()} className="font-display text-xs font-bold text-cyan uppercase tracking-widest border border-cyan px-6 py-2 hover:bg-cyan hover:text-black transition-all">⏎ SEND</button>
+          <button 
+            onClick={() => handleSendMessage()} 
+            disabled={quotaExceeded}
+            className={`font-display text-xs font-bold ${quotaExceeded ? 'text-red border-red opacity-50' : 'text-cyan border-cyan hover:bg-cyan hover:text-black'} uppercase tracking-widest border px-6 py-2 transition-all`}
+          >
+            {quotaExceeded ? 'THROTTLED' : '⏎ SEND'}
+          </button>
         </div>
       </div>
     </div>
@@ -1449,9 +1517,9 @@ export default function App() {
             </div>
           </div>
 
-          {/* BOTTOM PANEL: CHARTS */}
-          <div className="h-[280px] bg-bg border-t border-border flex divide-x divide-border">
-            <div className="flex-1 p-6 space-y-4">
+          {/* BOTTOM PANEL: CHARTS & META-ANALYST */}
+          <div className="h-[280px] bg-bg border-t border-border flex divide-x divide-border overflow-hidden">
+            <div className="flex-1 p-6 space-y-4 overflow-hidden">
               <div className="flex justify-between items-center">
                 <span className="micro-label text-cyan">L2 Prediction Residual</span>
                 <span className="font-mono text-[10px] text-textDim">CONVERGENCE: {telemetry.residual.toFixed(4)}</span>
@@ -1471,7 +1539,7 @@ export default function App() {
                 </ResponsiveContainer>
               </div>
             </div>
-            <div className="flex-1 p-6 space-y-4">
+            <div className="flex-1 p-6 space-y-4 overflow-hidden">
               <div className="flex justify-between items-center">
                 <span className="micro-label text-green">Control Effort (N)</span>
                 <span className="font-mono text-[10px] text-textDim">PEAK: {Math.max(...telemetry.effortHistory.map(d => d.y), 0).toFixed(1)}N</span>
@@ -1483,6 +1551,48 @@ export default function App() {
                     <Bar dataKey="y" fill={COLORS.green} isAnimationActive={false} />
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+            <div className="w-[400px] p-6 space-y-4 bg-bgRaised/30 overflow-hidden flex flex-col">
+              <div className="flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className={`w-1.5 h-1.5 rounded-full ${quotaExceeded ? 'bg-red' : 'bg-cyan animate-pulse'}`} />
+                  <span className="micro-label text-white">Meta-Analyst Intelligence</span>
+                </div>
+                <span className="font-mono text-[9px] text-textDim uppercase">Neural Link: {quotaExceeded ? 'THROTTLED' : 'ACTIVE'}</span>
+              </div>
+              <div className="flex-1 overflow-y-auto custom-scroll pr-2">
+                {quotaExceeded ? (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-4 border border-dashed border-red/20 bg-red/5">
+                    <AlertTriangle size={24} className="text-red/60" />
+                    <div className="space-y-1">
+                      <p className="font-mono text-[10px] text-red uppercase">Neural Quota Exhausted</p>
+                      <p className="font-body text-[10px] text-textDim">Rate limit reached. Symbolic safety layer is maintaining control. Neural link will reset in 120s.</p>
+                    </div>
+                  </div>
+                ) : metaAnalysisResult ? (
+                  <div className="space-y-4">
+                    <div className="font-mono text-[11px] text-cyan leading-relaxed">
+                      {metaAnalysisResult.replace('> META-ANALYST:', '').trim()}
+                    </div>
+                    <div className="pt-4 border-t border-borderDim space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Zap size={10} className="text-amber" />
+                        <span className="font-display text-[9px] font-bold text-amber uppercase tracking-widest">Tuning Recommendation</span>
+                      </div>
+                      <div className="p-3 bg-amberDim/10 border border-amber/20 font-mono text-[10px] text-amber/80">
+                        {metaAnalysisResult.includes('MPC') ? 'ADJUST_MPC_COST_WEIGHTS: Q_POS += 1.5' : 'ADJUST_SYSID_LR: ALPHA = 0.012'}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-40">
+                    <div className="w-8 h-8 border border-textDim flex items-center justify-center text-textDim">
+                      <Cpu size={16} className="animate-spin-slow" />
+                    </div>
+                    <p className="font-mono text-[9px] text-textDim uppercase">Initializing Neural Diagnostics...</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
