@@ -7,13 +7,243 @@ import {
   Maximize2, Activity as FrequencyIcon, RefreshCw, Globe,
   Link, Wifi, Radio, HardDrive, FileJson, Copy, Check,
   ArrowRight, MousePointer2, Layers, BarChart3, ShieldCheck,
-  Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown
+  Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown,
+  Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
+  Pause, RotateCcw, Info, Upload
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
-  ResponsiveContainer, BarChart, Bar, ReferenceLine
+  ResponsiveContainer, BarChart, Bar, ReferenceLine,
+  LineChart, Line, ComposedChart, Scatter, Legend, Tooltip
 } from 'recharts';
 import { GoogleGenAI } from "@google/genai";
+
+// --- ROCKET CONSTANTS ---
+const RKT_G = 9.80665;
+const RKT_R_AIR = 287.05;
+const RKT_L = 0.0065;
+const RKT_T0 = 288.15;
+const RKT_P0 = 101325;
+const RKT_RHO0 = 1.225;
+
+type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
+
+interface RocketState {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  mass: number;
+  propMass: number;
+  time: number;
+  phase: RocketPhase;
+  angle: number; // radians from vertical
+}
+
+interface RocketParams {
+  dryMass: number;
+  propMassInitial: number;
+  burnTime: number;
+  thrust: number;
+  fuelMass: number;
+  diameter: number;
+  length: number;
+  cd: number;
+  motorCurve: { t: number; f: number }[];
+  isp: number;
+  launchAngle: number; // degrees from vertical
+  railLength: number;
+  launchAltitude: number;
+  drogueAlt: number; // 0 means apogee
+  drogueCd: number;
+  drogueDiam: number;
+  mainAlt: number;
+  mainCd: number;
+  mainDiam: number;
+}
+
+const atmosphericDensity = (altitude: number) => {
+  if (altitude < 0) return RKT_RHO0;
+  const T = RKT_T0 - RKT_L * altitude;
+  if (T <= 0) return 0;
+  const P = RKT_P0 * Math.pow(1 - (RKT_L * altitude) / RKT_T0, (RKT_G / (RKT_R_AIR * RKT_L)));
+  return P / (RKT_R_AIR * T);
+};
+
+const getThrustAtTime = (time: number, curve: { t: number; f: number }[]) => {
+  if (curve.length === 0) return 0;
+  if (time < curve[0].t) return 0;
+  if (time > curve[curve.length - 1].t) return 0;
+  
+  for (let i = 0; i < curve.length - 1; i++) {
+    if (time >= curve[i].t && time <= curve[i+1].t) {
+      const t0 = curve[i].t;
+      const t1 = curve[i+1].t;
+      const f0 = curve[i].f;
+      const f1 = curve[i+1].f;
+      return f0 + (f1 - f0) * (time - t0) / (t1 - t0);
+    }
+  }
+  return 0;
+};
+
+const rocketDerivatives = (state: RocketState, params: RocketParams) => {
+  const rho = atmosphericDensity(state.y + params.launchAltitude);
+  const area = Math.PI * Math.pow(params.diameter / 2, 2);
+  const v = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+  
+  const thrust = getThrustAtTime(state.time, params.motorCurve);
+  
+  // Drag coefficient might change based on phase (parachutes)
+  let currentCd = params.cd;
+  let currentArea = area;
+  
+  if (state.phase === 'DROGUE') {
+    currentCd = params.drogueCd;
+    currentArea = Math.PI * Math.pow(params.drogueDiam / 2, 2);
+  } else if (state.phase === 'MAIN') {
+    currentCd = params.mainCd;
+    currentArea = Math.PI * Math.pow(params.mainDiam / 2, 2);
+  }
+  
+  const drag = 0.5 * rho * v * v * currentCd * currentArea;
+  
+  // Gravity
+  const Fgx = 0;
+  const Fgy = -state.mass * RKT_G;
+  
+  // Thrust components
+  const angle = state.angle;
+  const Ftx = thrust * Math.sin(angle);
+  const Fty = thrust * Math.cos(angle);
+  
+  // Drag components (opposite to velocity)
+  const Fdx = v > 0 ? -drag * (state.vx / v) : 0;
+  const Fdy = v > 0 ? -drag * (state.vy / v) : 0;
+  
+  // Total force
+  const Fx = Ftx + Fdx + Fgx;
+  const Fy = Fty + Fdy + Fgy;
+  
+  return {
+    dx: state.vx,
+    dy: state.vy,
+    dvx: Fx / state.mass,
+    dvy: Fy / state.mass,
+    dm: -thrust / (RKT_G * params.isp),
+    dt: 1
+  };
+};
+
+const rocketRK4Step = (state: RocketState, params: RocketParams, dt: number) => {
+  const k1 = rocketDerivatives(state, params);
+  
+  const s2: RocketState = {
+    ...state,
+    x: state.x + k1.dx * dt / 2,
+    y: state.y + k1.dy * dt / 2,
+    vx: state.vx + k1.dvx * dt / 2,
+    vy: state.vy + k1.dvy * dt / 2,
+    mass: state.mass + k1.dm * dt / 2,
+    time: state.time + k1.dt * dt / 2
+  };
+  const k2 = rocketDerivatives(s2, params);
+  
+  const s3: RocketState = {
+    ...state,
+    x: state.x + k2.dx * dt / 2,
+    y: state.y + k2.dy * dt / 2,
+    vx: state.vx + k2.dvx * dt / 2,
+    vy: state.vy + k2.dvy * dt / 2,
+    mass: state.mass + k2.dm * dt / 2,
+    time: state.time + k2.dt * dt / 2
+  };
+  const k3 = rocketDerivatives(s3, params);
+  
+  const s4: RocketState = {
+    ...state,
+    x: state.x + k3.dx * dt,
+    y: state.y + k3.dy * dt,
+    vx: state.vx + k3.dvx * dt,
+    vy: state.vy + k3.dvy * dt,
+    mass: state.mass + k3.dm * dt,
+    time: state.time + k3.dt * dt
+  };
+  const k4 = rocketDerivatives(s4, params);
+  
+  return {
+    x: state.x + (k1.dx + 2 * k2.dx + 2 * k3.dx + k4.dx) * dt / 6,
+    y: state.y + (k1.dy + 2 * k2.dy + 2 * k3.dy + k4.dy) * dt / 6,
+    vx: state.vx + (k1.dvx + 2 * k2.dvx + 2 * k3.dvx + k4.dvx) * dt / 6,
+    vy: state.vy + (k1.dvy + 2 * k2.dvy + 2 * k3.dvy + k4.dvy) * dt / 6,
+    mass: Math.max(params.dryMass, state.mass + (k1.dm + 2 * k2.dm + 2 * k3.dm + k4.dm) * dt / 6),
+    time: state.time + dt,
+    propMass: Math.max(0, state.propMass + (k1.dm + 2 * k2.dm + 2 * k3.dm + k4.dm) * dt / 6)
+  };
+};
+
+const updateRocketPhase = (state: RocketState, params: RocketParams, prevState: RocketState) => {
+  let { phase, x, y, vx, vy, time } = state;
+  
+  if (phase === 'PRELAUNCH') {
+    return 'PRELAUNCH';
+  }
+  
+  if (phase === 'RAIL') {
+    const dist = Math.sqrt(x * x + y * y);
+    if (dist >= params.railLength) {
+      return 'POWERED';
+    }
+    return 'RAIL';
+  }
+  
+  if (phase === 'POWERED') {
+    const thrust = getThrustAtTime(time, params.motorCurve);
+    if (thrust <= 0 && time > 0.1) {
+      return 'COAST';
+    }
+    if (vy < 0 && prevState.vy >= 0) {
+      return 'APOGEE';
+    }
+    return 'POWERED';
+  }
+  
+  if (phase === 'COAST') {
+    if (vy < 0 && prevState.vy >= 0) {
+      return 'APOGEE';
+    }
+    return 'COAST';
+  }
+  
+  if (phase === 'APOGEE') {
+    return 'DROGUE';
+  }
+  
+  if (phase === 'DROGUE') {
+    if (params.mainAlt > 0 && y <= params.mainAlt) {
+      return 'MAIN';
+    }
+    if (y <= 0) return 'LANDED';
+    return 'DROGUE';
+  }
+  
+  if (phase === 'MAIN') {
+    if (y <= 0) return 'LANDED';
+    return 'MAIN';
+  }
+  
+  if (phase === 'LANDED') {
+    return 'LANDED';
+  }
+  
+  return phase;
+};
+
+const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: number) => {
+  const area = Math.PI * Math.pow(diameter / 2, 2);
+  if (area === 0) return 0;
+  return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
+};
 
 // --- CONSTANTS ---
 async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "") {
@@ -312,7 +542,10 @@ const IntegrationActionPanel = ({
   endpoint,
   setEndpoint,
   dRealEndpoint,
-  setDRealEndpoint
+  setDRealEndpoint,
+  systemProfile,
+  rocketParams,
+  priors
 }: { 
   files: GeneratedFile[], 
   onTest: () => void, 
@@ -322,9 +555,49 @@ const IntegrationActionPanel = ({
   endpoint: string,
   setEndpoint: (e: string) => void,
   dRealEndpoint: string,
-  setDRealEndpoint: (e: string) => void
+  setDRealEndpoint: (e: string) => void,
+  systemProfile: SystemProfile,
+  rocketParams: RocketParams,
+  priors: { mass: number, friction: number }
 }) => {
   const [copied, setCopied] = useState(false);
+
+  const handleDownloadSentinelPack = () => {
+    const sentinelPack = {
+      metadata: {
+        client: "PhysiCore-v3.0",
+        timestamp: new Date().toISOString(),
+        domain: systemProfile.domain,
+        platform: systemProfile.platform,
+      },
+      priors: {
+        mass: priors.mass,
+        friction: priors.friction,
+      },
+      ...(systemProfile.domain === 'ROCKETS' && {
+        rocket_manifest: {
+          burn_time: rocketParams.burnTime,
+          thrust: rocketParams.thrust,
+          dry_mass: rocketParams.dryMass,
+          fuel_mass: rocketParams.fuelMass,
+          isp: rocketParams.isp,
+        }
+      }),
+      control_logic: {
+        optimizer: "MPC-CEM",
+        horizon: 12,
+        connection_mode: connectionMode,
+        endpoint: endpoint,
+      }
+    };
+    const blob = new Blob([JSON.stringify(sentinelPack, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const domainStr = systemProfile.domain ? systemProfile.domain.toLowerCase() : 'unknown';
+    a.download = `sentinel_pack_${domainStr}_${Date.now()}.json`;
+    a.click();
+  };
 
   const handleDownloadAll = () => {
     files.forEach((file, index) => {
@@ -409,6 +682,17 @@ const IntegrationActionPanel = ({
         </div>
 
         <button 
+          onClick={handleDownloadSentinelPack}
+          className="flex items-center justify-between p-4 border border-amber/30 bg-bgRaised hover:bg-amber hover:text-black transition-all group"
+        >
+          <div className="flex flex-col items-start">
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">DOWNLOAD SENTINEL PACK</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">System configuration (JSON)</span>
+          </div>
+          <Shield size={20} />
+        </button>
+
+        <button 
           onClick={handleDownloadAll}
           className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
         >
@@ -485,6 +769,578 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ filename, content }) => {
   );
 };
 
+const FlightDataImportOverlay = ({ isOpen, onClose, onImport }: { isOpen: boolean, onClose: () => void, onImport: (data: any[]) => void }) => {
+  const [dragActive, setDragActive] = useState(false);
+
+  const handleFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      const lines = content.split('\n');
+      const data = lines.map(l => {
+        const parts = l.trim().split(',');
+        if (parts.length < 2) return null;
+        return { t: parseFloat(parts[0]), y: parseFloat(parts[1]), v: parseFloat(parts[2]) || 0 };
+      }).filter(p => p !== null && !isNaN(p.t) && !isNaN(p.y));
+      onImport(data);
+      onClose();
+    };
+    reader.readAsText(file);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-8">
+      <div className="w-full max-w-2xl bg-bgRaised border border-border p-8 space-y-6">
+        <div className="flex justify-between items-center border-b border-border pb-4">
+          <div className="flex items-center gap-3">
+            <FileUp className="text-cyan" size={24} />
+            <h2 className="font-display text-xl font-bold text-white tracking-widest uppercase">IMPORT ACTUAL FLIGHT DATA</h2>
+          </div>
+          <button onClick={onClose} className="text-textDim hover:text-white"><X size={24} /></button>
+        </div>
+
+        <div 
+          onDragOver={e => { e.preventDefault(); setDragActive(true); }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={e => { e.preventDefault(); setDragActive(false); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }}
+          className={`h-64 border-2 border-dashed flex flex-col items-center justify-center gap-4 transition-all ${dragActive ? 'border-cyan bg-cyan/5' : 'border-border'}`}
+        >
+          <Upload size={48} className={dragActive ? 'text-cyan' : 'text-textDim'} />
+          <div className="text-center">
+            <p className="font-display text-sm font-bold text-white uppercase tracking-widest">Drop Flight Log (CSV)</p>
+            <p className="font-mono text-[10px] text-textDim mt-1 uppercase">Format: time, altitude, velocity</p>
+          </div>
+          <label className="cursor-pointer px-6 py-2 bg-white text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-cyan transition-all">
+            Browse Files
+            <input type="file" accept=".csv" className="hidden" onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])} />
+          </label>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="p-4 bg-bg border border-border space-y-2">
+            <div className="micro-label text-cyan uppercase">Supported Formats</div>
+            <ul className="font-mono text-[10px] text-textDim space-y-1 uppercase">
+              <li>• Generic CSV (T, Alt, Vel)</li>
+              <li>• StratoLogger (.csv)</li>
+              <li>• TeleMetrum (.csv)</li>
+              <li>• RRC3 (.csv)</li>
+            </ul>
+          </div>
+          <div className="p-4 bg-bg border border-border space-y-2">
+            <div className="micro-label text-amber uppercase">Analysis Engine</div>
+            <p className="font-mono text-[10px] text-textDim uppercase leading-relaxed">
+              SystemID will automatically estimate Cd and Isp divergence based on imported trajectory.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RocketTelemetryWidgets = ({ flightData, actualData, params }: { flightData: any[], actualData: any[] | null, params: RocketParams }) => {
+  const lastPoint = flightData[flightData.length - 1] || { y: 0, v: 0, t: 0, phase: 'PRELAUNCH' };
+  const maxAlt = Math.max(0, ...flightData.map(d => d.y));
+  const maxVel = Math.max(0, ...flightData.map(d => Math.abs(d.v)));
+
+  return (
+    <div className="grid grid-cols-1 gap-4">
+      {/* Altitude Profile */}
+      <div className="bg-bgRaised border border-border p-4 space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2 text-green">
+            <TrendingUp size={14} />
+            <span className="micro-label uppercase">Altitude Profile (m)</span>
+          </div>
+          <span className="font-mono text-xs text-white">{lastPoint.y.toFixed(1)}m</span>
+        </div>
+        <div className="h-[150px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={flightData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
+              <XAxis dataKey="t" hide />
+              <YAxis domain={[0, 'auto']} hide />
+              <Tooltip contentStyle={{ backgroundColor: '#0A0A0A', border: '1px solid #2A2A2A', fontSize: '10px' }} />
+              <Area type="monotone" dataKey="y" stroke={COLORS.green} fill={COLORS.green} fillOpacity={0.1} isAnimationActive={false} />
+              {actualData && <Line type="monotone" data={actualData} dataKey="y" stroke="#FFF" strokeDasharray="5 5" dot={false} isAnimationActive={false} />}
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Velocity & Mach */}
+      <div className="bg-bgRaised border border-border p-4 space-y-4">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center gap-2 text-cyan">
+            <Zap size={14} />
+            <span className="micro-label uppercase">Velocity & Mach</span>
+          </div>
+          <span className="font-mono text-xs text-white">{lastPoint.v.toFixed(1)}m/s</span>
+        </div>
+        <div className="h-[150px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={flightData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
+              <XAxis dataKey="t" hide />
+              <YAxis hide />
+              <Tooltip contentStyle={{ backgroundColor: '#0A0A0A', border: '1px solid #2A2A2A', fontSize: '10px' }} />
+              <Line type="monotone" dataKey="v" stroke={COLORS.cyan} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-bgRaised border border-border p-3">
+          <div className="micro-label text-textDim uppercase mb-1">Apogee</div>
+          <div className="font-mono text-lg text-white">{maxAlt.toFixed(0)}m</div>
+        </div>
+        <div className="bg-bgRaised border border-border p-3">
+          <div className="micro-label text-textDim uppercase mb-1">Max Velocity</div>
+          <div className="font-mono text-lg text-white">{maxVel.toFixed(1)}m/s</div>
+        </div>
+        <div className="bg-bgRaised border border-border p-3">
+          <div className="micro-label text-textDim uppercase mb-1">Current Phase</div>
+          <div className="font-mono text-[10px] text-green uppercase truncate">{lastPoint.phase}</div>
+        </div>
+        <div className="bg-bgRaised border border-border p-3">
+          <div className="micro-label text-textDim uppercase mb-1">SystemID Cd</div>
+          <div className="font-mono text-lg text-amber">{params.cd.toFixed(3)}</div>
+        </div>
+      </div>
+
+      {/* Event Log */}
+      <div className="bg-bgRaised border border-border p-4 space-y-3">
+        <div className="flex items-center gap-2 text-amber">
+          <Activity size={14} />
+          <span className="micro-label uppercase">Flight Events Log</span>
+        </div>
+        <div className="space-y-2 max-h-[150px] overflow-y-auto custom-scroll pr-2">
+          {flightData.filter((d, i, arr) => i === 0 || d.phase !== arr[i-1].phase).map((evt, i) => (
+            <div key={i} className="flex justify-between items-center border-l-2 border-amber pl-3 py-1 bg-bg/50">
+              <span className="font-mono text-[10px] text-white uppercase">{evt.phase}</span>
+              <span className="font-mono text-[10px] text-textDim">T+{evt.t.toFixed(2)}s</span>
+            </div>
+          ))}
+          {flightData.length === 0 && <div className="text-center font-mono text-[10px] text-textDim uppercase py-4">Waiting for Liftoff...</div>}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpeed, setSimSpeed, isRunning, setIsRunning, resetSim }: { state: RocketState, params: RocketParams, flightData: any[], actualData: any[] | null, simSpeed: number, setSimSpeed: (s: number) => void, isRunning: boolean, setIsRunning: (r: boolean) => void, resetSim: () => void }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const draw = () => {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Scaling
+      const maxAlt = Math.max(2000, state.y * 1.2, ...(flightData.map(d => d.y)));
+      const maxRange = Math.max(1000, state.x * 1.2, ...(flightData.map(d => d.x)));
+      const scaleY = (h - 60) / maxAlt;
+      const scaleX = (w - 60) / maxRange;
+      const scale = Math.min(scaleX, scaleY);
+
+      const toCanvasX = (x: number) => 40 + x * scale;
+      const toCanvasY = (y: number) => h - 40 - y * scale;
+
+      // Grid
+      ctx.strokeStyle = '#1A1A1A';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= maxRange; i += 500) {
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(i), h - 40);
+        ctx.lineTo(toCanvasX(i), 40);
+        ctx.stroke();
+      }
+      for (let i = 0; i <= maxAlt; i += 500) {
+        ctx.beginPath();
+        ctx.moveTo(40, toCanvasY(i));
+        ctx.lineTo(w - 40, toCanvasY(i));
+        ctx.stroke();
+      }
+
+      // Ground
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(20, h - 40);
+      ctx.lineTo(w - 20, h - 40);
+      ctx.stroke();
+
+      // Trajectory Trace
+      if (flightData.length > 1) {
+        ctx.lineWidth = 2;
+        for (let i = 1; i < flightData.length; i++) {
+          const p1 = flightData[i-1];
+          const p2 = flightData[i];
+          ctx.strokeStyle = p2.phase === 'POWERED' ? COLORS.cyan : 
+                           p2.phase === 'COAST' ? COLORS.amber : 
+                           p2.phase.includes('DROGUE') || p2.phase.includes('MAIN') ? COLORS.red : '#555';
+          ctx.beginPath();
+          ctx.moveTo(toCanvasX(p1.x), toCanvasY(p1.y));
+          ctx.lineTo(toCanvasX(p2.x), toCanvasY(p2.y));
+          ctx.stroke();
+        }
+      }
+
+      // Actual Data Trace (if available)
+      if (actualData && actualData.length > 1) {
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.beginPath();
+        ctx.moveTo(toCanvasX(actualData[0].x || 0), toCanvasY(actualData[0].y));
+        for (let i = 1; i < actualData.length; i++) {
+          ctx.lineTo(toCanvasX(actualData[i].x || 0), toCanvasY(actualData[i].y));
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Rocket Marker
+      const rx = toCanvasX(state.x);
+      const ry = toCanvasY(state.y);
+      ctx.save();
+      ctx.translate(rx, ry);
+      ctx.rotate(state.angle);
+      ctx.fillStyle = COLORS.green;
+      ctx.beginPath();
+      ctx.moveTo(0, -10);
+      ctx.lineTo(4, 5);
+      ctx.lineTo(-4, 5);
+      ctx.closePath();
+      ctx.fill();
+      if (state.phase === 'POWERED') {
+        ctx.fillStyle = COLORS.cyan;
+        ctx.beginPath();
+        ctx.moveTo(-2, 5);
+        ctx.lineTo(2, 5);
+        ctx.lineTo(0, 15);
+        ctx.fill();
+      }
+      ctx.restore();
+
+      // HUD Overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(w - 180, 20, 160, 140);
+      ctx.strokeStyle = COLORS.green;
+      ctx.strokeRect(w - 180, 20, 160, 140);
+      
+      ctx.font = '10px "JetBrains Mono"';
+      ctx.fillStyle = COLORS.green;
+      ctx.fillText(`MET: ${state.time.toFixed(2)}s`, w - 170, 40);
+      ctx.fillStyle = '#FFF';
+      ctx.fillText(`ALT: ${state.y.toFixed(1)}m`, w - 170, 60);
+      ctx.fillText(`VEL: ${Math.sqrt(state.vx**2 + state.vy**2).toFixed(1)}m/s`, w - 170, 75);
+      ctx.fillText(`PHASE: ${state.phase}`, w - 170, 90);
+      ctx.fillText(`MASS: ${state.mass.toFixed(3)}kg`, w - 170, 105);
+      
+      const v_mag = Math.sqrt(state.vx**2 + state.vy**2);
+      const mach = v_mag / 343; // Simple mach
+      ctx.fillText(`MACH: ${mach.toFixed(2)}`, w - 170, 120);
+      
+      // Speed Controls
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(20, 20, 120, 40);
+      ctx.font = '8px "JetBrains Mono"';
+      ctx.fillStyle = '#555';
+      ctx.fillText('SIM SPEED', 30, 35);
+      [1, 5, 10, 50].forEach((s, i) => {
+        ctx.fillStyle = simSpeed === s ? COLORS.green : '#333';
+        ctx.fillRect(30 + i*25, 40, 20, 15);
+        ctx.fillStyle = simSpeed === s ? '#000' : '#FFF';
+        ctx.fillText(`${s}x`, 33 + i*25, 50);
+      });
+    };
+
+    let animationFrame: number;
+    const render = () => {
+      draw();
+      animationFrame = requestAnimationFrame(render);
+    };
+    render();
+
+    return () => cancelAnimationFrame(animationFrame);
+  }, [state, flightData, actualData, simSpeed]);
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Check speed buttons
+    if (y >= 40 && y <= 55) {
+      [1, 5, 10, 50].forEach((s, i) => {
+        const bx = 30 + i*25;
+        if (x >= bx && x <= bx + 20) setSimSpeed(s);
+      });
+    }
+  };
+
+  return (
+    <div className="relative w-full h-full bg-bgInset border border-border overflow-hidden">
+      <canvas ref={canvasRef} width={800} height={600} onClick={handleCanvasClick} className="w-full h-full cursor-crosshair" />
+      <div className="absolute bottom-4 left-4 flex gap-2">
+        <button onClick={() => setIsRunning(!isRunning)} className={`p-2 rounded-full ${isRunning ? 'bg-amber text-black' : 'bg-green text-black'} hover:scale-110 transition-all`}>
+          {isRunning ? <Pause size={20} /> : <Play size={20} />}
+        </button>
+        <button onClick={resetSim} className="p-2 rounded-full bg-bgRaised border border-border text-white hover:bg-border transition-all">
+          <RotateCcw size={20} />
+        </button>
+      </div>
+      <div className="absolute top-4 right-4 flex flex-col items-end gap-1">
+        <div className="micro-label text-textDim uppercase">Trajectory Engine v3.1</div>
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${isRunning ? 'bg-green animate-pulse' : 'bg-red'}`} />
+          <span className="font-mono text-[10px] text-white uppercase">{isRunning ? 'Live Simulation' : 'Paused'}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const RocketManifestWizard = ({ params, setParams }: { params: RocketParams, setParams: (p: RocketParams) => void }) => {
+  const [manualCurve, setManualCurve] = useState(params.motorCurve.length > 0 ? params.motorCurve : Array(5).fill({ t: 0, f: 0 }));
+  const [motorName, setMotorName] = useState('N/A');
+
+  const handleManualCurveChange = (idx: number, field: 't' | 'f', val: string) => {
+    const newCurve = [...manualCurve];
+    newCurve[idx] = { ...newCurve[idx], [field]: parseFloat(val) || 0 };
+    setManualCurve(newCurve);
+    setParams({ ...params, motorCurve: newCurve.sort((a, b) => a.t - b.t) });
+  };
+
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (file.name.endsWith('.eng')) {
+        // Simple .eng parser
+        const lines = content.split('\n');
+        const dataLines = lines.filter(l => l.trim() && !l.startsWith(';') && isNaN(parseInt(l.trim()[0])));
+        const curveLines = lines.filter(l => l.trim() && !l.startsWith(';') && !isNaN(parseInt(l.trim()[0])));
+        
+        if (dataLines.length > 0) {
+          const parts = dataLines[0].split(/\s+/);
+          setMotorName(parts[0]);
+          // parts[1] diameter, parts[2] length, parts[4] prop mass, parts[5] total mass
+          const propMass = parseFloat(parts[4]) || params.propMassInitial;
+          const dryMass = (parseFloat(parts[5]) || (params.dryMass + propMass)) - propMass;
+          setParams({ ...params, propMassInitial: propMass, dryMass });
+        }
+
+        const curve = curveLines.map(l => {
+          const [t, f] = l.trim().split(/\s+/).map(parseFloat);
+          return { t, f };
+        }).sort((a, b) => a.t - b.t);
+        
+        setParams({ ...params, motorCurve: curve });
+        setManualCurve(curve);
+      } else if (file.name.endsWith('.csv')) {
+        const lines = content.split('\n');
+        const curve = lines.map(l => {
+          const [t, f] = l.trim().split(',').map(parseFloat);
+          return { t, f };
+        }).filter(p => !isNaN(p.t) && !isNaN(p.f)).sort((a, b) => a.t - b.t);
+        setParams({ ...params, motorCurve: curve });
+        setManualCurve(curve);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const twr = params.motorCurve.length > 0 ? (Math.max(...params.motorCurve.map(p => p.f)) / ((params.dryMass + params.propMassInitial) * RKT_G)) : 0;
+
+  return (
+    <div className="space-y-8 p-6 bg-bgRaised border border-border">
+      <div className="flex items-center gap-3 border-b border-border pb-4">
+        <Rocket className="text-green" size={24} />
+        <div>
+          <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">ROCKET MANIFEST / PROPULSION</h2>
+          <p className="font-mono text-[10px] text-textDim uppercase">Mission Configuration & Recovery Parameters</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Section A: Physical */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-green">
+            <Layers size={14} />
+            <span className="micro-label uppercase">Section A: Physical Parameters</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Dry Mass (kg)</label>
+              <input type="number" step="0.1" value={params.dryMass} onChange={e => setParams({...params, dryMass: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+            </div>
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Propellant Mass (kg)</label>
+              <input type="number" step="0.01" value={params.propMassInitial} onChange={e => setParams({...params, propMassInitial: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+            </div>
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Diameter (m)</label>
+              <input type="number" step="0.001" value={params.diameter} onChange={e => setParams({...params, diameter: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+            </div>
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Drag Coeff (Cd)</label>
+              <input type="number" step="0.01" value={params.cd} onChange={e => setParams({...params, cd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+            </div>
+          </div>
+        </div>
+
+        {/* Section C: Launch */}
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-amber">
+            <Navigation size={14} />
+            <span className="micro-label uppercase">Section C: Launch Parameters</span>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Launch Angle (deg)</label>
+              <input type="number" value={params.launchAngle} onChange={e => setParams({...params, launchAngle: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
+            </div>
+            <div className="space-y-1">
+              <label className="micro-label text-textDim">Rail Length (m)</label>
+              <input type="number" value={params.railLength} onChange={e => setParams({...params, railLength: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
+            </div>
+            <div className="p-3 bg-bgRaised border border-borderDim col-span-2 flex justify-between items-center">
+              <div>
+                <div className="micro-label text-textDim">Thrust-to-Weight (TWR)</div>
+                <div className={`font-mono text-lg ${twr < 5 ? 'text-red' : 'text-green'}`}>{twr.toFixed(2)}</div>
+              </div>
+              <div className="text-right">
+                <div className="micro-label text-textDim">Status</div>
+                <div className={`font-mono text-[10px] ${twr < 5 ? 'text-red' : 'text-green'}`}>{twr < 5 ? 'UNSAFE_LAUNCH' : 'NOMINAL'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Section B: Motor Curve */}
+      <div className="space-y-4 border-t border-border pt-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-cyan">
+            <Zap size={14} />
+            <span className="micro-label uppercase">Section B: Motor Curve</span>
+          </div>
+          <div className="flex items-center gap-4">
+            {motorName !== 'N/A' && <span className="px-2 py-0.5 bg-cyanDim text-cyan font-mono text-[10px] border border-cyan/30">{motorName}</span>}
+            <label className="cursor-pointer flex items-center gap-2 px-3 py-1 bg-cyan text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+              <FileUp size={12} /> IMPORT .ENG / .CSV
+              <input type="file" accept=".eng,.csv" onChange={handleFileImport} className="hidden" />
+            </label>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 h-[200px] border border-border bg-bgInset p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={params.motorCurve}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
+                <XAxis dataKey="t" hide />
+                <YAxis hide />
+                <Tooltip contentStyle={{ backgroundColor: '#0A0A0A', border: '1px solid #2A2A2A', fontSize: '10px' }} />
+                <Area type="monotone" dataKey="f" stroke={COLORS.cyan} fill={COLORS.cyan} fillOpacity={0.1} isAnimationActive={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="space-y-2 overflow-y-auto max-h-[200px] custom-scroll pr-2">
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <span className="micro-label text-textDim">Time (s)</span>
+              <span className="micro-label text-textDim">Thrust (N)</span>
+            </div>
+            {(manualCurve.length > 10 ? manualCurve.slice(0, 10) : manualCurve).map((p, i) => (
+              <div key={i} className="grid grid-cols-2 gap-2">
+                <input type="number" step="0.1" value={p.t} onChange={e => handleManualCurveChange(i, 't', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
+                <input type="number" step="1" value={p.f} onChange={e => handleManualCurveChange(i, 'f', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
+              </div>
+            ))}
+            {manualCurve.length > 10 && <div className="text-center font-mono text-[8px] text-textDim uppercase pt-2">... {manualCurve.length - 10} more points ...</div>}
+          </div>
+        </div>
+      </div>
+
+      {/* Section D: Recovery */}
+      <div className="space-y-4 border-t border-border pt-6">
+        <div className="flex items-center gap-2 text-red">
+          <Wind size={14} />
+          <span className="micro-label uppercase">Section D: Recovery System</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div className="space-y-4">
+            <div className="p-3 bg-bgRaised border border-borderDim space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="micro-label text-textDim">Drogue Deployment</span>
+                <select value={params.drogueAlt === 0 ? 'apogee' : 'alt'} onChange={e => setParams({...params, drogueAlt: e.target.value === 'apogee' ? 0 : 500})} className="bg-bg border border-border font-mono text-[10px] text-white p-1 outline-none">
+                  <option value="apogee">AT APOGEE</option>
+                  <option value="alt">AT ALTITUDE</option>
+                </select>
+              </div>
+              {params.drogueAlt !== 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="micro-label text-textDim">Deployment Alt (m)</span>
+                  <input type="number" value={params.drogueAlt} onChange={e => setParams({...params, drogueAlt: parseFloat(e.target.value) || 0})} className="w-20 bg-bg border border-border p-1 font-mono text-[10px] text-white text-right" />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="micro-label text-textDim">Drogue Cd</label>
+                  <input type="number" step="0.1" value={params.drogueCd} onChange={e => setParams({...params, drogueCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                </div>
+                <div className="space-y-1">
+                  <label className="micro-label text-textDim">Drogue Diam (m)</label>
+                  <input type="number" step="0.01" value={params.drogueDiam} onChange={e => setParams({...params, drogueDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="space-y-4">
+            <div className="p-3 bg-bgRaised border border-borderDim space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="micro-label text-textDim">Main Deployment</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[10px] text-white">{params.mainAlt}m</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="micro-label text-textDim">Deployment Altitude (m)</label>
+                <input type="range" min="50" max="1000" step="50" value={params.mainAlt} onChange={e => setParams({...params, mainAlt: parseInt(e.target.value)})} className="w-full h-1 bg-border appearance-none cursor-pointer accent-red" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="micro-label text-textDim">Main Cd</label>
+                  <input type="number" step="0.1" value={params.mainCd} onChange={e => setParams({...params, mainCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                </div>
+                <div className="space-y-1">
+                  <label className="micro-label text-textDim">Main Diam (m)</label>
+                  <input type="number" step="0.01" value={params.mainDiam} onChange={e => setParams({...params, mainDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- MAIN APP ---
 
 export default function App() {
@@ -508,6 +1364,40 @@ export default function App() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
+
+  // Rocket State
+  const [rocketState, setRocketState] = useState<RocketState>({
+    x: 0, y: 0, vx: 0, vy: 0, mass: 3.0, propMass: 0.5, time: 0, phase: 'PRELAUNCH', angle: 0.087 // ~5 deg
+  });
+  const [rocketParams, setRocketParams] = useState<RocketParams>({
+    dryMass: 2.5,
+    propMassInitial: 0.5,
+    burnTime: 1.8,
+    thrust: 420,
+    fuelMass: 0.5,
+    diameter: 0.075,
+    length: 1.2,
+    cd: 0.5,
+    motorCurve: [
+      { t: 0, f: 0 }, { t: 0.1, f: 450 }, { t: 1.5, f: 400 }, { t: 1.8, f: 0 }
+    ],
+    isp: 200,
+    launchAngle: 5,
+    railLength: 3,
+    launchAltitude: 0,
+    drogueAlt: 0,
+    drogueCd: 1.5,
+    drogueDiam: 0.4,
+    mainAlt: 150,
+    mainCd: 2.2,
+    mainDiam: 1.2
+  });
+  const [flightData, setFlightData] = useState<any[]>([]);
+  const [isRocketSimRunning, setIsRocketSimRunning] = useState(false);
+  const [rocketSimSpeed, setRocketSimSpeed] = useState(1);
+  const [actualFlightData, setActualFlightData] = useState<any[] | null>(null);
+  const [showImportOverlay, setShowImportOverlay] = useState(false);
+
   const [telemetry, setTelemetry] = useState({
     mass: 2.714,
     friction: 0.412,
@@ -660,6 +1550,51 @@ export default function App() {
     return parts;
   };
 
+  // Rocket Simulation Loop
+  useEffect(() => {
+    if (!isRocketSimRunning || systemProfile.domain !== 'ROCKETS') return;
+
+    const dt = 0.01;
+    const interval = setInterval(() => {
+      setRocketState(prev => {
+        if (prev.phase === 'LANDED') {
+          setIsRocketSimRunning(false);
+          return prev;
+        }
+
+        let current = prev;
+        for (let i = 0; i < rocketSimSpeed; i++) {
+          const next = { ...current, ...rocketRK4Step(current, rocketParams, dt) };
+          const phase = updateRocketPhase(next, rocketParams, current);
+          current = { ...next, phase };
+        }
+
+        setFlightData(fd => [...fd, { ...current }]);
+        return current;
+      });
+    }, 10);
+
+    return () => clearInterval(interval);
+  }, [isRocketSimRunning, rocketSimSpeed, rocketParams, systemProfile.domain]);
+
+  const resetRocketSim = () => {
+    setIsRocketSimRunning(false);
+    setRocketState({
+      x: 0, y: 0, vx: 0, vy: 0, 
+      mass: rocketParams.dryMass + rocketParams.propMassInitial, 
+      propMass: rocketParams.propMassInitial, 
+      time: 0, phase: 'PRELAUNCH', 
+      angle: (rocketParams.launchAngle * Math.PI) / 180
+    });
+    setFlightData([]);
+  };
+
+  const handleRocketLaunch = () => {
+    if (rocketState.phase === 'PRELAUNCH') {
+      setIsRocketSimRunning(true);
+    }
+  };
+
   // AI Logic
   const handleSendMessage = async (text?: string) => {
     const msg = text || inputValue;
@@ -738,7 +1673,7 @@ export default function App() {
             return { filename: parts![1], content: parts![2].trim(), extension: parts![1].split('.').pop() || '' };
           });
           setGeneratedFiles(prev => [...prev, ...newFiles]);
-          setIntegrationPhase(4); // Transition to action panel phase
+          setIntegrationPhase(3); // Transition to wizard steps phase
         }
       } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
         setQuotaExceeded(true);
@@ -1303,6 +2238,48 @@ export default function App() {
                     </div>
                   );
                 })}
+                {integrationPhase === 3 && (
+                  <div className="space-y-6">
+                    {systemProfile.domain === 'ROCKETS' ? (
+                      <RocketManifestWizard params={rocketParams} setParams={setRocketParams} />
+                    ) : (
+                      <div className="p-6 bg-bgRaised border border-border space-y-4">
+                        <div className="flex items-center gap-3 border-b border-border pb-4">
+                          <Cpu className="text-cyan" size={24} />
+                          <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">Hardware Priors</h2>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-1">
+                            <label className="micro-label text-textDim">System Mass (kg)</label>
+                            <input 
+                              type="number" 
+                              value={telemetry.mass} 
+                              onChange={e => setTelemetry({ ...telemetry, mass: parseFloat(e.target.value) })}
+                              className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="micro-label text-textDim">Friction Coeff (μ)</label>
+                            <input 
+                              type="number" 
+                              value={telemetry.friction} 
+                              onChange={e => setTelemetry({ ...telemetry, friction: parseFloat(e.target.value) })}
+                              className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <button onClick={() => setIntegrationPhase(1)} className="px-6 py-2 border border-border text-textSecondary font-display text-[11px] font-bold uppercase tracking-widest hover:text-white transition-all">
+                        ← BACK TO CHAT
+                      </button>
+                      <button onClick={() => setIntegrationPhase(4)} className="px-6 py-2 bg-white text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-green transition-all">
+                        NEXT STEP: GENERATE BRIDGE →
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {integrationPhase === 4 && (
                   <IntegrationActionPanel 
                     files={generatedFiles} 
@@ -1314,6 +2291,9 @@ export default function App() {
                     setEndpoint={setEndpoint}
                     dRealEndpoint={dRealEndpoint}
                     setDRealEndpoint={setDRealEndpoint}
+                    systemProfile={systemProfile}
+                    rocketParams={rocketParams}
+                    priors={{ mass: telemetry.mass, friction: telemetry.friction }}
                   />
                 )}
               </>
@@ -1375,69 +2355,58 @@ export default function App() {
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scroll p-6 space-y-8">
-            <section className="space-y-4">
-              <div className="border-l-2 border-cyan pl-3">
-                <span className="micro-label">SystemID Estimates</span>
-              </div>
-              <div className="space-y-4">
-                {[
-                  { label: 'ESTIMATED MASS', val: `${telemetry.mass.toFixed(3)} kg`, delta: telemetry.mass > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
-                  { label: 'FRICTION COEFF', val: `${telemetry.friction.toFixed(3)} μ`, delta: telemetry.friction > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
-                  { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
-                ].map((item, i) => (
-                  <div key={i} className="space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="micro-label text-textDim">{item.label}</span>
-                      <span className="font-mono text-[10px]" style={{ color: item.color }}>{item.delta}</span>
-                    </div>
-                    <div className="font-mono text-sm text-white">{item.val}</div>
+            {systemProfile.domain === 'ROCKETS' ? (
+              <RocketTelemetryWidgets flightData={flightData} actualData={actualFlightData} params={rocketParams} />
+            ) : (
+              <>
+                <section className="space-y-4">
+                  <div className="border-l-2 border-cyan pl-3">
+                    <span className="micro-label">SystemID Estimates</span>
                   </div>
-                ))}
-              </div>
-            </section>
+                  <div className="space-y-4">
+                    {[
+                      { label: 'ESTIMATED MASS', val: `${telemetry.mass.toFixed(3)} kg`, delta: telemetry.mass > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
+                      { label: 'FRICTION COEFF', val: `${telemetry.friction.toFixed(3)} μ`, delta: telemetry.friction > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
+                      { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
+                    ].map((item, i) => (
+                      <div key={i} className="space-y-1">
+                        <div className="flex justify-between items-center">
+                          <span className="micro-label text-textDim">{item.label}</span>
+                          <span className="font-mono text-[10px]" style={{ color: item.color }}>{item.delta}</span>
+                        </div>
+                        <div className="font-mono text-sm text-white">{item.val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
 
-            <section className="space-y-4">
-              <div className="border-l-2 border-amber pl-3">
-                <span className="micro-label">Sentinel Governance</span>
-              </div>
-              <div className="p-4 bg-amberDim/10 border border-amber/20 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-display text-[10px] font-bold text-amber tracking-widest uppercase">Stability Kernel</span>
-                  <span className="font-mono text-[9px] text-green">{telemetry.isStable ? 'NOMINAL' : 'UNSTABLE'}</span>
-                </div>
-                <div className="h-1 w-full bg-border">
-                  <div className="h-full bg-amber transition-all duration-500" style={{ width: `${telemetry.confidence}%` }} />
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="font-mono text-[9px] text-textSecondary uppercase">Confidence: {telemetry.confidence.toFixed(1)}%</span>
-                  {telemetry.isFaulted && <span className="font-mono text-[9px] text-red animate-pulse">FAULT_DETECTED</span>}
-                </div>
-              </div>
-              <div className="p-4 border border-border bg-bgRaised space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="micro-label text-textDim uppercase">Byzantine Consensus</span>
-                  <span className="font-mono text-[9px] text-textSecondary">SINGLE NODE</span>
-                </div>
-                <div className="font-mono text-[8px] text-textDim uppercase">Consensus disabled — Multi-node quorum required</div>
-              </div>
-              <div className="space-y-2">
-                {isSystemConnected ? [
-                  { time: formatTime(new Date()), msg: telemetry.isStable ? 'LYAPUNOV_BOUND_CHECK: OK' : 'LYAPUNOV_VIOLATION: WARNING' },
-                  { time: formatTime(new Date()), msg: telemetry.isFaulted ? 'FAULT_OBSERVER: ANOMALY_DETECTED' : 'MPC_TRAJECTORY_VALIDATED' },
-                  { time: formatTime(new Date()), msg: 'SYSID_CONVERGENCE_STABLE' },
-                  { time: formatTime(new Date()), msg: 'SENTINEL_HEARTBEAT_ACK' },
-                ].map((log, i) => (
-                  <div key={i} className="flex gap-3 font-mono text-[9px]">
-                    <span className="text-textDim">{log.time}</span>
-                    <span className="text-textSecondary">{log.msg}</span>
+                <section className="space-y-4">
+                  <div className="border-l-2 border-amber pl-3">
+                    <span className="micro-label">Sentinel Governance</span>
                   </div>
-                )) : (
-                  <div className="flex items-center justify-center h-20 border border-dashed border-borderDim">
-                    <span className="font-mono text-[9px] text-textDim uppercase">Waiting for telemetry...</span>
+                  <div className="p-4 bg-amberDim/10 border border-amber/20 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-display text-[10px] font-bold text-amber tracking-widest uppercase">Stability Kernel</span>
+                      <span className="font-mono text-[9px] text-green">{telemetry.isStable ? 'NOMINAL' : 'UNSTABLE'}</span>
+                    </div>
+                    <div className="h-1 w-full bg-border">
+                      <div className="h-full bg-amber transition-all duration-500" style={{ width: `${telemetry.confidence}%` }} />
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-[9px] text-textSecondary uppercase">Confidence: {telemetry.confidence.toFixed(1)}%</span>
+                      {telemetry.isFaulted && <span className="font-mono text-[9px] text-red animate-pulse">FAULT_DETECTED</span>}
+                    </div>
                   </div>
-                )}
-              </div>
-            </section>
+                  <div className="p-4 border border-border bg-bgRaised space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="micro-label text-textDim uppercase">Byzantine Consensus</span>
+                      <span className="font-mono text-[9px] text-textSecondary">SINGLE NODE</span>
+                    </div>
+                    <div className="font-mono text-[8px] text-textDim uppercase">Consensus disabled — Multi-node quorum required</div>
+                  </div>
+                </section>
+              </>
+            )}
           </div>
         </aside>
 
@@ -1448,17 +2417,29 @@ export default function App() {
             <div className="absolute top-6 left-6 z-10 space-y-2">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 border border-green flex items-center justify-center text-green">
-                  <Maximize2 size={20} />
+                  {systemProfile.domain === 'ROCKETS' ? <Rocket size={20} /> : <Maximize2 size={20} />}
                 </div>
                 <div>
-                  <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">Live Simulation View</h2>
-                  <p className="font-mono text-[10px] text-textDim uppercase">RK4 Integrator @ 60Hz | MPC Lookahead</p>
+                  <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">
+                    {systemProfile.domain === 'ROCKETS' ? 'Rocket Trajectory View' : 'Live Simulation View'}
+                  </h2>
+                  <p className="font-mono text-[10px] text-textDim uppercase">
+                    {systemProfile.domain === 'ROCKETS' ? '3DOF Physics Engine | ISA Atmosphere' : 'RK4 Integrator @ 60Hz | MPC Lookahead'}
+                  </p>
                 </div>
               </div>
             </div>
             
             <div className="absolute top-6 right-6 z-10 flex gap-2">
-              <button className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
+              {systemProfile.domain === 'ROCKETS' && (
+                <button 
+                  onClick={() => setShowImportOverlay(true)}
+                  className="px-3 py-2 border border-cyan bg-cyan/10 text-cyan font-display text-[10px] font-bold uppercase tracking-widest hover:bg-cyan hover:text-black transition-all"
+                >
+                  ⬆ IMPORT FLIGHT DATA
+                </button>
+              )}
+              <button onClick={systemProfile.domain === 'ROCKETS' ? resetRocketSim : () => {}} className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
                 <RefreshCw size={16} />
               </button>
               <button className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
@@ -1466,9 +2447,23 @@ export default function App() {
               </button>
             </div>
 
-            <DashboardCanvas isConnected={isSystemConnected} onTelemetryUpdate={setTelemetry} />
+            {systemProfile.domain === 'ROCKETS' ? (
+              <RocketTrajectoryCanvas 
+                state={rocketState} 
+                params={rocketParams} 
+                flightData={flightData} 
+                actualData={actualFlightData}
+                simSpeed={rocketSimSpeed}
+                setSimSpeed={setRocketSimSpeed}
+                isRunning={isRocketSimRunning}
+                setIsRunning={setIsRocketSimRunning}
+                resetSim={resetRocketSim}
+              />
+            ) : (
+              <DashboardCanvas isConnected={isSystemConnected} onTelemetryUpdate={setTelemetry} />
+            )}
 
-            {!isSystemConnected && (
+            {!isSystemConnected && systemProfile.domain !== 'ROCKETS' && (
               <div className="absolute inset-0 z-20 bg-void/40 backdrop-blur-[2px] flex items-center justify-center">
                 <div className="p-8 border border-border bg-bg/90 max-w-[320px] text-center space-y-6">
                   <div className="w-12 h-12 border border-textDim flex items-center justify-center text-textDim mx-auto">
