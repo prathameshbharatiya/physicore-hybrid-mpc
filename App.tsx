@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAuthState } from 'react-firebase-hooks/auth';
+import { auth, db, googleProvider, handleFirestoreError, OperationType } from './src/firebase';
+import { signInWithPopup, signOut } from 'firebase/auth';
+import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -9,7 +14,7 @@ import {
   ArrowRight, MousePointer2, Layers, BarChart3, ShieldCheck,
   Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown,
   Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
-  Pause, RotateCcw, Info, Upload
+  Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
@@ -545,7 +550,8 @@ const IntegrationActionPanel = ({
   setDRealEndpoint,
   systemProfile,
   rocketParams,
-  priors
+  priors,
+  onAction
 }: { 
   files: GeneratedFile[], 
   onTest: () => void, 
@@ -558,11 +564,13 @@ const IntegrationActionPanel = ({
   setDRealEndpoint: (e: string) => void,
   systemProfile: SystemProfile,
   rocketParams: RocketParams,
-  priors: { mass: number, friction: number }
+  priors: { mass: number, friction: number },
+  onAction?: () => void
 }) => {
   const [copied, setCopied] = useState(false);
 
   const handleDownloadSentinelPack = () => {
+    if (onAction) onAction();
     const sentinelPack = {
       metadata: {
         client: "PhysiCore-v3.0",
@@ -1344,8 +1352,106 @@ const RocketManifestWizard = ({ params, setParams }: { params: RocketParams, set
 // --- MAIN APP ---
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppContent() {
+  const [user, loading, error] = useAuthState(auth);
+  const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
+  const [hasTested, setHasTested] = useState<boolean | null>(null);
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
+
+  useEffect(() => {
+    const checkAccess = async () => {
+      if (user) {
+        setCheckingAccess(true);
+        try {
+          const userDocRef = doc(db, 'allowed_users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const data = userDoc.data();
+            setIsAllowed(true);
+            setHasTested(data.hasTested || false);
+          } else {
+            // Bootstrap Admin: if it's the admin email, create the doc
+            if (user.email === "prathameshshirbhate8anpc@gmail.com") {
+              const adminData = {
+                email: user.email,
+                hasTested: false,
+                role: 'admin'
+              };
+              await setDoc(userDocRef, adminData);
+              setIsAllowed(true);
+              setHasTested(false);
+            } else {
+              setIsAllowed(false);
+              setHasTested(false);
+            }
+          }
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, `allowed_users/${user.uid}`);
+        } finally {
+          setCheckingAccess(false);
+        }
+      } else {
+        setIsAllowed(null);
+        setHasTested(null);
+      }
+    };
+    checkAccess();
+  }, [user]);
+
+  const markAsTested = async () => {
+    if (user && isAllowed && !hasTested) {
+      try {
+        await updateDoc(doc(db, 'allowed_users', user.uid), {
+          hasTested: true
+        });
+        setHasTested(true);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `allowed_users/${user.uid}`);
+      }
+    }
+  };
+
+  const handleLogin = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err: any) {
+      if (err.code === 'auth/popup-closed-by-user') {
+        console.warn("Login cancelled: Popup closed by user.");
+      } else if (err.code === 'auth/cancelled-by-user') {
+        console.warn("Login cancelled by user.");
+      } else if (err.code === 'auth/popup-blocked') {
+        alert("Login popup was blocked by your browser. Please allow popups for this site.");
+      } else {
+        console.error("Login failed:", err);
+        alert(`Login failed: ${err.message}`);
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setView('home');
+    } catch (err) {
+      console.error("Logout failed:", err);
+    }
+  };
   
   // Integration Engineer State
   const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
@@ -1357,6 +1463,7 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSystemConnected, setIsSystemConnected] = useState(false);
+  const [isSystemConnecting, setIsSystemConnecting] = useState(false);
   const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil'>('hil');
   const [endpoint, setEndpoint] = useState('ws://localhost:9090');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
@@ -1467,22 +1574,36 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isSystemConnected, view, quotaExceeded]);
 
-  const handleLaunchApp = async () => {
-    setIsLaunching(true);
+  const handleConnect = async () => {
+    if (isSystemConnecting) return;
+    setIsSystemConnecting(true);
     
-    // Hardware Gate: initiate handshake before simulation starts
+    // Hardware Gate: initiate handshake
     const result: any = await initiateHandshake(endpoint, connectionMode);
     
     if (result.success) {
       setIsSystemConnected(true);
-      setTimeout(() => {
-        setIsLaunching(false);
-        setView('dashboard');
-      }, 2000);
+      setIsSystemConnecting(false);
     } else {
-      setIsLaunching(false);
+      setIsSystemConnecting(false);
       alert(`HARDWARE_GATE_ERROR: ${result.reason}`);
     }
+  };
+
+  const handleLaunchApp = async () => {
+    if (!user) {
+      await handleLogin();
+      if (!auth.currentUser) return;
+    }
+    
+    setIsLaunching(true);
+    
+    // We open the dashboard but do NOT automatically connect.
+    // The user must establish a connection via the Integrator or a manual action.
+    setTimeout(() => {
+      setIsLaunching(false);
+      setView('dashboard');
+    }, 1500);
   };
 
   // Scroll tracking
@@ -1516,7 +1637,7 @@ export default function App() {
       observer.disconnect();
       revealObserver.disconnect();
     };
-  }, [view]);
+  }, [view, loading, checkingAccess]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -1552,7 +1673,7 @@ export default function App() {
 
   // Rocket Simulation Loop
   useEffect(() => {
-    if (!isRocketSimRunning || systemProfile.domain !== 'ROCKETS') return;
+    if (!isRocketSimRunning || !isSystemConnected || systemProfile.domain !== 'ROCKETS') return;
 
     const dt = 0.01;
     const interval = setInterval(() => {
@@ -1709,6 +1830,20 @@ export default function App() {
 
   // --- RENDERERS ---
 
+  useEffect(() => {
+    if (!loading && !user && view !== 'home') {
+      setView('home');
+    }
+  }, [user, loading, view]);
+
+  const handleSetIntegratorView = async () => {
+    if (!user) {
+      await handleLogin();
+      if (!auth.currentUser) return;
+    }
+    setView('integrator');
+  };
+
   const renderNav = () => (
     <nav className="fixed top-0 left-0 w-full h-[52px] bg-void/96 backdrop-blur-md border-b border-border z-[100] flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
@@ -1751,27 +1886,55 @@ export default function App() {
       )}
 
       <div className="flex items-center gap-4">
-        {view === 'dashboard' ? (
-          <button 
-            onClick={() => setView('home')}
-            className="px-4 py-1.5 border border-red text-red font-display text-[11px] font-bold uppercase tracking-widest hover:bg-red hover:text-black transition-all"
-          >
-            ▣ EXIT DASHBOARD
-          </button>
+        {user ? (
+          <div className="flex items-center gap-3">
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="font-mono text-[9px] text-white uppercase tracking-widest">{user.displayName || 'AUTHORIZED USER'}</span>
+              <span className="font-mono text-[8px] text-textDim uppercase">{user.email}</span>
+            </div>
+            <div className="w-8 h-8 border border-border flex items-center justify-center bg-bgRaised">
+              <User size={16} className="text-green" />
+            </div>
+            <button onClick={handleLogout} className="p-2 text-textDim hover:text-red transition-colors" title="Logout">
+              <LogOut size={18} />
+            </button>
+          </div>
         ) : (
+          <button 
+            onClick={handleLaunchApp} 
+            disabled={isLoggingIn}
+            className="px-4 py-1.5 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
+          >
+            {isLoggingIn && <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />}
+            {isLoggingIn ? 'CONNECTING...' : '▣ LAUNCH APP'}
+          </button>
+        )}
+        
+        {user && (
           <>
-            <button 
-              onClick={() => setView('integrator')}
-              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
-            >
-              ⬡ INTEGRATION ENGINEER
-            </button>
-            <button 
-              onClick={handleLaunchApp}
-              className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all"
-            >
-              ▣ LAUNCH APP
-            </button>
+            {view === 'dashboard' ? (
+              <button 
+                onClick={() => setView('home')}
+                className="px-4 py-1.5 border border-red text-red font-display text-[11px] font-bold uppercase tracking-widest hover:bg-red hover:text-black transition-all"
+              >
+                ▣ EXIT DASHBOARD
+              </button>
+            ) : (
+              <>
+                <button 
+                  onClick={handleSetIntegratorView}
+                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
+                >
+                  ⬡ INTEGRATION ENGINEER
+                </button>
+                <button 
+                  onClick={handleLaunchApp}
+                  className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all"
+                >
+                  ▣ LAUNCH APP
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -1811,8 +1974,23 @@ export default function App() {
           </div>
 
           <div className="reveal reveal-stagger-4 flex flex-col sm:flex-row gap-4 justify-center">
-            <button onClick={() => setView('integrator')} className="btn-primary h-14 text-sm">⬡ START INTEGRATION →</button>
-            <button onClick={handleLaunchApp} className="btn-outline h-14 text-sm">▣ LAUNCH PHYSICORE APP</button>
+            <button onClick={handleSetIntegratorView} className="btn-primary h-14 text-sm px-8">
+              {user ? '⬡ START INTEGRATION →' : '⬡ INTEGRATION ENGINEER'}
+            </button>
+            <button 
+              onClick={handleLaunchApp} 
+              disabled={isLoggingIn}
+              className="btn-outline h-14 text-sm px-8 flex items-center justify-center gap-3"
+            >
+              {isLoggingIn ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ESTABLISHING CONNECTION...
+                </>
+              ) : (
+                '▣ LAUNCH PHYSICORE APP'
+              )}
+            </button>
           </div>
         </div>
 
@@ -2294,6 +2472,7 @@ export default function App() {
                     systemProfile={systemProfile}
                     rocketParams={rocketParams}
                     priors={{ mass: telemetry.mass, friction: telemetry.friction }}
+                    onAction={markAsTested}
                   />
                 )}
               </>
@@ -2342,6 +2521,17 @@ export default function App() {
                 </span>
               </div>
             </div>
+            
+            {isSystemConnected && (
+              <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                <div className="micro-label text-textDim">CONNECTION SOURCE</div>
+                <div className="font-mono text-[10px] text-cyan uppercase">
+                  {connectionMode === 'ros2_websocket' ? 'Real Hardware (ROS2)' : 'Hardware-in-the-Loop'}
+                </div>
+                <div className="font-mono text-[9px] text-textDim truncate">{endpoint}</div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="p-3 bg-bgRaised border border-borderDim">
                 <div className="micro-label text-textDim">CPU LOAD</div>
@@ -2439,6 +2629,13 @@ export default function App() {
                   ⬆ IMPORT FLIGHT DATA
                 </button>
               )}
+              <button 
+                onClick={() => setIsSystemConnected(false)}
+                className="px-3 py-2 border border-red bg-red/10 text-red font-display text-[10px] font-bold uppercase tracking-widest hover:bg-red hover:text-black transition-all"
+                title="Disconnect Hardware"
+              >
+                ⏻ DISCONNECT
+              </button>
               <button onClick={systemProfile.domain === 'ROCKETS' ? resetRocketSim : () => {}} className="p-2 border border-border bg-bgRaised text-textSecondary hover:text-green transition-all">
                 <RefreshCw size={16} />
               </button>
@@ -2463,24 +2660,42 @@ export default function App() {
               <DashboardCanvas isConnected={isSystemConnected} onTelemetryUpdate={setTelemetry} />
             )}
 
-            {!isSystemConnected && systemProfile.domain !== 'ROCKETS' && (
+            {!isSystemConnected && (
               <div className="absolute inset-0 z-20 bg-void/40 backdrop-blur-[2px] flex items-center justify-center">
                 <div className="p-8 border border-border bg-bg/90 max-w-[320px] text-center space-y-6">
                   <div className="w-12 h-12 border border-textDim flex items-center justify-center text-textDim mx-auto">
-                    <Wifi size={24} className="animate-pulse" />
+                    {isSystemConnecting ? (
+                      <RefreshCw size={24} className="animate-spin text-cyan" />
+                    ) : (
+                      <Wifi size={24} className="animate-pulse" />
+                    )}
                   </div>
                   <div className="space-y-2">
-                    <h3 className="font-display text-lg font-bold text-white tracking-widest uppercase">Hardware Offline</h3>
+                    <h3 className="font-display text-lg font-bold text-white tracking-widest uppercase">
+                      {isSystemConnecting ? 'Establishing Link...' : 'Hardware Offline'}
+                    </h3>
                     <p className="font-body text-xs text-textSecondary leading-relaxed">
-                      Physics intelligence engine is idle. Connect your system via the Integration Engineer to stream live telemetry.
+                      {isSystemConnecting 
+                        ? 'Handshaking with Sentinel OS infrastructure. Verifying neural bridge integrity...'
+                        : 'Physics intelligence engine is idle. Connect your system via the Integration Engineer or establish a manual link.'}
                     </p>
                   </div>
-                  <button 
-                    onClick={() => setView('integrator')}
-                    className="w-full py-2 bg-white text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-green transition-all"
-                  >
-                    ⬡ OPEN INTEGRATOR
-                  </button>
+                  <div className="space-y-3">
+                    <button 
+                      onClick={handleConnect}
+                      disabled={isSystemConnecting}
+                      className="w-full py-2 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50"
+                    >
+                      {isSystemConnecting ? 'CONNECTING...' : '▣ ESTABLISH MANUAL LINK'}
+                    </button>
+                    <button 
+                      onClick={() => setView('integrator')}
+                      disabled={isSystemConnecting}
+                      className="w-full py-2 border border-border text-textSecondary font-display text-[11px] font-bold uppercase tracking-widest hover:text-white transition-all disabled:opacity-50"
+                    >
+                      ⬡ OPEN INTEGRATOR
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -2595,6 +2810,56 @@ export default function App() {
       </div>
     </div>
   );
+
+  if (loading || checkingAccess) {
+    return (
+      <div className="h-screen w-full bg-void flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Cpu className="text-green animate-spin-slow" size={48} />
+          <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && isAllowed === false) {
+    return (
+      <div className="h-screen w-full bg-void flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-[400px] space-y-8">
+          <ShieldAlert className="text-red mx-auto" size={64} />
+          <div className="space-y-2">
+            <h2 className="font-display text-2xl font-bold text-white uppercase tracking-tighter">Access Denied</h2>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Your account ( {user.email} ) is not authorized to access the PhysiCore v3.0 infrastructure. 
+              Please contact the system administrator for onboarding.
+            </p>
+          </div>
+          <button onClick={handleLogout} className="btn-outline w-full h-12 text-xs">LOGOUT & RETURN</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && hasTested && view !== 'home') {
+    return (
+      <div className="h-screen w-full bg-void flex flex-col items-center justify-center p-6 text-center">
+        <div className="max-w-[400px] space-y-8">
+          <Lock className="text-amber mx-auto" size={64} />
+          <div className="space-y-2">
+            <h2 className="font-display text-2xl font-bold text-white uppercase tracking-tighter">Test Limit Reached</h2>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              You have already completed your one-time test of the PhysiCore system. 
+              To unlock full access and multi-use capabilities, please upgrade to the Enterprise Sentinel Pack.
+            </p>
+          </div>
+          <div className="flex gap-4 w-full">
+             <button onClick={() => setView('home')} className="btn-outline flex-1 h-12 text-xs">RETURN HOME</button>
+             <button onClick={handleLogout} className="btn-outline flex-1 h-12 text-xs">LOGOUT</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full">
@@ -2861,6 +3126,12 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: bool
           const x = Math.random() * canvas.width;
           ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
         }
+        
+        ctx.fillStyle = COLORS.red;
+        ctx.font = 'bold 12px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText('SYSTEM OFFLINE // NO TELEMETRY STREAM', canvas.width / 2, canvas.height / 2);
+        
         requestAnimationFrame(animate);
         return;
       }

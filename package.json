@@ -12,15 +12,19 @@
   "dependencies": {
     "@google/genai": "^1.44.0",
     "@tailwindcss/vite": "^4.2.1",
+    "firebase": "^12.11.0",
     "lucide-react": "^0.577.0",
     "motion": "^12.35.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "react-firebase-hooks": "^5.1.1",
     "recharts": "2.12.7",
     "tailwindcss": "^4.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

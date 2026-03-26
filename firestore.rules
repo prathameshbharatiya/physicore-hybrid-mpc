@@ -1,0 +1,41 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/allowed_users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // Allowed Users collection
+    match /allowed_users/{userId} {
+      // Users can read their own access record
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Only admins can create or update allowed users
+      allow create, update, delete: if isAdmin();
+      
+      // Exception: Users can update their own 'hasTested' field once
+      // Actually, it's safer to let the app do it, but we need to allow the update.
+      // We'll restrict it so they can only set hasTested to true if it was false.
+      allow update: if isOwner(userId) && 
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hasTested']) &&
+                    request.resource.data.hasTested == true &&
+                    resource.data.hasTested == false;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
