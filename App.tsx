@@ -549,11 +549,11 @@ const cem_mpc = (pos: {x: number, y: number}, vel: {x: number, y: number}, targe
 
 const SyntaxHighlighter = ({ code }: { code: string }) => {
   const tokens = [
-    { name: 'comment', regex: /(\/\/.*|#.*|\/\*[\s\S]*?\*\/)/, color: COLORS.textDim, italic: true },
-    { name: 'string', regex: /(".*?"|'.*?')/, color: '#88DD88' },
-    { name: 'keyword', regex: /\b(def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|is|not|and|or|True|False|None|public|private|protected|static|void|int|float|double|bool|string|char|using|namespace|std|vector|cout|endl|ros|rclcpp|node|publisher|subscriber|timer|callback|msg|srv|action|uint32_t|float32_t|double_t|bool_t|auto|const|constexpr|struct|enum|union|typedef|extern|inline|virtual|override|final|explicit|mutable|volatile|register|thread_local|alignas|alignof|sizeof|typeid|typename|template|concept|requires|decltype|noexcept|static_assert|static_cast|dynamic_cast|const_cast|reinterpret_cast|new|delete|this|throw|try|catch|operator|friend|export|module|import|co_await|co_yield|co_return)\b/, color: COLORS.cyan },
-    { name: 'number', regex: /\b(\d+)\b/, color: COLORS.amber },
-    { name: 'type', regex: /\b([A-Z][a-zA-Z0-9_]*)\b/, color: COLORS.blue },
+    { name: 'comment', regex: /(?:\/\/.*|#.*|\/\*[\s\S]*?\*\/)/, color: COLORS.textDim, italic: true },
+    { name: 'string', regex: /(?:".*?"|'.*?')/, color: '#88DD88' },
+    { name: 'keyword', regex: /\b(?:def|import|from|class|if|else|return|async|await|try|except|with|as|for|in|while|pass|break|continue|yield|lambda|global|nonlocal|assert|del|is|not|and|or|True|False|None|public|private|protected|static|void|int|float|double|bool|string|char|using|namespace|std|vector|cout|endl|ros|rclcpp|node|publisher|subscriber|timer|callback|msg|srv|action|uint32_t|float32_t|double_t|bool_t|auto|const|constexpr|struct|enum|union|typedef|extern|inline|virtual|override|final|explicit|mutable|volatile|register|thread_local|alignas|alignof|sizeof|typeid|typename|template|concept|requires|decltype|noexcept|static_assert|static_cast|dynamic_cast|const_cast|reinterpret_cast|new|delete|this|throw|try|catch|operator|friend|export|module|import|co_await|co_yield|co_return)\b/, color: COLORS.cyan },
+    { name: 'number', regex: /\b(?:\d+)\b/, color: COLORS.amber },
+    { name: 'type', regex: /\b(?:[A-Z][a-zA-Z0-9_]*)\b/, color: COLORS.blue },
   ];
 
   const highlightCode = (text: string) => {
@@ -568,17 +568,21 @@ const SyntaxHighlighter = ({ code }: { code: string }) => {
       }
 
       const matchIndex = match.slice(1).findIndex(val => val !== undefined);
-      const token = tokens[matchIndex];
+      const token = matchIndex !== -1 ? tokens[matchIndex] : null;
       const matchedText = match[0];
 
-      parts.push(
-        <span 
-          key={match.index} 
-          style={{ color: token.color, fontStyle: token.italic ? 'italic' : 'normal' }}
-        >
-          {matchedText}
-        </span>
-      );
+      if (token) {
+        parts.push(
+          <span 
+            key={match.index} 
+            style={{ color: token.color, fontStyle: token.italic ? 'italic' : 'normal' }}
+          >
+            {matchedText}
+          </span>
+        );
+      } else {
+        parts.push(matchedText);
+      }
       lastIndex = combinedRegex.lastIndex;
     }
 
