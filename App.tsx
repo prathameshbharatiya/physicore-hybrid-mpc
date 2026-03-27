@@ -17,7 +17,8 @@ import {
   ArrowRight, MousePointer2, Layers, BarChart3, ShieldCheck,
   Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown,
   Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
-  Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert
+  Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 import { simpleHash, generateId, encodeProjectCode, decodeProjectCode } from './src/utils/projectSync';
 import { 
@@ -330,7 +331,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard';
+type View = 'home' | 'integrator' | 'dashboard' | 'manual';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -1699,6 +1700,7 @@ function AppContent() {
 
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
+  const [manualSection, setManualSection] = useState('intro');
 
   useEffect(() => {
     const checkAccess = async () => {
@@ -2555,6 +2557,12 @@ function AppContent() {
                   ⬡ INTEGRATION ENGINEER
                 </button>
                 <button 
+                  onClick={() => setView('manual')}
+                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'manual' ? 'bg-white text-black' : 'bg-amber text-black hover:bg-white'}`}
+                >
+                  ⬡ MANUAL
+                </button>
+                <button 
                   onClick={handleLaunchApp}
                   className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all"
                 >
@@ -3254,6 +3262,332 @@ function AppContent() {
     </div>
   );
 
+  const renderManual = () => {
+    const sections = [
+      { id: 'intro', title: '01. INTRODUCTION', icon: <Info size={14} /> },
+      { id: 'arch', title: '02. ARCHITECTURE', icon: <Layers size={14} /> },
+      { id: 'ros2', title: '03. ROS2 INTEGRATION', icon: <Terminal size={14} /> },
+      { id: 'ardupilot', title: '04. ARDUPILOT / PX4', icon: <Navigation size={14} /> },
+      { id: 'matlab', title: '05. MATLAB / SIMULINK', icon: <BarChart3 size={14} /> },
+      { id: 'bot', title: '06. BALANCING BOT', icon: <Activity size={14} /> },
+      { id: 'drone', title: '07. AUTO DRONE', icon: <Wind size={14} /> },
+      { id: 'robot', title: '08. ROBOTIC ARM', icon: <Cpu size={14} /> },
+      { id: 'rocket', title: '09. HIGH-POWER ROCKET', icon: <Rocket size={14} /> },
+      { id: 'aviation', title: '10. AVIATION DYNAMICS', icon: <Globe size={14} /> },
+    ];
+
+    return (
+      <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
+        {/* SIDEBAR */}
+        <aside className="w-[280px] border-r border-border bg-bg flex flex-col shrink-0">
+          <div className="p-6 border-b border-border">
+            <div className="flex items-center gap-3 text-amber mb-1">
+              <BookOpen size={18} />
+              <span className="font-display text-sm font-bold uppercase tracking-widest">Integration Manual</span>
+            </div>
+            <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">PhysiCore v3.1.5-Sentinel</span>
+          </div>
+          <nav className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1">
+            {sections.map(s => (
+              <button
+                key={s.id}
+                onClick={() => setManualSection(s.id)}
+                className={`w-full flex items-center gap-3 px-4 py-3 font-display text-[10px] font-bold uppercase tracking-widest transition-all border-l-2 ${manualSection === s.id ? 'bg-amber/10 border-amber text-amber' : 'border-transparent text-textDim hover:text-textSecondary hover:bg-bgRaised'}`}
+              >
+                {s.icon}
+                {s.title}
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* CONTENT */}
+        <main className="flex-1 overflow-y-auto custom-scroll bg-bgInset p-12">
+          <div className="max-w-[800px] mx-auto space-y-12 pb-24">
+            {manualSection === 'intro' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">PhysiCore Integration</h1>
+                  <p className="font-body text-lg text-textSecondary leading-relaxed">
+                    PhysiCore is a high-fidelity multiphysics intelligence engine designed for real-time system identification, 
+                    optimal control, and safety governance in robotics and aerospace systems.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-6">
+                  <div className="p-6 bg-bg border border-border space-y-3">
+                    <Zap className="text-cyan" size={24} />
+                    <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">RK4 Integration</h3>
+                    <p className="font-body text-xs text-textSecondary leading-relaxed">4th-order Runge-Kutta solver running at 60Hz-1kHz for precise state estimation.</p>
+                  </div>
+                  <div className="p-6 bg-bg border border-border space-y-3">
+                    <ShieldCheck className="text-green" size={24} />
+                    <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">Sentinel OS</h3>
+                    <p className="font-body text-xs text-textSecondary leading-relaxed">Safety governance layer that monitors Lyapunov stability and enforces operational bounds.</p>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {manualSection === 'arch' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Core Architecture</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    PhysiCore operates as a "Physics Co-Processor". It consumes raw telemetry from your hardware and 
+                    provides optimal control inputs and system health metrics.
+                  </p>
+                </div>
+                <div className="p-8 bg-void border border-borderDim font-mono text-[10px] text-cyan/60 space-y-2">
+                  <div>[HARDWARE] --(Telemetry)--&gt; [PHYSICORE BRIDGE]</div>
+                  <div className="pl-24">|</div>
+                  <div className="pl-20">v</div>
+                  <div>[PHYSICORE KERNEL] &lt;--&gt; [SENTINEL SAFETY LAYER]</div>
+                  <div className="pl-24">|</div>
+                  <div className="pl-20">v</div>
+                  <div>[CONTROLLER] &lt;--(Optimal Input)-- [PHYSICORE MPC]</div>
+                </div>
+              </section>
+            )}
+
+            {manualSection === 'ros2' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">ROS2 Integration</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    The ROS2 bridge uses standard `rclcpp` nodes to communicate with the PhysiCore WebSocket or native C++ library.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="physicore_bridge_node.cpp"
+                  content={`#include "rclcpp/rclcpp.hpp"
+#include "physicore_msgs/msg/telemetry.hpp"
+#include "physicore_msgs/msg/control.hpp"
+
+class PhysiCoreBridge : public rclcpp::Node {
+public:
+  PhysiCoreBridge() : Node("physicore_bridge") {
+    sub_ = create_subscription<physicore_msgs::msg::Telemetry>(
+      "/system/telemetry", 10, std::bind(&PhysiCoreBridge::on_telemetry, this, _1));
+    pub_ = create_publisher<physicore_msgs::msg::Control>("/physicore/input", 10);
+  }
+
+private:
+  void on_telemetry(const physicore_msgs::msg::Telemetry::SharedPtr msg) {
+    // Process telemetry and send to PhysiCore Kernel
+    auto control_msg = physicore_msgs::msg::Control();
+    control_msg.thrust = kernel_.compute_optimal_thrust(msg->state);
+    pub_->publish(control_msg);
+  }
+  rclcpp::Subscription<physicore_msgs::msg::Telemetry>::SharedPtr sub_;
+  rclcpp::Publisher<physicore_msgs::msg::Control>::SharedPtr pub_;
+  PhysiCoreKernel kernel_;
+};`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'ardupilot' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">ArduPilot / PX4 Integration</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Integrate via AP_DDS or uXRCE-DDS for low-latency hardware-in-the-loop simulation.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="dds_bridge_config.yaml"
+                  content={`# uXRCE-DDS Agent Configuration
+agent:
+  port: 8888
+  udp: true
+  
+topics:
+  - name: fmu/out/vehicle_odometry
+    type: px4_msgs::msg::VehicleOdometry
+  - name: fmu/in/offboard_control_mode
+    type: px4_msgs::msg::OffboardControlMode
+  - name: fmu/in/trajectory_setpoint
+    type: px4_msgs::msg::TrajectorySetpoint`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'matlab' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">MATLAB / Simulink</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Use the PhysiCore S-Function block to bring high-fidelity physics into your Simulink models.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="physicore_init.m"
+                  content={`% Initialize PhysiCore for Simulink
+pc = PhysiCore('Rocket_V4');
+pc.setSolver('RK4');
+pc.setStepSize(0.01);
+
+% Load into Simulink workspace
+assignin('base', 'pc_kernel', pc);
+sim('PhysiCore_HIL_Model');`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'bot' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Example: Balancing Bot</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    A 2-wheeled inverted pendulum requiring active stabilization.
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 bg-bg border border-borderDim">
+                    <div className="micro-label text-cyan">Mass</div>
+                    <div className="font-mono text-lg text-white">1.2 kg</div>
+                  </div>
+                  <div className="p-4 bg-bg border border-borderDim">
+                    <div className="micro-label text-cyan">Height</div>
+                    <div className="font-mono text-lg text-white">0.35 m</div>
+                  </div>
+                  <div className="p-4 bg-bg border border-borderDim">
+                    <div className="micro-label text-cyan">Control</div>
+                    <div className="font-mono text-lg text-white">LQR / PID</div>
+                  </div>
+                </div>
+                <CodeBlock 
+                  filename="balancing_bot_logic.py"
+                  content={`import physicore as pc
+
+# Initialize bot model
+bot = pc.Robot(type="inverted_pendulum")
+bot.set_params(mass=1.2, length=0.35, friction=0.05)
+
+# Control Loop
+while True:
+    state = hardware.get_imu_data()
+    # PhysiCore computes the balancing torque
+    torque = bot.compute_stabilization(state.theta, state.theta_dot)
+    hardware.set_motor_torque(torque)`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'drone' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Example: Auto Drone</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Autonomous quadcopter with trajectory tracking and wind disturbance rejection.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="drone_mpc_config.json"
+                  content={`{
+  "uav_type": "quad_x",
+  "mass": 0.85,
+  "arm_length": 0.22,
+  "max_thrust": 18.5,
+  "mpc_lookahead": 12,
+  "disturbance_rejection": true,
+  "safety_bounds": {
+    "max_tilt": 45,
+    "max_velocity": 15.0
+  }
+}`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'robot' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Example: Robotic Arm</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    6-DOF industrial arm with collision avoidance and singularity handling.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="arm_kinematics.cpp"
+                  content={`// PhysiCore Inverse Kinematics with Collision Avoidance
+auto target_pose = get_target();
+auto current_joints = get_joints();
+
+auto solution = pc_arm.solve_ik(target_pose, current_joints, {
+  .avoid_collisions = true,
+  .max_acceleration = 2.5,
+  .smooth_trajectory = true
+});
+
+if (solution.success) {
+  move_to(solution.joint_angles);
+}`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'rocket' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Example: High-Power Rocket</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Suborbital rocket with active drag brakes and dual-deployment recovery.
+                  </p>
+                </div>
+                <div className="p-6 bg-redDim border border-red/30 space-y-2">
+                  <div className="flex items-center gap-2 text-red font-display text-xs font-bold uppercase">
+                    <AlertTriangle size={14} /> Critical Safety Note
+                  </div>
+                  <p className="font-body text-[10px] text-textSecondary">
+                    PhysiCore Sentinel must be active during the COAST phase to ensure accurate apogee detection and recovery trigger timing.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="rocket_gnc.py"
+                  content={`# PhysiCore Rocket GNC Module
+rocket = pc.Rocket(profile="Level3_Heavy")
+
+def flight_loop():
+    while rocket.is_flying:
+        data = sensor_fusion.get_state()
+        # Predict apogee in real-time
+        predicted_apogee = rocket.predict_apogee(data)
+        
+        if data.altitude > predicted_apogee - 5.0:
+            rocket.trigger_drogue()
+            break`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'aviation' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Example: Aviation Dynamics</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Fixed-wing aircraft flight envelope protection and autopilot integration.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="flight_envelope.m"
+                  content={`% PhysiCore Flight Envelope Protection
+% Prevents stall and overspeed conditions
+[alpha, beta, v_air] = get_air_data();
+
+if alpha > pc.stall_alpha_limit
+    pc.apply_nose_down_correction();
+    warning('STALL PROTECTION ACTIVE');
+end`}
+                />
+              </section>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  };
+
   const renderDashboard = () => (
     <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
@@ -3626,6 +3960,10 @@ function AppContent() {
         ) : view === 'integrator' ? (
           <motion.div key="integrator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderIntegrator()}
+          </motion.div>
+        ) : view === 'manual' ? (
+          <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderManual()}
           </motion.div>
         ) : (
           <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
