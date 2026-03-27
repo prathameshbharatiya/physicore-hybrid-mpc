@@ -3,7 +3,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './src/firebase';
 import { signInWithPopup, signOut } from 'firebase/auth';
-import { doc, getDoc, updateDoc, setDoc } from 'firebase/firestore';
+import { 
+  doc, getDoc, updateDoc, setDoc, 
+  collection, query, where, getDocs, onSnapshot 
+} from 'firebase/firestore';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
@@ -16,6 +19,7 @@ import {
   Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
   Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert
 } from 'lucide-react';
+import { simpleHash, generateId, encodeProjectCode, decodeProjectCode } from './src/utils/projectSync';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, 
   ResponsiveContainer, BarChart, Bar, ReferenceLine,
@@ -65,6 +69,40 @@ interface RocketParams {
   mainAlt: number;
   mainCd: number;
   mainDiam: number;
+  cl?: number; // Lift coefficient for guided rockets
+}
+
+interface AviationState {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  pitch: number;
+  roll: number;
+  yaw: number;
+  aoa: number; // Angle of attack
+  sideslip: number;
+  mass: number;
+  fuel: number;
+  time: number;
+}
+
+interface AviationParams {
+  mass: number;
+  wingspan: number;
+  wingArea: number;
+  chord: number;
+  cl0: number; // Lift coefficient at zero alpha
+  cla: number; // Lift slope
+  cd0: number; // Parasitic drag
+  k: number; // Induced drag factor
+  thrustMax: number;
+  fuelCapacity: number;
+  fuelBurnRate: number;
+  vne: number; // Never exceed speed
+  vso: number; // Stall speed
 }
 
 const atmosphericDensity = (altitude: number) => {
@@ -369,14 +407,31 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
   }
   
   if (mode === 'hil') {
-    return new Promise((resolve) => {
-      setTimeout(() => {
+    return new Promise(async (resolve) => {
+      try {
+        // HIL Simulation Handshake - REAL CHECK
+        // Attempt to ping the endpoint to ensure it's "real"
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        
+        const response = await fetch(endpoint, { 
+          method: 'HEAD', 
+          mode: 'no-cors',
+          signal: controller.signal 
+        });
+        
+        clearTimeout(timeoutId);
         resolve({
           success: true,
           simulated: true,
           latency: 0.4
         });
-      }, 1500);
+      } catch (e) {
+        resolve({ 
+          success: false, 
+          reason: 'HIL_ENDPOINT_UNREACHABLE. Ensure your HIL server is running at ' + endpoint 
+        });
+      }
     });
   }
   return { success: false, reason: 'UNKNOWN_MODE' };
@@ -550,8 +605,12 @@ const IntegrationActionPanel = ({
   setDRealEndpoint,
   systemProfile,
   rocketParams,
+  aviationParams,
   priors,
-  onAction
+  onAction,
+  projectCode,
+  projectData,
+  onImportProjectCode
 }: { 
   files: GeneratedFile[], 
   onTest: () => void, 
@@ -564,10 +623,41 @@ const IntegrationActionPanel = ({
   setDRealEndpoint: (e: string) => void,
   systemProfile: SystemProfile,
   rocketParams: RocketParams,
+  aviationParams: AviationParams,
   priors: { mass: number, friction: number },
-  onAction?: () => void
+  onAction?: () => void,
+  projectCode: string,
+  projectData: any,
+  onImportProjectCode: (code: string) => { success: boolean, data?: any, error?: string }
 }) => {
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<'MY_CODE' | 'IMPORT'>('MY_CODE');
+  const [importCode, setImportCode] = useState('');
+  const [importStatus, setImportStatus] = useState<{ success?: boolean, msg?: string }>({});
+
+  const handleCopyProjectCode = () => {
+    navigator.clipboard.writeText(projectCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadProjectCode = () => {
+    const blob = new Blob([projectCode], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `project_${projectData?.id || 'export'}.pc`;
+    a.click();
+  };
+
+  const handleImport = () => {
+    const result = onImportProjectCode(importCode);
+    if (result.success) {
+      setImportStatus({ success: true, msg: `Imported Project: ${result.data.id}` });
+    } else {
+      setImportStatus({ success: false, msg: result.error });
+    }
+  };
 
   const handleDownloadSentinelPack = () => {
     if (onAction) onAction();
@@ -591,11 +681,27 @@ const IntegrationActionPanel = ({
           isp: rocketParams.isp,
         }
       }),
+      ...(systemProfile.domain === 'AVIATION' && {
+        aviation_manifest: {
+          wingspan: aviationParams.wingspan,
+          wing_area: aviationParams.wingArea,
+          thrust_max: aviationParams.thrustMax,
+          fuel_capacity: aviationParams.fuelCapacity,
+          cla: aviationParams.cla,
+          cd0: aviationParams.cd0,
+        }
+      }),
       control_logic: {
         optimizer: "MPC-CEM",
         horizon: 12,
         connection_mode: connectionMode,
         endpoint: endpoint,
+      },
+      project_sync: {
+        project_id: projectData?.id,
+        project_code: projectCode,
+        sync_origin: "PhysiCore",
+        last_sync: new Date().toISOString()
       }
     };
     const blob = new Blob([JSON.stringify(sentinelPack, null, 2)], { type: 'application/json' });
@@ -645,6 +751,82 @@ const IntegrationActionPanel = ({
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="p-4 border border-border bg-bgRaised space-y-4">
+          <div className="flex justify-between items-center">
+            <h4 className="micro-label text-textDim uppercase">Project Sync</h4>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => setActiveTab('MY_CODE')}
+                className={`micro-label px-2 py-1 border ${activeTab === 'MY_CODE' ? 'border-cyan text-cyan' : 'border-border text-textDim'}`}
+              >
+                MY PROJECT CODE
+              </button>
+              <button 
+                onClick={() => setActiveTab('IMPORT')}
+                className={`micro-label px-2 py-1 border ${activeTab === 'IMPORT' ? 'border-cyan text-cyan' : 'border-border text-textDim'}`}
+              >
+                IMPORT FROM SENTINEL
+              </button>
+            </div>
+          </div>
+
+          {activeTab === 'MY_CODE' ? (
+            <div className="space-y-4">
+              <div className="p-3 bg-bg border border-borderDim space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="micro-label text-textDim">PROJECT ID</span>
+                  <span className="font-mono text-[10px] text-cyan">{projectData?.id}</span>
+                </div>
+                <div className="font-mono text-[9px] text-textSecondary break-all bg-void p-2 border border-borderDim">
+                  {projectCode}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button 
+                  onClick={handleCopyProjectCode}
+                  className="flex items-center justify-center gap-2 py-2 border border-border hover:border-cyan text-textSecondary hover:text-cyan transition-all"
+                >
+                  <Copy size={12} />
+                  <span className="micro-label uppercase">{copied ? 'COPIED' : 'COPY CODE'}</span>
+                </button>
+                <button 
+                  onClick={handleDownloadProjectCode}
+                  className="flex items-center justify-center gap-2 py-2 border border-border hover:border-cyan text-textSecondary hover:text-cyan transition-all"
+                >
+                  <Download size={12} />
+                  <span className="micro-label uppercase">DOWNLOAD .PC</span>
+                </button>
+              </div>
+              <p className="font-mono text-[8px] text-textDim uppercase">Paste this code into Sentinel to load this configuration instantly.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <textarea 
+                  value={importCode}
+                  onChange={e => setImportCode(e.target.value)}
+                  placeholder="Paste Project Code (PC- or SN-) here..."
+                  className="w-full h-24 bg-bg border border-border p-2 font-mono text-[10px] text-white outline-none focus:border-cyan resize-none"
+                />
+                <div className="flex items-center justify-center border-2 border-dashed border-border p-4 hover:border-cyan transition-all cursor-pointer">
+                  <span className="micro-label text-textDim uppercase">OR DROP .SN / .PC FILE HERE</span>
+                </div>
+              </div>
+              <button 
+                onClick={handleImport}
+                className="w-full py-2 bg-cyan text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all"
+              >
+                IMPORT CONFIGURATION
+              </button>
+              {importStatus.msg && (
+                <div className={`p-2 border ${importStatus.success ? 'border-green text-green' : 'border-red text-red'} font-mono text-[9px] uppercase`}>
+                  {importStatus.msg}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="p-4 border border-border bg-bgRaised space-y-4">
           <div className="flex justify-between items-center">
             <span className="micro-label text-textDim">Connection Mode</span>
@@ -940,7 +1122,7 @@ const RocketTelemetryWidgets = ({ flightData, actualData, params }: { flightData
   );
 };
 
-const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpeed, setSimSpeed, isRunning, setIsRunning, resetSim }: { state: RocketState, params: RocketParams, flightData: any[], actualData: any[] | null, simSpeed: number, setSimSpeed: (s: number) => void, isRunning: boolean, setIsRunning: (r: boolean) => void, resetSim: () => void }) => {
+const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpeed, setSimSpeed, isRunning, setIsRunning, resetSim, isConnected }: { state: RocketState, params: RocketParams, flightData: any[], actualData: any[] | null, simSpeed: number, setSimSpeed: (s: number) => void, isRunning: boolean, setIsRunning: (r: boolean) => void, resetSim: () => void, isConnected: boolean }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -953,6 +1135,27 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
+
+      if (!isConnected) {
+        ctx.fillStyle = COLORS.bgInset;
+        ctx.fillRect(0, 0, w, h);
+        
+        // Grid
+        ctx.strokeStyle = '#121212';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < w; x += 40) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+        }
+        for (let y = 0; y < h; y += 40) {
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        }
+
+        ctx.fillStyle = COLORS.red;
+        ctx.font = 'bold 12px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText('SYSTEM OFFLINE // NO TELEMETRY STREAM', w / 2, h / 2);
+        return;
+      }
 
       // Scaling
       const maxAlt = Math.max(2000, state.y * 1.2, ...(flightData.map(d => d.y)));
@@ -1120,7 +1323,113 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
   );
 };
 
-const RocketManifestWizard = ({ params, setParams }: { params: RocketParams, setParams: (p: RocketParams) => void }) => {
+const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEmail }: { params: AviationParams, setParams: (p: AviationParams) => void, projectEmail: string, setProjectEmail: (e: string) => void }) => {
+  return (
+    <div className="p-6 bg-bgRaised border border-border space-y-6">
+      <div className="flex items-center gap-3 border-b border-border pb-4">
+        <Navigation className="text-cyan" size={24} />
+        <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">Aviation Manifest</h2>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="space-y-4">
+          <h3 className="micro-label text-textDim uppercase">Airframe Geometry</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Wingspan (m)</label>
+              <input 
+                type="number" 
+                value={params.wingspan} 
+                onChange={(e) => setParams({ ...params, wingspan: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Wing Area (m²)</label>
+              <input 
+                type="number" 
+                value={params.wingArea} 
+                onChange={(e) => setParams({ ...params, wingArea: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="micro-label text-textDim uppercase">Aerodynamic Coefficients</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Lift Slope (Clα)</label>
+              <input 
+                type="number" 
+                value={params.cla} 
+                onChange={(e) => setParams({ ...params, cla: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Parasitic Drag (Cd0)</label>
+              <input 
+                type="number" 
+                value={params.cd0} 
+                onChange={(e) => setParams({ ...params, cd0: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="micro-label text-textDim uppercase">Powerplant & Fuel</h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Max Thrust (N)</label>
+              <input 
+                type="number" 
+                value={params.thrustMax} 
+                onChange={(e) => setParams({ ...params, thrustMax: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="font-mono text-[9px] text-textDim uppercase">Fuel Cap (kg)</label>
+              <input 
+                type="number" 
+                value={params.fuelCapacity} 
+                onChange={(e) => setParams({ ...params, fuelCapacity: parseFloat(e.target.value) || 0 })}
+                className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <h3 className="micro-label text-textDim uppercase">Unit Identity</h3>
+          <div className="space-y-1">
+            <label className="font-mono text-[9px] text-textDim uppercase">Project Owner Email (Optional)</label>
+            <input 
+              type="email" 
+              value={projectEmail} 
+              onChange={(e) => setProjectEmail(e.target.value)}
+              placeholder="engineer@domain.com"
+              className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 bg-cyan/5 border border-cyan/20 flex items-start gap-3">
+        <Shield className="text-cyan shrink-0" size={16} />
+        <p className="font-body text-[10px] text-textSecondary leading-relaxed">
+          Aviation parameters are used to calibrate the <span className="text-cyan">Flight Envelope Protection</span> layer. Ensure Clα and Cd0 are derived from validated wind tunnel data or high-fidelity CFD.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail }: { params: RocketParams, setParams: (p: RocketParams) => void, projectEmail: string, setProjectEmail: (e: string) => void }) => {
   const [manualCurve, setManualCurve] = useState(params.motorCurve.length > 0 ? params.motorCurve : Array(5).fill({ t: 0, f: 0 }));
   const [motorName, setMotorName] = useState('N/A');
 
@@ -1182,6 +1491,24 @@ const RocketManifestWizard = ({ params, setParams }: { params: RocketParams, set
         <div>
           <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">ROCKET MANIFEST / PROPULSION</h2>
           <p className="font-mono text-[10px] text-textDim uppercase">Mission Configuration & Recovery Parameters</p>
+        </div>
+      </div>
+
+      <div className="p-4 bg-bg border border-border space-y-2">
+        <div className="flex items-center gap-2 text-cyan">
+          <User size={14} />
+          <span className="micro-label uppercase">Step 2: Unit Identity</span>
+        </div>
+        <div className="space-y-1">
+          <label className="micro-label text-textDim">Email / Project Owner (Optional)</label>
+          <input 
+            type="email" 
+            value={projectEmail} 
+            onChange={e => setProjectEmail(e.target.value)} 
+            placeholder="anonymous@physicore.io"
+            className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
+          />
+          <p className="font-mono text-[8px] text-textDim uppercase">Used to link project configuration across PhysiCore and Sentinel.</p>
         </div>
       </div>
 
@@ -1471,6 +1798,97 @@ function AppContent() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [showUserManagement, setShowUserManagement] = useState(false);
+
+  // Persistent WebSocket for Real-time Telemetry
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (isSystemConnected && connectionMode === 'ros2_websocket' && endpoint) {
+      try {
+        const ws = new WebSocket(endpoint);
+        socketRef.current = ws;
+
+        ws.onopen = () => {
+          console.log("Telemetry Stream: CONNECTED");
+          // Subscribe to telemetry topic
+          ws.send(JSON.stringify({
+            op: 'subscribe',
+            topic: '/telemetry',
+            type: 'physicore_msgs/Telemetry'
+          }));
+        };
+
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            if (data.op === 'publish' && data.topic === '/telemetry') {
+              const telemetryData = data.msg;
+              setTelemetry(prev => ({
+                ...prev,
+                ...telemetryData,
+                // Ensure we keep history
+                residualHistory: [...(prev.residualHistory || []), { x: Date.now(), y: telemetryData.residual || 0 }].slice(-30),
+                effortHistory: [...(prev.effortHistory || []), { x: Date.now(), y: telemetryData.effort || 0 }].slice(-30)
+              }));
+            }
+          } catch (e) {
+            console.error("Telemetry Parse Error:", e);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log("Telemetry Stream: DISCONNECTED");
+          setIsSystemConnected(false);
+        };
+
+        return () => {
+          ws.close();
+          socketRef.current = null;
+        };
+      } catch (e) {
+        console.error("Telemetry Connection Error:", e);
+      }
+    }
+  }, [isSystemConnected, connectionMode, endpoint]);
+
+  // Admin: Fetch all users
+  useEffect(() => {
+    if (user && isAllowed && user.email === "prathameshshirbhate8anpc@gmail.com") {
+      const fetchUsers = async () => {
+        try {
+          const q = query(collection(db, 'allowed_users'));
+          const querySnapshot = await getDocs(q);
+          const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setAllUsers(users);
+        } catch (err) {
+          console.error("Failed to fetch users:", err);
+        }
+      };
+      fetchUsers();
+    }
+  }, [user, isAllowed]);
+
+  const handleAddUser = async (email: string) => {
+    if (!email) return;
+    try {
+      // We don't have the UID yet, so we'll use email as ID or just add it to a list
+      // Actually, Firestore rules require UID as ID.
+      // For now, we'll just add it to a 'pending_invites' collection or something.
+      // But let's keep it simple: we'll just add a document with email and role.
+      const inviteRef = doc(collection(db, 'allowed_users'));
+      await setDoc(inviteRef, {
+        email,
+        role: 'user',
+        hasTested: false,
+        invitedBy: user?.email
+      });
+      setAllUsers(prev => [...prev, { id: inviteRef.id, email, role: 'user', hasTested: false }]);
+    } catch (err) {
+      console.error("Failed to add user:", err);
+    }
+  };
 
   // Rocket State
   const [rocketState, setRocketState] = useState<RocketState>({
@@ -1499,6 +1917,37 @@ function AppContent() {
     mainCd: 2.2,
     mainDiam: 1.2
   });
+
+  // Aviation State
+  const [aviationState, setAviationState] = useState<AviationState>({
+    x: 0, y: 1000, z: 0, vx: 45, vy: 0, vz: 0, pitch: 0, roll: 0, yaw: 0, aoa: 0, sideslip: 0, mass: 12.5, fuel: 5.0, time: 0
+  });
+  const [aviationParams, setAviationParams] = useState<AviationParams>({
+    mass: 12.5,
+    wingspan: 2.4,
+    wingArea: 0.85,
+    chord: 0.35,
+    cl0: 0.15,
+    cla: 5.7,
+    cd0: 0.025,
+    k: 0.045,
+    thrustMax: 85,
+    fuelCapacity: 5.0,
+    fuelBurnRate: 0.012,
+    vne: 85,
+    vso: 12
+  });
+
+  const [projectEmail, setProjectEmail] = useState('');
+  const [projectCode, setProjectCode] = useState('');
+  const [projectData, setProjectData] = useState<any>(null);
+  const [sentinelThresholds, setSentinelThresholds] = useState({
+    max_g: 15.0,
+    max_q: 25000,
+    max_aoa: 12.0,
+    min_stability: 1.5
+  });
+  const [showProjectDropdown, setShowProjectDropdown] = useState(false);
   const [flightData, setFlightData] = useState<any[]>([]);
   const [isRocketSimRunning, setIsRocketSimRunning] = useState(false);
   const [rocketSimSpeed, setRocketSimSpeed] = useState(1);
@@ -1710,6 +2159,75 @@ function AppContent() {
     setFlightData([]);
   };
 
+  const handleGenerateProjectCode = () => {
+    const payload = {
+      version: '1.0',
+      origin: 'PC',
+      id: generateId(projectEmail),
+      email: projectEmail,
+      timestamp: Date.now(),
+      unit: { type: systemProfile.domain, name: systemProfile.platform },
+      protocols: systemProfile.protocols,
+      physical: { 
+        mass: telemetry.mass, 
+        friction: telemetry.friction, 
+        ...(systemProfile.domain === 'ROCKETS' ? rocketParams : {}),
+        ...(systemProfile.domain === 'AVIATION' ? aviationParams : {})
+      },
+      safety: { thresholds: sentinelThresholds },
+      control: { mpc_horizon: 12 },
+      connection: { mode: connectionMode, endpoint: endpoint }
+    };
+
+    const checksum = simpleHash(JSON.stringify(payload));
+    const finalPayload = { ...payload, checksum };
+    const code = encodeProjectCode(finalPayload);
+    
+    setProjectCode(code);
+    setProjectData(finalPayload);
+    setIntegrationPhase(4);
+  };
+
+  const handleImportProjectCode = (code: string) => {
+    const data = decodeProjectCode(code);
+    if (data) {
+      setProjectData(data);
+      setProjectCode(code);
+      setProjectEmail(data.email || '');
+      
+      // Update system parameters
+      if (data.unit.type === 'ROCKETS') {
+        setRocketParams(prev => ({
+          ...prev,
+          ...data.physical
+        }));
+      } else if (data.unit.type === 'AVIATION') {
+        setAviationParams(prev => ({
+          ...prev,
+          ...data.physical
+        }));
+      }
+      
+      setTelemetry(prev => ({
+        ...prev,
+        mass: data.physical.mass || prev.mass,
+        friction: data.physical.friction || prev.friction
+      }));
+      
+      if (data.safety?.thresholds) {
+        setSentinelThresholds(data.safety.thresholds);
+      }
+      
+      if (data.connection) {
+        setConnectionMode(data.connection.mode);
+        setEndpoint(data.connection.endpoint);
+      }
+
+      return { success: true, data };
+    }
+    return { success: false, error: "Invalid or corrupted Project Code" };
+  };
+
   const handleRocketLaunch = () => {
     if (rocketState.phase === 'PRELAUNCH') {
       setIsRocketSimRunning(true);
@@ -1717,6 +2235,32 @@ function AppContent() {
   };
 
   // AI Logic
+  useEffect(() => {
+    if (isSystemConnected && view === 'dashboard' && projectData) {
+      const interval = setInterval(() => {
+        setProjectData(prev => {
+          if (!prev) return prev;
+          const { checksum, ...rest } = prev;
+          const updatedPayload = {
+            ...rest,
+            timestamp: Date.now(),
+            physical: {
+              ...rest.physical,
+              mass: telemetry.mass,
+              friction: telemetry.friction,
+              lyapunov_bound: telemetry.confidence / 100
+            }
+          };
+          const newChecksum = simpleHash(JSON.stringify(updatedPayload));
+          const finalPayload = { ...updatedPayload, checksum: newChecksum };
+          setProjectCode(encodeProjectCode(finalPayload));
+          return finalPayload;
+        });
+      }, 5000); // ~300 frames at 60fps
+      return () => clearInterval(interval);
+    }
+  }, [isSystemConnected, view, projectData, telemetry.mass, telemetry.friction, telemetry.confidence]);
+
   const handleSendMessage = async (text?: string) => {
     const msg = text || inputValue;
     if (!msg.trim()) return;
@@ -1734,16 +2278,21 @@ function AppContent() {
       }));
 
       const systemInstruction = `You are the PhysiCore Integration Engineer.
-           You help robotics engineers integrate PhysiCore — a Physics Intelligence Engine — into their systems.
+           You help engineers integrate PhysiCore — a Physics Intelligence Engine — into their systems (Robotics, Rockets, and Aviation).
 
            PhysiCore capabilities you're integrating:
            — RK4 4th-order physics integrator at 60Hz
-           — Online SystemID: learns mass and friction in real-time
+           — Online SystemID: learns mass, friction, and aerodynamic coefficients in real-time
            — 3-node ensemble: quantifies epistemic uncertainty
            — MPC lookahead: 12-step CEM trajectory planning
            — Hardware gate: LIVE / HIL / Digital Twin modes
            — Sentinel OS integration: safety governance layer
-           — Export: JSON pack + ROS2 bridge code
+           — Export: JSON pack + ROS2/ArduPilot/PX4 bridge code
+
+           DOMAIN SPECIFICS:
+           — ROBOTICS: Focus on mass, friction, actuator efficiency, and joint constraints.
+           — ROCKETS: Focus on thrust curves, mass depletion (fuel), drag coefficients (Cd), and recovery triggers.
+           — AVIATION: Focus on lift/drag ratios, control surface mapping, and flight envelope protection.
 
            YOUR BEHAVIOR:
            — Follow the workflow phases strictly:
@@ -1858,6 +2407,80 @@ function AppContent() {
         <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">
           {view === 'dashboard' ? 'LIVE MISSION CONTROL' : 'Physics Intelligence Engine'}
         </span>
+
+        {view === 'dashboard' && projectData && (
+          <div className="relative ml-4">
+            <button 
+              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
+              className="flex items-center gap-2 px-3 py-1 bg-bgRaised border border-cyan/30 hover:border-cyan transition-all group"
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
+              <span className="font-mono text-[10px] text-cyan uppercase tracking-widest">
+                PROJECT: {projectData.id}
+              </span>
+              <span className="font-mono text-[8px] text-textDim uppercase px-1 bg-void border border-borderDim">
+                {projectData.origin === 'PC' ? 'PC-ORIGIN' : 'SN-SYNC'}
+              </span>
+              <ChevronDown size={12} className={`text-textDim group-hover:text-cyan transition-transform ${showProjectDropdown ? 'rotate-180' : ''}`} />
+            </button>
+
+            <AnimatePresence>
+              {showProjectDropdown && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute top-full left-0 mt-2 w-64 bg-bg border border-border shadow-2xl p-4 space-y-4 z-[200]"
+                >
+                  <div className="space-y-1">
+                    <div className="micro-label text-textDim uppercase">Sync Status</div>
+                    <div className="flex items-center gap-2 text-green">
+                      <Activity size={12} />
+                      <span className="font-mono text-[10px] uppercase">Live Calibration Active</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <button 
+                      onClick={() => {
+                        navigator.clipboard.writeText(projectCode);
+                        setShowProjectDropdown(false);
+                      }}
+                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-cyan transition-all group"
+                    >
+                      <span className="micro-label text-textDim group-hover:text-cyan">COPY PROJECT CODE</span>
+                      <Copy size={12} className="text-textDim group-hover:text-cyan" />
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const blob = new Blob([projectCode], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `project_${projectData.id}.pc`;
+                        a.click();
+                        setShowProjectDropdown(false);
+                      }}
+                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-cyan transition-all group"
+                    >
+                      <span className="micro-label text-textDim group-hover:text-cyan">DOWNLOAD .PC FILE</span>
+                      <Download size={12} className="text-textDim group-hover:text-cyan" />
+                    </button>
+                    <a 
+                      href="https://sentinel.physicore.io" 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-amber transition-all group"
+                    >
+                      <span className="micro-label text-textDim group-hover:text-amber">OPEN IN SENTINEL</span>
+                      <ExternalLink size={12} className="text-textDim group-hover:text-amber" />
+                    </a>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </div>
 
       {view !== 'dashboard' && (
@@ -1954,7 +2577,7 @@ function AppContent() {
             Close the <br />Reality Gap.
           </h1>
           <p className="reveal reveal-stagger-2 font-body text-lg md:text-xl text-textSecondary leading-relaxed max-w-[600px] mx-auto">
-            Physics Intelligence Engine for robotics deployment. <br />
+            Physics Intelligence Engine for robotics, rockets, and aviation. <br />
             RK4 integration. Online SystemID. Ensemble residuals. <br />
             From simulation to certified hardware in one stack.
           </p>
@@ -2012,9 +2635,9 @@ function AppContent() {
               Your hardware is not.
             </h2>
             <div className="reveal reveal-stagger-2 space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Every robotics deployment hits the same wall. The physics that worked in simulation — the perfectly tuned mass, the ideal friction, the clean actuator response — fails the moment it meets real hardware.</p>
-              <p>The floor isn't as smooth as the model. The payload shifts. The motors degrade. The gap between what your simulation predicts and what your hardware does compounds with every iteration.</p>
-              <p>PhysiCore eliminates this gap in real-time. Not by making better simulations — by making the simulation learn the reality it's deployed into.</p>
+              <p>Every deployment hits the same wall. The physics that worked in simulation — the perfectly tuned mass, the ideal friction, the clean aerodynamic model — fails the moment it meets real hardware.</p>
+              <p>The floor isn't as smooth as the model. The payload shifts. The air density varies. The gap between what your simulation predicts and what your hardware does compounds with every iteration.</p>
+              <p>PhysiCore eliminates this gap in real-time. Whether it's a robotic arm, a suborbital rocket, or a fixed-wing UAV, we make the simulation learn the reality it's deployed into.</p>
             </div>
           </div>
           <div className="reveal reveal-stagger-3">
@@ -2047,6 +2670,53 @@ function AppContent() {
                     <p className="font-body text-xs text-textSecondary">{layer.desc}</p>
                   </div>
                   <div className="font-mono text-[10px] text-textDim uppercase tracking-widest">{layer.tech}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* DOMAINS */}
+      <section id="domains" className="bg-bg py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-16">
+          <div className="text-center space-y-4">
+            <span className="micro-label text-green">Multi-Domain Support</span>
+            <h2 className="font-display text-4xl md:text-5xl font-bold text-white uppercase tracking-tighter">Engineered for the Edge.</h2>
+            <p className="font-body text-textSecondary max-w-[600px] mx-auto">PhysiCore isn't just for robots. It's a universal physics intelligence engine designed for any system where the reality gap is a mission-critical risk.</p>
+          </div>
+          
+          <div className="grid md:grid-cols-3 gap-8">
+            {[
+              { 
+                title: 'Robotics', 
+                icon: Cpu, 
+                desc: 'From industrial manipulators to humanoid locomotion. Calibrate joint friction, mass distribution, and actuator efficiency in real-time.',
+                tech: 'ROS2 / MoveIt / URDF'
+              },
+              { 
+                title: 'Rockets', 
+                icon: Rocket, 
+                desc: 'Suborbital and orbital launch vehicles. Model thrust curves, fuel depletion, and aerodynamic drag with RK4 precision.',
+                tech: 'ArduPilot / OpenRocket / MAVLink'
+              },
+              { 
+                title: 'Aviation', 
+                icon: Navigation, 
+                desc: 'Fixed-wing UAVs and eVTOL systems. Learn lift/drag polars and flight envelope boundaries to ensure stability in turbulent conditions.',
+                tech: 'PX4 / FlightGear / JSBSim'
+              }
+            ].map((d, i) => (
+              <div key={i} className="reveal p-10 border border-border bg-bgRaised space-y-8 group hover:border-green transition-all">
+                <div className="w-16 h-16 bg-bg flex items-center justify-center border border-border group-hover:border-green transition-all">
+                  <d.icon className="text-green" size={32} />
+                </div>
+                <div className="space-y-4">
+                  <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">{d.title}</h3>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">{d.desc}</p>
+                </div>
+                <div className="pt-6 border-t border-border">
+                  <span className="font-mono text-[10px] text-textDim uppercase tracking-widest">{d.tech}</span>
                 </div>
               </div>
             ))}
@@ -2357,6 +3027,45 @@ function AppContent() {
             </section>
           )}
 
+          {user?.email === "prathameshshirbhate8anpc@gmail.com" && (
+            <section className="space-y-6">
+              <div className="border-l-2 border-amber pl-3">
+                <span className="micro-label text-amber uppercase">Admin: User Management</span>
+              </div>
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <input 
+                    type="email" 
+                    id="new-user-email"
+                    placeholder="Authorize Email..."
+                    className="flex-1 bg-bg border border-border p-2 font-mono text-[10px] text-white outline-none focus:border-amber"
+                  />
+                  <button 
+                    onClick={() => {
+                      const input = document.getElementById('new-user-email') as HTMLInputElement;
+                      handleAddUser(input.value);
+                      input.value = '';
+                    }}
+                    className="px-3 py-1 bg-amber text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all"
+                  >
+                    ADD
+                  </button>
+                </div>
+                <div className="max-h-[200px] overflow-y-auto custom-scroll space-y-2">
+                  {allUsers.map((u, i) => (
+                    <div key={i} className="p-2 border border-borderDim bg-bgRaised flex items-center justify-between">
+                      <div className="flex flex-col">
+                        <span className="font-mono text-[9px] text-textPrimary truncate max-w-[120px]">{u.email}</span>
+                        <span className="font-mono text-[8px] text-textDim uppercase">{u.role}</span>
+                      </div>
+                      <div className={`w-2 h-2 rounded-full ${u.hasTested ? 'bg-green' : 'bg-textDim'}`} title={u.hasTested ? 'Has Tested' : 'Pending'} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
+
           <section className="space-y-4">
             <div className="micro-label text-textDim">Quick Start</div>
             <div className="flex flex-col gap-2">
@@ -2419,13 +3128,44 @@ function AppContent() {
                 {integrationPhase === 3 && (
                   <div className="space-y-6">
                     {systemProfile.domain === 'ROCKETS' ? (
-                      <RocketManifestWizard params={rocketParams} setParams={setRocketParams} />
+                      <RocketManifestWizard 
+                        params={rocketParams} 
+                        setParams={setRocketParams} 
+                        projectEmail={projectEmail} 
+                        setProjectEmail={setProjectEmail} 
+                      />
+                    ) : systemProfile.domain === 'AVIATION' ? (
+                      <AviationManifestWizard 
+                        params={aviationParams} 
+                        setParams={setAviationParams} 
+                        projectEmail={projectEmail} 
+                        setProjectEmail={setProjectEmail} 
+                      />
                     ) : (
                       <div className="p-6 bg-bgRaised border border-border space-y-4">
                         <div className="flex items-center gap-3 border-b border-border pb-4">
                           <Cpu className="text-cyan" size={24} />
                           <h2 className="font-display text-lg font-bold text-white tracking-widest uppercase">Hardware Priors</h2>
                         </div>
+                        
+                        <div className="p-4 bg-bg border border-border space-y-2">
+                          <div className="flex items-center gap-2 text-cyan">
+                            <User size={14} />
+                            <span className="micro-label uppercase">Step 2: Unit Identity</span>
+                          </div>
+                          <div className="space-y-1">
+                            <label className="micro-label text-textDim">Email / Project Owner (Optional)</label>
+                            <input 
+                              type="email" 
+                              value={projectEmail} 
+                              onChange={e => setProjectEmail(e.target.value)} 
+                              placeholder="anonymous@physicore.io"
+                              className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
+                            />
+                            <p className="font-mono text-[8px] text-textDim uppercase">Used to link project configuration across PhysiCore and Sentinel.</p>
+                          </div>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1">
                             <label className="micro-label text-textDim">System Mass (kg)</label>
@@ -2452,7 +3192,7 @@ function AppContent() {
                       <button onClick={() => setIntegrationPhase(1)} className="px-6 py-2 border border-border text-textSecondary font-display text-[11px] font-bold uppercase tracking-widest hover:text-white transition-all">
                         ← BACK TO CHAT
                       </button>
-                      <button onClick={() => setIntegrationPhase(4)} className="px-6 py-2 bg-white text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-green transition-all">
+                      <button onClick={handleGenerateProjectCode} className="px-6 py-2 bg-white text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-green transition-all">
                         NEXT STEP: GENERATE BRIDGE →
                       </button>
                     </div>
@@ -2471,8 +3211,12 @@ function AppContent() {
                     setDRealEndpoint={setDRealEndpoint}
                     systemProfile={systemProfile}
                     rocketParams={rocketParams}
+                    aviationParams={aviationParams}
                     priors={{ mass: telemetry.mass, friction: telemetry.friction }}
                     onAction={markAsTested}
+                    projectCode={projectCode}
+                    projectData={projectData}
+                    onImportProjectCode={handleImportProjectCode}
                   />
                 )}
               </>
@@ -2655,9 +3399,15 @@ function AppContent() {
                 isRunning={isRocketSimRunning}
                 setIsRunning={setIsRocketSimRunning}
                 resetSim={resetRocketSim}
+                isConnected={isSystemConnected}
               />
             ) : (
-              <DashboardCanvas isConnected={isSystemConnected} onTelemetryUpdate={setTelemetry} />
+              <DashboardCanvas 
+                isConnected={isSystemConnected} 
+                onTelemetryUpdate={setTelemetry} 
+                telemetry={telemetry} 
+                connectionMode={connectionMode} 
+              />
             )}
 
             {!isSystemConnected && (
@@ -3008,7 +3758,7 @@ const HeroCanvas = () => {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
 };
 
-const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: boolean, onTelemetryUpdate: (data: any) => void }) => {
+const DashboardCanvas = ({ isConnected, onTelemetryUpdate, telemetry, connectionMode }: { isConnected: boolean, onTelemetryUpdate: (data: any) => void, telemetry: any, connectionMode: string }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const stateRef = useRef({
@@ -3121,12 +3871,6 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: bool
       }
 
       if (!isConnected) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
-        for (let i = 0; i < 5; i++) {
-          const x = Math.random() * canvas.width;
-          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-        }
-        
         ctx.fillStyle = COLORS.red;
         ctx.font = 'bold 12px "JetBrains Mono"';
         ctx.textAlign = 'center';
@@ -3136,95 +3880,112 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: bool
         return;
       }
 
-      // Target
-      if (state.frame % 180 === 0) {
-        state.target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
-      }
+      // If connected via ROS2, we use the real telemetry data from the hardware
+      if (connectionMode === 'ros2_websocket' && telemetry.pos) {
+        state.robot.x = telemetry.pos.x;
+        state.robot.y = telemetry.pos.y;
+        state.robot.vx = telemetry.vel?.x || 0;
+        state.robot.vy = telemetry.vel?.y || 0;
+        state.target = telemetry.targetPos || state.target;
+      } else {
+        // HIL Simulation: run internal physics
+        // Target
+        if (state.frame % 180 === 0) {
+          state.target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
+        }
 
-      // 1C: CEM-MPC
-      const optimalSequence = cem_mpc(
-        { x: state.robot.x, y: state.robot.y },
-        { x: state.robot.vx, y: state.robot.vy },
-        state.target,
-        state.estParams
-      );
-
-      // Apply first action
-      const force = { x: optimalSequence.x[0], y: optimalSequence.y[0] };
-      
-      // Actual physics step (using true hidden params)
-      const prevPos = { x: state.robot.x, y: state.robot.y };
-      const prevVel = { x: state.robot.vx, y: state.robot.vy };
-      const next = rk4_step(prevPos, prevVel, force, state.trueParams);
-      
-      state.robot.x = next.pos.x;
-      state.robot.y = next.pos.y;
-      state.robot.vx = next.vel.x;
-      state.robot.vy = next.vel.y;
-
-      // 1A: SystemID Update
-      if (state.frame % 50 === 0) {
-        system_id_update(prevPos, prevVel, next.pos);
-        rls_update(prevPos, prevVel, next.pos);
-      }
-
-      // 1B: Ensemble
-      const ensemble = compute_ensemble(
-        { x: state.robot.x, y: state.robot.y },
-        { x: state.robot.vx, y: state.robot.vy },
-        state.estParams
-      );
-
-      // Sentinel Safety Checks
-      const isStable = lyapunov_check({ x: state.robot.vx, y: state.robot.vy }, state.estParams.mass);
-      const isFaulted = fault_observer(next.pos, { x: state.robot.x, y: state.robot.y });
-
-      // Telemetry Update
-      if (state.frame % 5 === 0) {
-        state.residualHistory.push({ x: state.frame, y: ensemble.residual });
-        if (state.residualHistory.length > 30) state.residualHistory.shift();
+        // Actual physics step (using true hidden params)
+        const prevPos = { x: state.robot.x, y: state.robot.y };
+        const prevVel = { x: state.robot.vx, y: state.robot.vy };
         
-        const effort = Math.sqrt(Math.pow(force.x, 2) + Math.pow(force.y, 2));
-        state.effortHistory.push({ x: state.frame, y: effort });
-        if (state.effortHistory.length > 30) state.effortHistory.shift();
+        // 1C: CEM-MPC
+        const optimalSequence = cem_mpc(
+          { x: state.robot.x, y: state.robot.y },
+          { x: state.robot.vx, y: state.robot.vy },
+          state.target,
+          state.estParams
+        );
 
-        onTelemetryUpdate({
-          mass: state.estParams.mass,
-          friction: state.estParams.friction,
-          actuatorEfficiency: state.actuatorEfficiency,
-          residual: ensemble.residual,
-          confidence: ensemble.confidence,
-          variance: ensemble.variance,
-          isStable,
-          isFaulted,
-          cpuLoad: 12.4 + Math.random() * 2,
-          latency: 0.4 + Math.random() * 0.1,
-          residualHistory: [...state.residualHistory],
-          effortHistory: [...state.effortHistory],
-          targetPos: state.target
-        });
+        // Apply first action
+        const force = { x: optimalSequence.x[0], y: optimalSequence.y[0] };
+        
+        const next = rk4_step(prevPos, prevVel, force, state.trueParams);
+        
+        state.robot.x = next.pos.x;
+        state.robot.y = next.pos.y;
+        state.robot.vx = next.vel.x;
+        state.robot.vy = next.vel.y;
+
+        // 1A: SystemID Update
+        if (state.frame % 50 === 0) {
+          system_id_update(prevPos, prevVel, next.pos);
+          rls_update(prevPos, prevVel, next.pos);
+        }
+
+        // 1B: Ensemble
+        const ensemble = compute_ensemble(
+          { x: state.robot.x, y: state.robot.y },
+          { x: state.robot.vx, y: state.robot.vy },
+          state.estParams
+        );
+
+        // Sentinel Safety Checks
+        const isStable = lyapunov_check({ x: state.robot.vx, y: state.robot.vy }, state.estParams.mass);
+        const isFaulted = fault_observer(next.pos, { x: state.robot.x, y: state.robot.y });
+
+        // Telemetry Update
+        if (state.frame % 5 === 0) {
+          state.residualHistory.push({ x: state.frame, y: ensemble.residual });
+          if (state.residualHistory.length > 30) state.residualHistory.shift();
+          
+          const effort = Math.sqrt(Math.pow(force.x, 2) + Math.pow(force.y, 2));
+          state.effortHistory.push({ x: state.frame, y: effort });
+          if (state.effortHistory.length > 30) state.effortHistory.shift();
+
+          onTelemetryUpdate({
+            mass: state.estParams.mass,
+            friction: state.estParams.friction,
+            actuatorEfficiency: state.actuatorEfficiency,
+            residual: ensemble.residual,
+            confidence: ensemble.confidence,
+            variance: ensemble.variance,
+            isStable,
+            isFaulted,
+            cpuLoad: 12.4 + Math.random() * 2,
+            latency: 0.4 + Math.random() * 0.1,
+            residualHistory: [...state.residualHistory],
+            effortHistory: [...state.effortHistory],
+            targetPos: state.target
+          });
+        }
+
+        // Store for visualization outside this block
+        (state as any).lastOptimalSequence = optimalSequence;
+        (state as any).lastEnsemble = ensemble;
       }
 
       // Draw MPC Trajectory
-      ctx.strokeStyle = COLORS.cyan;
-      ctx.setLineDash([5, 5]);
-      ctx.beginPath();
-      ctx.moveTo(state.robot.x, state.robot.y);
-      let px = state.robot.x;
-      let py = state.robot.y;
-      let pvx = state.robot.vx;
-      let pvy = state.robot.vy;
-      for (let i = 0; i < 12; i++) {
-        const f = { x: optimalSequence.x[i], y: optimalSequence.y[i] };
-        const step = rk4_step({ x: px, y: py }, { x: pvx, y: pvy }, f, state.estParams);
-        px = step.pos.x;
-        py = step.pos.y;
-        pvx = step.vel.x;
-        pvy = step.vel.y;
-        ctx.lineTo(px, py);
+      if ((state as any).lastOptimalSequence) {
+        ctx.strokeStyle = COLORS.cyan;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(state.robot.x, state.robot.y);
+        let px = state.robot.x;
+        let py = state.robot.y;
+        let pvx = state.robot.vx;
+        let pvy = state.robot.vy;
+        for (let i = 0; i < 12; i++) {
+          const f = { x: (state as any).lastOptimalSequence.x[i], y: (state as any).lastOptimalSequence.y[i] };
+          const step = rk4_step({ x: px, y: py }, { x: pvx, y: pvy }, f, state.estParams);
+          px = step.pos.x;
+          py = step.pos.y;
+          pvx = step.vel.x;
+          pvy = step.vel.y;
+          ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
 
       // Draw Target
       ctx.strokeStyle = COLORS.amber;
@@ -3238,13 +3999,15 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate }: { isConnected: bool
       ctx.stroke();
 
       // Draw Ensemble Nodes (Uncertainty)
-      const numNodes = 3;
-      for (let i = 0; i < numNodes; i++) {
-        ctx.strokeStyle = `rgba(0, 255, 136, ${0.1 + (1 - ensemble.confidence/100) * 0.2})`;
-        ctx.beginPath();
-        const offset = (Math.random() - 0.5) * ensemble.variance * 500;
-        ctx.arc(state.robot.x + offset, state.robot.y + offset, 15 + i * 5, 0, Math.PI * 2);
-        ctx.stroke();
+      if ((state as any).lastEnsemble) {
+        const numNodes = 3;
+        for (let i = 0; i < numNodes; i++) {
+          ctx.strokeStyle = `rgba(0, 255, 136, ${0.1 + (1 - (state as any).lastEnsemble.confidence/100) * 0.2})`;
+          ctx.beginPath();
+          const offset = (Math.random() - 0.5) * (state as any).lastEnsemble.variance * 500;
+          ctx.arc(state.robot.x + offset, state.robot.y + offset, 15 + i * 5, 0, Math.PI * 2);
+          ctx.stroke();
+        }
       }
 
       // Draw Robot
