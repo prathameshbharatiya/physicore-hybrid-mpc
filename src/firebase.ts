@@ -17,11 +17,22 @@ const config = {
 // Validate that we have real values before initializing
 const isConfigValid = config.apiKey && !config.apiKey.includes('YOUR_API_KEY');
 
-if (!isConfigValid && typeof window !== 'undefined') {
-  console.warn(
-    'Firebase configuration is missing or using placeholders. ' +
-    'Please set your environment variables in the Settings menu.'
-  );
+if (typeof window !== 'undefined') {
+  const domain = window.location.hostname;
+  const isAuthorized = [
+    'localhost',
+    '127.0.0.1',
+    'firebaseapp.com',
+    'web.app',
+    'run.app'
+  ].some(d => domain.includes(d));
+
+  if (!isAuthorized && !isConfigValid) {
+    console.warn(
+      `Domain ${domain} might not be authorized for Firebase authentication. ` +
+      'Please add it to your Firebase project settings in the console.'
+    );
+  }
 }
 
 const app = initializeApp(config);

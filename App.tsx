@@ -1854,6 +1854,10 @@ function AppContent() {
         console.warn("Login cancelled by user.");
       } else if (err.code === 'auth/popup-blocked') {
         alert("Login popup was blocked by your browser. Please allow popups for this site.");
+      } else if (err.code === 'auth/unauthorized-domain') {
+        const domain = window.location.hostname;
+        console.error(`Domain not authorized: ${domain}`);
+        alert(`LOGIN FAILED: Domain "${domain}" is not authorized in Firebase Console.\n\nTo fix this:\n1. Go to Firebase Console > Authentication > Settings > Authorized domains\n2. Add "${domain}" to the list.`);
       } else {
         console.error("Login failed:", err);
         alert(`Login failed: ${err.message}`);
