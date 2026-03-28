@@ -3585,6 +3585,18 @@ function AppContent() {
                   <div className="pl-20">v</div>
                   <div>[CONTROLLER] &lt;--(Optimal Input)-- [PHYSICORE MPC]</div>
                 </div>
+
+                <div className="p-6 bg-cyan/5 border border-cyan/20 space-y-4">
+                  <div className="flex items-center gap-2 text-cyan font-display text-xs font-bold uppercase">
+                    <Zap size={14} /> Live Data Guarantee
+                  </div>
+                  <p className="font-body text-xs text-textSecondary leading-relaxed">
+                    PhysiCore v3.1.5 enforces a strict "Hardware-First" policy. The dashboard will not display 
+                    simulated physics when a connection is established. If the telemetry stream is interrupted, 
+                    the engine enters a "WAITING" state rather than falling back to internal simulations. 
+                    This ensures that every number you see is a direct reflection of your physical system.
+                  </p>
+                </div>
               </section>
             )}
 
@@ -4451,88 +4463,22 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate, telemetry, connection
         return;
       }
 
-      // If connected via ROS2, we use the real telemetry data from the hardware
-      if (connectionMode === 'ros2_websocket' && telemetry.pos) {
+      // If connected, we use the telemetry data from the hardware
+      if (isConnected && telemetry.pos) {
         state.robot.x = telemetry.pos.x;
         state.robot.y = telemetry.pos.y;
         state.robot.vx = telemetry.vel?.x || 0;
         state.robot.vy = telemetry.vel?.y || 0;
         state.target = telemetry.targetPos || state.target;
-      } else {
-        // HIL Simulation: run internal physics
-        // Target
-        if (state.frame % 180 === 0) {
-          state.target = { x: Math.random() * canvas.width, y: Math.random() * canvas.height };
-        }
-
-        // Actual physics step (using true hidden params)
-        const prevPos = { x: state.robot.x, y: state.robot.y };
-        const prevVel = { x: state.robot.vx, y: state.robot.vy };
+      } else if (isConnected) {
+        // Connected but no data yet
+        ctx.fillStyle = COLORS.amber;
+        ctx.font = 'bold 12px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText('WAITING FOR TELEMETRY STREAM...', canvas.width / 2, canvas.height / 2);
         
-        // 1C: CEM-MPC
-        const optimalSequence = cem_mpc(
-          { x: state.robot.x, y: state.robot.y },
-          { x: state.robot.vx, y: state.robot.vy },
-          state.target,
-          state.estParams
-        );
-
-        // Apply first action
-        const force = { x: optimalSequence.x[0], y: optimalSequence.y[0] };
-        
-        const next = rk4_step(prevPos, prevVel, force, state.trueParams);
-        
-        state.robot.x = next.pos.x;
-        state.robot.y = next.pos.y;
-        state.robot.vx = next.vel.x;
-        state.robot.vy = next.vel.y;
-
-        // 1A: SystemID Update
-        if (state.frame % 50 === 0) {
-          system_id_update(prevPos, prevVel, next.pos);
-          rls_update(prevPos, prevVel, next.pos);
-        }
-
-        // 1B: Ensemble
-        const ensemble = compute_ensemble(
-          { x: state.robot.x, y: state.robot.y },
-          { x: state.robot.vx, y: state.robot.vy },
-          state.estParams
-        );
-
-        // Sentinel Safety Checks
-        const isStable = lyapunov_check({ x: state.robot.vx, y: state.robot.vy }, state.estParams.mass);
-        const isFaulted = fault_observer(next.pos, { x: state.robot.x, y: state.robot.y });
-
-        // Telemetry Update
-        if (state.frame % 5 === 0) {
-          state.residualHistory.push({ x: state.frame, y: ensemble.residual });
-          if (state.residualHistory.length > 30) state.residualHistory.shift();
-          
-          const effort = Math.sqrt(Math.pow(force.x, 2) + Math.pow(force.y, 2));
-          state.effortHistory.push({ x: state.frame, y: effort });
-          if (state.effortHistory.length > 30) state.effortHistory.shift();
-
-          onTelemetryUpdate({
-            mass: state.estParams.mass,
-            friction: state.estParams.friction,
-            actuatorEfficiency: state.actuatorEfficiency,
-            residual: ensemble.residual,
-            confidence: ensemble.confidence,
-            variance: ensemble.variance,
-            isStable,
-            isFaulted,
-            cpuLoad: 12.4 + Math.random() * 2,
-            latency: 0.4 + Math.random() * 0.1,
-            residualHistory: [...state.residualHistory],
-            effortHistory: [...state.effortHistory],
-            targetPos: state.target
-          });
-        }
-
-        // Store for visualization outside this block
-        (state as any).lastOptimalSequence = optimalSequence;
-        (state as any).lastEnsemble = ensemble;
+        requestAnimationFrame(animate);
+        return;
       }
 
       // Draw MPC Trajectory
