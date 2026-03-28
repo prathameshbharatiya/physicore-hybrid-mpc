@@ -1754,6 +1754,19 @@ function AppContent() {
     }
   };
 
+  useEffect(() => {
+    if (isAdmin) {
+      const q = query(collection(db, 'allowed_users'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllUsers(users);
+      }, (err) => {
+        console.error("Failed to fetch team members:", err);
+      });
+      return () => unsubscribe();
+    }
+  }, [isAdmin]);
+
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
   const [manualSection, setManualSection] = useState('intro');
@@ -2423,6 +2436,7 @@ function AppContent() {
           });
           setGeneratedFiles(prev => [...prev, ...newFiles]);
           setIntegrationPhase(3); // Transition to wizard steps phase
+          markAsTested();
         }
       } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
         setQuotaExceeded(true);
@@ -2565,7 +2579,7 @@ function AppContent() {
       {view !== 'dashboard' && (
         <div className="hidden lg:flex items-center gap-8">
           {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
-            if (item === 'TEAM' && user?.email !== "prathameshshirbhate8anpc@gmail.com") return null;
+            if (item === 'TEAM' && !isAdmin) return null;
             return (
               <a 
                 key={item} 
@@ -3378,8 +3392,6 @@ function AppContent() {
 };
 
   const renderTeam = () => {
-    const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
-    
     return (
       <div className="min-h-screen bg-void pt-[52px] px-6 pb-20">
         <div className="max-w-4xl mx-auto py-12 space-y-12">
@@ -4154,25 +4166,8 @@ end`}
     );
   }
 
-  if (user && hasTested && view !== 'home') {
-    return (
-      <div className="h-screen w-full bg-void flex flex-col items-center justify-center p-6 text-center">
-        <div className="max-w-[400px] space-y-8">
-          <Lock className="text-amber mx-auto" size={64} />
-          <div className="space-y-2">
-            <h2 className="font-display text-2xl font-bold text-white uppercase tracking-tighter">Test Limit Reached</h2>
-            <p className="font-body text-sm text-textSecondary leading-relaxed">
-              You have already completed your one-time test of the PhysiCore system. 
-              To unlock full access and multi-use capabilities, please upgrade to the Enterprise Sentinel Pack.
-            </p>
-          </div>
-          <div className="flex gap-4 w-full">
-             <button onClick={() => setView('home')} className="btn-outline flex-1 h-12 text-xs">RETURN HOME</button>
-             <button onClick={handleLogout} className="btn-outline flex-1 h-12 text-xs">LOGOUT</button>
-          </div>
-        </div>
-      </div>
-    );
+  if (user && hasTested && !isAdmin && view !== 'home') {
+    return renderQuotaExceeded();
   }
 
   return (
