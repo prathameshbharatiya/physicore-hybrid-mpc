@@ -4,7 +4,7 @@ import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './src/firebase';
 import { signInWithPopup, signOut } from 'firebase/auth';
 import { 
-  doc, getDoc, updateDoc, setDoc, 
+  doc, getDoc, updateDoc, setDoc, deleteDoc,
   collection, query, where, getDocs, onSnapshot 
 } from 'firebase/firestore';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
@@ -18,7 +18,7 @@ import {
   Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown,
   Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
   Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert,
-  BookOpen
+  BookOpen, Plus, Trash2
 } from 'lucide-react';
 import { simpleHash, generateId, encodeProjectCode, decodeProjectCode } from './src/utils/projectSync';
 import { 
@@ -331,7 +331,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard' | 'manual';
+type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -1693,10 +1693,66 @@ export default function App() {
 
 function AppContent() {
   const [user, loading, error] = useAuthState(auth);
+  const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
   const [hasTested, setHasTested] = useState<boolean | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
+  const bootstrapTeam = async () => {
+    if (user?.email !== "prathameshshirbhate8anpc@gmail.com") return;
+    setIsBootstrapping(true);
+    
+    const teamEmails = [
+      "koshmarus@gmail.com",
+      "stesrocketryteam@gmail.com",
+      "darisglx@gmail.com",
+      "vladimir.robotics@gmail.com",
+      "projectauvm@manipal.edu"
+    ];
+    
+    let addedCount = 0;
+    for (const email of teamEmails) {
+      try {
+        const q = query(collection(db, 'allowed_users'), where('email', '==', email));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          await setDoc(doc(collection(db, 'allowed_users')), {
+            email,
+            role: 'client',
+            hasTested: false,
+            invitedBy: user.email,
+            createdAt: new Date().toISOString()
+          });
+          addedCount++;
+        }
+      } catch (err) {
+        console.error(`Failed to bootstrap ${email}:`, err);
+      }
+    }
+    
+    // Refresh list
+    const q = query(collection(db, 'allowed_users'));
+    const querySnapshot = await getDocs(q);
+    const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setAllUsers(users);
+    
+    setIsBootstrapping(false);
+    alert(`Team authorization complete. ${addedCount} new members added.`);
+  };
+
+  const handleRemoveUser = async (userId: string) => {
+    if (user?.email !== "prathameshshirbhate8anpc@gmail.com") return;
+    try {
+      await deleteDoc(doc(db, 'allowed_users', userId));
+      setAllUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err) {
+      console.error("Failed to remove user:", err);
+    }
+  };
 
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
@@ -1707,6 +1763,7 @@ function AppContent() {
       if (user) {
         setCheckingAccess(true);
         try {
+          // 1. Try UID-based doc
           const userDocRef = doc(db, 'allowed_users', user.uid);
           const userDoc = await getDoc(userDocRef);
           
@@ -1715,12 +1772,27 @@ function AppContent() {
             setIsAllowed(true);
             setHasTested(data.hasTested || false);
           } else {
-            // Bootstrap Admin: if it's the admin email, create the doc
-            if (user.email === "prathameshshirbhate8anpc@gmail.com") {
+            // 2. Try Email-based query (for invited users)
+            const q = query(collection(db, 'allowed_users'), where('email', '==', user.email));
+            const querySnapshot = await getDocs(q);
+            
+            if (!querySnapshot.empty) {
+              const data = querySnapshot.docs[0].data();
+              setIsAllowed(true);
+              setHasTested(data.hasTested || false);
+              
+              // Optional: Migrate to UID-based doc for better performance/security rules
+              try {
+                await setDoc(userDocRef, { ...data, uid: user.uid });
+              } catch (e) { console.error("Migration failed", e); }
+              
+            } else if (user.email === "prathameshshirbhate8anpc@gmail.com") {
+              // Bootstrap Admin
               const adminData = {
                 email: user.email,
                 hasTested: false,
-                role: 'admin'
+                role: 'admin',
+                createdAt: new Date().toISOString()
               };
               await setDoc(userDocRef, adminData);
               setIsAllowed(true);
@@ -1731,7 +1803,8 @@ function AppContent() {
             }
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.GET, `allowed_users/${user.uid}`);
+          console.error("Access check failed:", err);
+          setIsAllowed(false);
         } finally {
           setCheckingAccess(false);
         }
@@ -1744,14 +1817,14 @@ function AppContent() {
   }, [user]);
 
   const markAsTested = async () => {
-    if (user && isAllowed && !hasTested) {
+    if (user && isAllowed && !hasTested && !isAdmin) {
       try {
         await updateDoc(doc(db, 'allowed_users', user.uid), {
           hasTested: true
         });
         setHasTested(true);
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `allowed_users/${user.uid}`);
+        console.error("Failed to mark as tested:", err);
       }
     }
   };
@@ -1802,9 +1875,7 @@ function AppContent() {
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
   const [isLaunching, setIsLaunching] = useState(false);
-  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
-  const [allUsers, setAllUsers] = useState<any[]>([]);
   const [showUserManagement, setShowUserManagement] = useState(false);
 
   // Persistent WebSocket for Real-time Telemetry
@@ -2192,6 +2263,7 @@ function AppContent() {
     setProjectCode(code);
     setProjectData(finalPayload);
     setIntegrationPhase(4);
+    markAsTested();
   };
 
   const handleImportProjectCode = (code: string) => {
@@ -2237,6 +2309,7 @@ function AppContent() {
   const handleRocketLaunch = () => {
     if (rocketState.phase === 'PRELAUNCH') {
       setIsRocketSimRunning(true);
+      markAsTested();
     }
   };
 
@@ -2491,26 +2564,33 @@ function AppContent() {
 
       {view !== 'dashboard' && (
         <div className="hidden lg:flex items-center gap-8">
-          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL'].map(item => (
-            <a 
-              key={item} 
-              href={`#${item.toLowerCase()}`}
-              className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? (item === 'SENTINEL' ? 'text-amber border-b border-amber' : 'text-green border-b border-green') : 'text-textSecondary hover:text-textPrimary'}`}
-              onClick={(e) => {
-                e.preventDefault();
-                if (view !== 'home') {
-                  setView('home');
-                  setTimeout(() => {
-                    document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
-                  }, 100);
-                } else {
-                  document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-            >
-              {item}
-            </a>
-          ))}
+          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
+            if (item === 'TEAM' && user?.email !== "prathameshshirbhate8anpc@gmail.com") return null;
+            return (
+              <a 
+                key={item} 
+                href={`#${item.toLowerCase()}`}
+                className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? (item === 'SENTINEL' ? 'text-amber border-b border-amber' : (item === 'TEAM' ? 'text-cyan border-b border-cyan' : 'text-green border-b border-green')) : 'text-textSecondary hover:text-textPrimary'}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (item === 'MANUAL') setView('manual');
+                  else if (item === 'TEAM') setView('team');
+                  else {
+                    if (view !== 'home') {
+                      setView('home');
+                      setTimeout(() => {
+                        document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                      }, 100);
+                    } else {
+                      document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                    }
+                  }
+                }}
+              >
+                {item}
+              </a>
+            );
+          })}
         </div>
       )}
 
@@ -2971,8 +3051,42 @@ function AppContent() {
     </div>
   );
 
-  const renderIntegrator = () => (
-    <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
+  const renderQuotaExceeded = () => (
+    <div className="min-h-screen bg-void flex items-center justify-center p-6">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="max-w-md w-full p-8 border border-red/30 bg-redDim/10 space-y-8 text-center"
+      >
+        <div className="w-16 h-16 border border-red flex items-center justify-center mx-auto bg-redDim/20">
+          <ShieldAlert className="text-red" size={32} />
+        </div>
+        <div className="space-y-4">
+          <h2 className="font-display text-2xl font-bold text-white tracking-tighter uppercase italic">QUOTA EXCEEDED</h2>
+          <p className="font-body text-textSecondary text-xs uppercase tracking-widest leading-relaxed">
+            Your free pilot access for PhysiCore has been exhausted. You have successfully completed one physical layer integration test.
+          </p>
+          <div className="p-4 border border-borderDim bg-bg text-left space-y-2">
+            <div className="micro-label text-textDim uppercase">Next Steps</div>
+            <p className="font-body text-[10px] text-textSecondary uppercase leading-relaxed">
+              To continue using PhysiCore for multiple systems or production environments, please contact our integration team for a full license.
+            </p>
+          </div>
+        </div>
+        <button 
+          onClick={() => setView('home')}
+          className="w-full py-3 border border-white text-white font-display font-bold text-[11px] uppercase tracking-widest hover:bg-white hover:text-black transition-all"
+        >
+          RETURN TO COMMAND CENTER
+        </button>
+      </motion.div>
+    </div>
+  );
+
+  const renderIntegrator = () => {
+    if (hasTested && !isAdmin) return renderQuotaExceeded();
+    return (
+      <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
       {/* LEFT PANEL */}
       <aside className="w-[300px] border-r border-border bg-bg flex flex-col overflow-hidden">
         <div className="h-12 border-b border-border flex items-center justify-between px-4 shrink-0">
@@ -3261,6 +3375,115 @@ function AppContent() {
       </div>
     </div>
   );
+};
+
+  const renderTeam = () => {
+    const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
+    
+    return (
+      <div className="min-h-screen bg-void pt-[52px] px-6 pb-20">
+        <div className="max-w-4xl mx-auto py-12 space-y-12">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="text-cyan" size={24} />
+              <h1 className="font-display text-4xl font-bold tracking-tighter text-white uppercase italic">TEAM AUTHORIZATION</h1>
+            </div>
+            <p className="font-body text-textSecondary max-w-2xl uppercase text-xs tracking-widest leading-relaxed">
+              Manage access protocols for the PhysiCore Intelligence Engine. Only authorized neural signatures can access the kernel.
+            </p>
+          </div>
+
+          {isAdmin && (
+            <div className="p-6 border border-cyan/30 bg-cyanDim/10 space-y-6">
+              <div className="flex justify-between items-center">
+                <div className="space-y-1">
+                  <h3 className="font-display text-lg font-bold text-cyan tracking-widest uppercase">ADMIN CONTROL PANEL</h3>
+                  <p className="micro-label text-textDim uppercase">Global access management active.</p>
+                </div>
+                <button 
+                  onClick={bootstrapTeam}
+                  disabled={isBootstrapping}
+                  className="px-6 py-2 bg-cyan text-black font-display font-bold text-xs tracking-widest hover:bg-white transition-all disabled:opacity-50"
+                >
+                  {isBootstrapping ? 'BOOTSTRAPPING...' : 'AUTHORIZE TEAM'}
+                </button>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-bg border border-borderDim space-y-4">
+                  <h4 className="micro-label text-textDim uppercase">Add New Signature</h4>
+                  <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const input = e.currentTarget.querySelector('input');
+                    if (input) {
+                      handleAddUser(input.value);
+                      input.value = '';
+                    }
+                  }} className="flex gap-2">
+                    <input 
+                      type="email" 
+                      placeholder="ENGINEER@TEAM.COM"
+                      className="flex-1 bg-void border border-borderDim px-3 py-2 font-mono text-xs text-cyan focus:border-cyan outline-none"
+                    />
+                    <button type="submit" className="px-4 py-2 border border-cyan text-cyan hover:bg-cyan hover:text-black transition-all">
+                      <Plus size={16} />
+                    </button>
+                  </form>
+                </div>
+                <div className="p-4 bg-bg border border-borderDim space-y-2">
+                  <h4 className="micro-label text-textDim uppercase">Quick Stats</h4>
+                  <div className="flex justify-between items-center">
+                    <span className="font-mono text-[10px] text-textSecondary uppercase">Authorized Signatures</span>
+                    <span className="font-mono text-lg text-white">{allUsers.length}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <h3 className="micro-label text-textDim uppercase tracking-widest">AUTHORIZED PERSONNEL</h3>
+            <div className="border border-border divide-y divide-border">
+              {allUsers.length === 0 ? (
+                <div className="p-12 text-center space-y-4">
+                  <User className="mx-auto text-textDim" size={32} />
+                  <p className="font-mono text-[10px] text-textDim uppercase">No authorized signatures found in the kernel.</p>
+                </div>
+              ) : (
+                allUsers.map((u, i) => (
+                  <div key={i} className="p-4 flex items-center justify-between hover:bg-bgRaised transition-colors">
+                    <div className="flex items-center gap-4">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center ${u.role === 'admin' ? 'bg-cyanDim text-cyan' : 'bg-border text-textDim'}`}>
+                        {u.role === 'admin' ? <Shield size={14} /> : <User size={14} />}
+                      </div>
+                      <div>
+                        <div className="font-mono text-xs text-white uppercase">{u.email}</div>
+                        <div className="micro-label text-textDim uppercase">{u.role} signature</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-6">
+                      <div className="text-right">
+                        <div className="micro-label text-textDim uppercase">Status</div>
+                        <div className="font-mono text-[10px] text-green uppercase">Authorized</div>
+                      </div>
+                      {isAdmin && u.email !== user?.email && (
+                        <button 
+                          onClick={() => handleRemoveUser(u.id)}
+                          className="p-2 text-textDim hover:text-red transition-colors"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderManual = () => {
     const sections = [
@@ -3588,8 +3811,10 @@ end`}
     );
   };
 
-  const renderDashboard = () => (
-    <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
+  const renderDashboard = () => {
+    if (hasTested && !isAdmin) return renderQuotaExceeded();
+    return (
+      <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
         {/* SIDEBAR: SYSTEM STATUS */}
         <aside className="w-[320px] border-r border-border bg-bg flex flex-col shrink-0 overflow-hidden">
@@ -3898,6 +4123,7 @@ end`}
       </div>
     </div>
   );
+};
 
   if (loading || checkingAccess) {
     return (
@@ -3964,6 +4190,10 @@ end`}
         ) : view === 'manual' ? (
           <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderManual()}
+          </motion.div>
+        ) : view === 'team' ? (
+          <motion.div key="team" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderTeam()}
           </motion.div>
         ) : (
           <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
