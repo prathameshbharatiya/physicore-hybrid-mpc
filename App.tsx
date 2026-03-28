@@ -411,7 +411,13 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
     return new Promise(async (resolve) => {
       try {
         // HIL Simulation Handshake - REAL CHECK
-        // Attempt to ping the endpoint to ensure it's "real"
+        // Prevent connecting to the app itself (localhost:3000)
+        const currentOrigin = window.location.origin;
+        if (endpoint.includes(currentOrigin) || endpoint.includes('localhost:3000')) {
+          resolve({ success: false, reason: 'SELF_CONNECTION_FORBIDDEN. Cannot connect to the PhysiCore UI as a hardware endpoint.' });
+          return;
+        }
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
         
@@ -1162,6 +1168,18 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
         return;
       }
 
+      if (state.time === 0 && flightData.length === 0) {
+        ctx.fillStyle = COLORS.bgInset;
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = COLORS.amber;
+        ctx.font = 'bold 12px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText('WAITING FOR TELEMETRY STREAM...', w / 2, h / 2);
+        ctx.font = '8px "JetBrains Mono"';
+        ctx.fillText('SYSTEM CONNECTED // IDLE', w / 2, h / 2 + 20);
+        return;
+      }
+
       // Scaling
       const maxAlt = Math.max(2000, state.y * 1.2, ...(flightData.map(d => d.y)));
       const maxRange = Math.max(1000, state.x * 1.2, ...(flightData.map(d => d.x)));
@@ -1268,17 +1286,19 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
       ctx.fillText(`MACH: ${mach.toFixed(2)}`, w - 170, 120);
       
       // Speed Controls
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(20, 20, 120, 40);
-      ctx.font = '8px "JetBrains Mono"';
-      ctx.fillStyle = '#555';
-      ctx.fillText('SIM SPEED', 30, 35);
-      [1, 5, 10, 50].forEach((s, i) => {
-        ctx.fillStyle = simSpeed === s ? COLORS.green : '#333';
-        ctx.fillRect(30 + i*25, 40, 20, 15);
-        ctx.fillStyle = simSpeed === s ? '#000' : '#FFF';
-        ctx.fillText(`${s}x`, 33 + i*25, 50);
-      });
+      if (!isConnected) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(20, 20, 120, 40);
+        ctx.font = '8px "JetBrains Mono"';
+        ctx.fillStyle = '#555';
+        ctx.fillText('SIM SPEED', 30, 35);
+        [1, 5, 10, 50].forEach((s, i) => {
+          ctx.fillStyle = simSpeed === s ? COLORS.green : '#333';
+          ctx.fillRect(30 + i*25, 40, 20, 15);
+          ctx.fillStyle = simSpeed === s ? '#000' : '#FFF';
+          ctx.fillText(`${s}x`, 33 + i*25, 50);
+        });
+      }
     };
 
     let animationFrame: number;
@@ -2061,7 +2081,20 @@ function AppContent() {
     latency: 0.4,
     residualHistory: [] as any[],
     effortHistory: [] as any[],
-    targetPos: { x: 0, y: 0 }
+    targetPos: { x: 0, y: 0 },
+    // Rocket/Aviation specific telemetry
+    pos: { x: 0, y: 0, z: 0 } as any,
+    vel: { x: 0, y: 0, z: 0 } as any,
+    accel: { x: 0, y: 0, z: 0 } as any,
+    orientation: { r: 0, p: 0, y: 0 } as any,
+    propMass: 0,
+    time: 0,
+    phase: 'PRELAUNCH' as string,
+    altitude: 0,
+    airspeed: 0,
+    mach: 0,
+    aoa: 0,
+    bank: 0
   });
 
   const performMetaAnalysis = async () => {
@@ -2125,6 +2158,19 @@ function AppContent() {
     const result: any = await initiateHandshake(endpoint, connectionMode);
     
     if (result.success) {
+      // Reset all simulation states to ensure clean real-time data
+      setIsRocketSimRunning(false);
+      setFlightData([]);
+      setActualFlightData(null);
+      setRocketState({
+        x: 0, y: 0, vx: 0, vy: 0,
+        mass: rocketParams.dryMass + rocketParams.fuelMass,
+        propMass: rocketParams.fuelMass,
+        time: 0,
+        phase: 'PRELAUNCH',
+        angle: rocketParams.launchAngle * Math.PI / 180
+      });
+
       setIsSystemConnected(true);
       setIsSystemConnecting(false);
     } else {
@@ -2216,7 +2262,8 @@ function AppContent() {
 
   // Rocket Simulation Loop
   useEffect(() => {
-    if (!isRocketSimRunning || !isSystemConnected || systemProfile.domain !== 'ROCKETS') return;
+    // Simulation should only run when NOT connected to a real system
+    if (!isRocketSimRunning || isSystemConnected || systemProfile.domain !== 'ROCKETS') return;
 
     const dt = 0.01;
     const interval = setInterval(() => {
@@ -2239,9 +2286,52 @@ function AppContent() {
     }, 10);
 
     return () => clearInterval(interval);
-  }, [isRocketSimRunning, rocketSimSpeed, rocketParams, systemProfile.domain]);
+  }, [isRocketSimRunning, rocketSimSpeed, rocketParams, systemProfile.domain, isSystemConnected]);
+
+  // Update rocketState from real telemetry when connected
+  useEffect(() => {
+    if (isSystemConnected && systemProfile.domain === 'ROCKETS' && telemetry.pos) {
+      setRocketState(prev => ({
+        ...prev,
+        x: telemetry.pos.x,
+        y: telemetry.pos.y,
+        vx: telemetry.vel?.x || 0,
+        vy: telemetry.vel?.y || 0,
+        mass: telemetry.mass || prev.mass,
+        propMass: telemetry.propMass || prev.propMass,
+        time: telemetry.time || prev.time,
+        phase: (telemetry.phase as RocketPhase) || prev.phase
+      }));
+      
+      // Also record flight data for the graph
+      setFlightData(fd => {
+        const newData = { 
+          x: telemetry.pos.x, 
+          y: telemetry.pos.y, 
+          vx: telemetry.vel?.x || 0, 
+          vy: telemetry.vel?.y || 0,
+          mass: telemetry.mass || 0,
+          time: telemetry.time || 0,
+          phase: telemetry.phase || 'UNKNOWN'
+        };
+        // Avoid duplicate timestamps
+        if (fd.length > 0 && fd[fd.length - 1].time === newData.time) return fd;
+        return [...fd, newData].slice(-1000);
+      });
+    }
+  }, [isSystemConnected, systemProfile.domain, telemetry]);
 
   const resetRocketSim = () => {
+    if (isSystemConnected) {
+      // Send reset command to real hardware
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          op: 'call_service',
+          service: '/rocket/reset'
+        }));
+      }
+      return;
+    }
     setIsRocketSimRunning(false);
     setRocketState({
       x: 0, y: 0, vx: 0, vy: 0, 
@@ -2324,7 +2414,19 @@ function AppContent() {
   };
 
   const handleRocketLaunch = () => {
-    if (rocketState.phase === 'PRELAUNCH') {
+    if (isSystemConnected) {
+      // Send launch command to real hardware
+      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({
+          op: 'call_service',
+          service: '/rocket/launch'
+        }));
+      }
+      markAsTested();
+      return;
+    }
+
+    if (rocketState.phase === 'PRELAUNCH' && !isSystemConnected) {
       setIsRocketSimRunning(true);
       markAsTested();
     }
@@ -2456,22 +2558,6 @@ function AppContent() {
     } finally {
       setIsTyping(false);
     }
-  };
-
-  const handleTestConnection = () => {
-    const testMsg: Message = { 
-      role: 'ai', 
-      content: `> INTEGRATION ENGINEER: INITIATING CONNECTION TEST...
-      [SYSTEM] PINGING PHYSICORE KERNEL... SUCCESS (0.4ms)
-      [SYSTEM] VERIFYING SENTINEL HANDSHAKE... SUCCESS
-      [SYSTEM] CHECKING ROS2 BRIDGE... ACTIVE
-      [SYSTEM] STREAMING TELEMETRY... 60Hz STABLE
-      
-      CONNECTION VERIFIED. SYSTEM IS LIVE.`, 
-      timestamp: formatTime(new Date()) 
-    };
-    setConversationHistory(prev => [...prev, testMsg]);
-    setIsSystemConnected(true);
   };
 
   // --- RENDERERS ---
@@ -3552,6 +3638,18 @@ function AppContent() {
                     optimal control, and safety governance in robotics and aerospace systems.
                   </p>
                 </div>
+
+                <div className="p-6 border border-green/30 bg-green/5 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck className="text-green" size={20} />
+                    <h3 className="font-display text-sm font-bold text-green uppercase tracking-widest">LIVE DATA GUARANTEE</h3>
+                  </div>
+                  <p className="font-body text-xs text-textDim leading-relaxed">
+                    PhysiCore enforces a <span className="text-green font-bold">Hardware-First</span> policy. When a system is connected via HIL or SIL, all internal simulations are <span className="text-red font-bold">DISABLED</span>. 
+                    The dashboard will only display data received directly from the telemetry stream. If no data is arriving, the system will remain in a <span className="text-amber font-bold">WAITING</span> state.
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-2 gap-6">
                   <div className="p-6 bg-bg border border-border space-y-3">
                     <Zap className="text-cyan" size={24} />
