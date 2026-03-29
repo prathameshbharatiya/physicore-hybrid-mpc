@@ -290,34 +290,62 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
 };
 
 // --- CONSTANTS ---
-async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "") {
-  const API_KEY = process.env.GEMINI_API_KEY;
-  if (!API_KEY) {
-    console.error("GEMINI_API_KEY is missing");
-    return { success: false, text: null, error: 'GEMINI_API_KEY_MISSING' };
+async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "", userKey?: string) {
+  const apiKey = userKey || import.meta.env.VITE_GEMINI_API_KEY || (window as any).__GEMINI_KEY__ || localStorage.getItem('physicore_gemini_key');
+  
+  if (!apiKey) {
+    return { success: false, text: null, error: 'NO_API_KEY' };
   }
 
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  // Format contents for Gemini API
+  let contents = [];
+  if (history.length > 0) {
+    // Ensure history alternates correctly and starts with user
+    contents = history.map(m => ({
+      role: m.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: m.content }]
+    }));
+  } else {
+    contents = [{ role: 'user', parts: [{ text: prompt }] }];
+  }
 
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: history.length > 0 ? history : [{ parts: [{ text: prompt }] }],
-      config: {
-        systemInstruction,
-        temperature: 0.2,
-        maxOutputTokens: 2000,
-      },
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 2000,
+        }
+      })
     });
 
-    if (response.text) {
-      return { success: true, text: response.text, error: null };
+    if (!response.ok) {
+      const status = response.status;
+      if (status === 400) return { success: false, text: null, error: 'HTTP_400' };
+      if (status === 403) return { success: false, text: null, error: 'HTTP_403' };
+      if (status === 401) return { success: false, text: null, error: 'HTTP_401' };
+      if (status === 429) return { success: false, text: null, error: 'HTTP_429' };
+      throw new Error(`HTTP_${status}`);
     }
-    throw new Error('INVALID_RESPONSE');
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (text) {
+      return { success: true, text, error: null };
+    }
+    return { success: false, text: null, error: 'EMPTY_RESPONSE' };
   } catch (err: any) {
-    console.error("Gemini SDK Call Failed:", err);
-    return { success: false, text: null, error: err.message || 'UNKNOWN_ERROR' };
+    console.error("Gemini API Call Failed:", err);
+    if (err.name === 'AbortError') return { success: false, text: null, error: 'TIMEOUT' };
+    return { success: false, text: null, error: 'NETWORK_ERROR' };
   }
 }
 
@@ -364,7 +392,16 @@ const formatTime = (date: Date) => {
 };
 
 // --- HARDWARE GATE ---
-const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil') => {
+const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil' | 'digital_twin') => {
+  if (mode === 'digital_twin') {
+    return new Promise((resolve) => {
+      // Digital Twin is a local simulation, but we still simulate a handshake
+      setTimeout(() => {
+        resolve({ success: true, mode: 'digital_twin', latency: 5 });
+      }, 1000);
+    });
+  }
+
   if (mode === 'ros2_websocket') {
     return new Promise((resolve) => {
       try {
@@ -640,8 +677,8 @@ const IntegrationActionPanel = ({
   files: GeneratedFile[], 
   onTest: () => void, 
   onContinue: () => void,
-  connectionMode: 'ros2_websocket' | 'hil',
-  setConnectionMode: (m: 'ros2_websocket' | 'hil') => void,
+  connectionMode: 'ros2_websocket' | 'hil' | 'digital_twin',
+  setConnectionMode: (m: 'ros2_websocket' | 'hil' | 'digital_twin') => void,
   endpoint: string,
   setEndpoint: (e: string) => void,
   dRealEndpoint: string,
@@ -859,6 +896,12 @@ const IntegrationActionPanel = ({
             <span className="micro-label text-textDim">Connection Mode</span>
             <div className="flex gap-2">
               <button 
+                onClick={() => setConnectionMode('digital_twin')}
+                className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'digital_twin' ? 'bg-cyan text-black border-cyan' : 'border-border text-textDim'}`}
+              >
+                TWIN
+              </button>
+              <button 
                 onClick={() => setConnectionMode('hil')}
                 className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'hil' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
               >
@@ -940,7 +983,9 @@ const IntegrationActionPanel = ({
             <span className="font-display text-[11px] font-bold tracking-widest uppercase">
               {isSystemConnecting ? 'ESTABLISHING LINK...' : 'TEST CONNECTION'}
             </span>
-            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">Verify HIL / Digital Twin link</span>
+            <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">
+              {connectionMode === 'digital_twin' ? 'Verify Digital Twin simulation' : 'Verify HIL / Hardware link'}
+            </span>
           </div>
           {isSystemConnecting ? <RefreshCw size={20} className="animate-spin" /> : <Wifi size={20} />}
         </button>
@@ -1158,7 +1203,7 @@ const RocketTelemetryWidgets = ({ flightData, actualData, params }: { flightData
   );
 };
 
-const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpeed, setSimSpeed, isRunning, setIsRunning, resetSim, isConnected }: { state: RocketState, params: RocketParams, flightData: any[], actualData: any[] | null, simSpeed: number, setSimSpeed: (s: number) => void, isRunning: boolean, setIsRunning: (r: boolean) => void, resetSim: () => void, isConnected: boolean }) => {
+const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpeed, setSimSpeed, isRunning, setIsRunning, resetSim, isConnected, handshakeConfirmed }: { state: RocketState, params: RocketParams, flightData: any[], actualData: any[] | null, simSpeed: number, setSimSpeed: (s: number) => void, isRunning: boolean, setIsRunning: (r: boolean) => void, resetSim: () => void, isConnected: boolean, handshakeConfirmed: boolean }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -1172,7 +1217,7 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
-      if (!isConnected) {
+      if (!isConnected || !handshakeConfirmed) {
         ctx.fillStyle = COLORS.bgInset;
         ctx.fillRect(0, 0, w, h);
         
@@ -1189,7 +1234,7 @@ const RocketTrajectoryCanvas = ({ state, params, flightData, actualData, simSpee
         ctx.fillStyle = COLORS.red;
         ctx.font = 'bold 12px "JetBrains Mono"';
         ctx.textAlign = 'center';
-        ctx.fillText('SYSTEM OFFLINE // NO TELEMETRY STREAM', w / 2, h / 2);
+        ctx.fillText('HARDWARE NOT CONNECTED // HANDSHAKE PENDING', w / 2, h / 2);
         return;
       }
 
@@ -1939,9 +1984,17 @@ function AppContent() {
   const [isSystemConnected, setIsSystemConnected] = useState(false);
   const [isSystemConnecting, setIsSystemConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil'>('hil');
+  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil' | 'digital_twin'>('hil');
+  const [digitalTwinConfirmed, setDigitalTwinConfirmed] = useState(false);
+  const [showDigitalTwinModal, setShowDigitalTwinModal] = useState(false);
   const [endpoint, setEndpoint] = useState('ws://localhost:9090');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
+
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || '');
+  const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
 
   const [isLaunching, setIsLaunching] = useState(false);
   const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
@@ -2184,6 +2237,12 @@ function AppContent() {
 
   const handleConnect = async () => {
     if (isSystemConnecting) return;
+    
+    if (connectionMode === 'digital_twin' && !digitalTwinConfirmed) {
+      setShowDigitalTwinModal(true);
+      return;
+    }
+
     setIsSystemConnecting(true);
     setConnectionError(null);
     
@@ -2204,6 +2263,7 @@ function AppContent() {
         angle: rocketParams.launchAngle * Math.PI / 180
       });
 
+      setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setIsSystemConnecting(false);
     } else {
@@ -2220,6 +2280,12 @@ function AppContent() {
     }
     
     if (isSystemConnecting) return;
+
+    if (connectionMode === 'digital_twin' && !digitalTwinConfirmed) {
+      setShowDigitalTwinModal(true);
+      return;
+    }
+
     setIsSystemConnecting(true);
     setConnectionError(null);
     
@@ -2227,12 +2293,14 @@ function AppContent() {
     const result: any = await initiateHandshake(endpoint, connectionMode);
     
     if (result.success) {
+      setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setView('dashboard');
       markAsTested();
     } else {
       // If connection fails, we still go to dashboard but it will be in OFFLINE mode
       // and show the connection error clearly.
+      setHandshakeConfirmed(false);
       setConnectionError(result.reason || "Hardware link failed.");
       setView('dashboard');
     }
@@ -2503,6 +2571,35 @@ function AppContent() {
     }
   }, [isSystemConnected, view, projectData, telemetry.mass, telemetry.friction, telemetry.confidence]);
 
+  const testGeminiKey = async (key: string) => {
+    setIsTestingKey(true);
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with one word: ready' }] }] })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+          setIsKeyValid(true);
+          localStorage.setItem('physicore_gemini_key', key);
+          setGeminiApiKey(key);
+          setShowKeyInput(false);
+          return true;
+        }
+      }
+      setIsKeyValid(false);
+      return false;
+    } catch (e) {
+      setIsKeyValid(false);
+      return false;
+    } finally {
+      setIsTestingKey(false);
+    }
+  };
+
   const handleSendMessage = async (text?: string) => {
     const msg = text || inputValue;
     if (!msg.trim()) return;
@@ -2558,7 +2655,7 @@ function AppContent() {
            PHYSICORE VERSION: v3.0
            CURRENT DATE: ${new Date().toISOString()}`;
 
-      const result = await callGemini(msg, history, systemInstruction);
+      const result = await callGemini(msg, history, systemInstruction, geminiApiKey);
 
       if (result.success) {
         const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
@@ -2588,14 +2685,36 @@ function AppContent() {
           setIntegrationPhase(3); // Transition to wizard steps phase
           markAsTested();
         }
-      } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
-        setQuotaExceeded(true);
-        const aiMsg: Message = { role: 'ai', content: "▣ PHYSICORE: Neural link throttled. Quota exceeded. Symbolic safety layer active. Please wait 120s.", timestamp: formatTime(new Date()) };
-        setConversationHistory(prev => [...prev, aiMsg]);
-        setTimeout(() => setQuotaExceeded(false), 120000);
       } else {
-        const aiMsg: Message = { role: 'ai', content: "▣ PHYSICORE: Neural link unavailable. Switching to symbolic mode.", timestamp: formatTime(new Date()) };
+        let errorMsg = '> SYSTEM ERROR: ';
+        switch(result.error) {
+          case 'NO_API_KEY': errorMsg += 'Gemini API key missing. Please provide one in the header.'; break;
+          case 'HTTP_401': errorMsg += 'Invalid API key. Check your credentials.'; break;
+          case 'HTTP_403': errorMsg += 'API key does not have permission for this model.'; break;
+          case 'HTTP_429': errorMsg += 'Rate limit exceeded. Please wait.'; break;
+          case 'TIMEOUT': errorMsg += 'Request timed out. Falling back to symbolic mode...'; break;
+          case 'NETWORK_ERROR': errorMsg += 'Network error. Falling back to symbolic mode...'; break;
+          default: errorMsg += `API call failed (${result.error}).`;
+        }
+
+        const aiMsg: Message = { 
+          role: 'ai', 
+          content: errorMsg, 
+          timestamp: formatTime(new Date()) 
+        };
         setConversationHistory(prev => [...prev, aiMsg]);
+        
+        // If it's a timeout or network error, we can try symbolic mode
+        if (result.error === 'TIMEOUT' || result.error === 'NETWORK_ERROR') {
+          setTimeout(() => {
+            const symbolicMsg: Message = {
+              role: 'ai',
+              content: '> INTEGRATION ENGINEER (SYMBOLIC_MODE): I am currently operating in low-power symbolic mode due to network latency. I can still assist with basic system profile questions.',
+              timestamp: formatTime(new Date())
+            };
+            setConversationHistory(prev => [...prev, symbolicMsg]);
+          }, 1000);
+        }
       }
     } catch (error) {
       console.error("AI Error:", error);
@@ -3241,6 +3360,36 @@ function AppContent() {
           <div className="flex flex-col">
             <span className="font-display text-xs font-bold text-cyan tracking-widest uppercase">⬡ INTEGRATION ENGINEER</span>
             <span className="font-body text-[9px] text-textDim uppercase">PHYSICORE v3.0</span>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {!showKeyInput ? (
+              <button 
+                onClick={() => setShowKeyInput(true)}
+                className={`flex items-center gap-1.5 px-2 py-1 border ${isKeyValid ? 'border-green/30 text-green' : 'border-amber/30 text-amber'} font-mono text-[8px] uppercase tracking-widest hover:bg-white/5 transition-all`}
+              >
+                {isKeyValid ? '▣ NEURAL LINK' : geminiApiKey ? '⚠ KEY INVALID' : '⚠ NO API KEY'}
+              </button>
+            ) : (
+              <div className="flex items-center gap-1">
+                <input 
+                  type="password"
+                  placeholder="GEMINI_API_KEY"
+                  className="w-32 bg-bgInset border border-border px-2 py-1 font-mono text-[8px] text-white focus:outline-none focus:border-cyan"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      testGeminiKey((e.target as HTMLInputElement).value);
+                    }
+                  }}
+                />
+                <button 
+                  onClick={() => setShowKeyInput(false)}
+                  className="p-1 text-textDim hover:text-white"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
         
@@ -4135,10 +4284,12 @@ end`}
                 setIsRunning={setIsRocketSimRunning}
                 resetSim={resetRocketSim}
                 isConnected={isSystemConnected}
+                handshakeConfirmed={handshakeConfirmed}
               />
             ) : (
               <DashboardCanvas 
                 isConnected={isSystemConnected} 
+                handshakeConfirmed={handshakeConfirmed}
                 onTelemetryUpdate={setTelemetry} 
                 telemetry={telemetry} 
                 connectionMode={connectionMode} 
@@ -4408,6 +4559,79 @@ end`}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Digital Twin Confirmation Modal */}
+      <AnimatePresence>
+        {showDigitalTwinModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] bg-void/95 backdrop-blur-2xl flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="max-w-xl w-full p-8 border border-amber/30 bg-bgRaised space-y-8"
+            >
+              <div className="flex items-center gap-4 border-b border-amber/20 pb-6">
+                <div className="w-12 h-12 border border-amber flex items-center justify-center text-amber bg-amber/5">
+                  <ShieldAlert size={24} />
+                </div>
+                <div>
+                  <h2 className="font-display text-xl font-bold text-white tracking-widest uppercase italic">Digital Twin Protocol</h2>
+                  <p className="font-mono text-[10px] text-amber uppercase tracking-widest">Simulation-Only Mode Detected</p>
+                </div>
+              </div>
+
+              <div className="space-y-4 font-body text-sm text-textSecondary leading-relaxed">
+                <p>
+                  You are attempting to launch the PhysiCore Dashboard in <span className="text-white font-bold">DIGITAL TWIN</span> mode. 
+                  This mode relies on internal physics models rather than live hardware telemetry.
+                </p>
+                <div className="p-4 bg-bg border border-borderDim space-y-3">
+                  <div className="flex items-center gap-2 text-amber">
+                    <Info size={14} />
+                    <span className="micro-label uppercase">Mandatory Disclaimer</span>
+                  </div>
+                  <p className="text-[11px] uppercase tracking-wider leading-relaxed">
+                    Digital Twin simulations are for <span className="text-amber">architectural verification only</span>. 
+                    They do not account for real-world sensor noise, actuator latency, or environmental stochasticity. 
+                    PhysiCore v3.0 is designed for hardware-in-the-loop (HIL) integration.
+                  </p>
+                </div>
+                <p className="text-xs italic">
+                  By confirming, you acknowledge that the results seen in the dashboard are simulated and may not reflect actual hardware performance.
+                </p>
+              </div>
+
+              <div className="flex gap-4 pt-4">
+                <button 
+                  onClick={() => setShowDigitalTwinModal(false)}
+                  className="flex-1 py-3 border border-border text-textSecondary font-display font-bold text-[11px] uppercase tracking-widest hover:text-white transition-all"
+                >
+                  CANCEL
+                </button>
+                <button 
+                  onClick={() => {
+                    setDigitalTwinConfirmed(true);
+                    setShowDigitalTwinModal(false);
+                    // Trigger the launch/connect again now that it's confirmed
+                    setTimeout(() => {
+                      if (view === 'integrator') handleLaunchApp();
+                      else handleConnect();
+                    }, 100);
+                  }}
+                  className="flex-1 py-3 bg-amber text-black font-display font-bold text-[11px] uppercase tracking-widest hover:bg-white transition-all"
+                >
+                  CONFIRM & PROCEED
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -4495,7 +4719,7 @@ const HeroCanvas = () => {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
 };
 
-const DashboardCanvas = ({ isConnected, onTelemetryUpdate, telemetry, connectionMode }: { isConnected: boolean, onTelemetryUpdate: (data: any) => void, telemetry: any, connectionMode: string }) => {
+const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, telemetry, connectionMode }: { isConnected: boolean, handshakeConfirmed: boolean, onTelemetryUpdate: (data: any) => void, telemetry: any, connectionMode: string }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const stateRef = useRef({
@@ -4607,12 +4831,33 @@ const DashboardCanvas = ({ isConnected, onTelemetryUpdate, telemetry, connection
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
       }
 
-      if (!isConnected) {
-        ctx.fillStyle = COLORS.red;
-        ctx.font = 'bold 12px "JetBrains Mono"';
-        ctx.textAlign = 'center';
-        ctx.fillText('SYSTEM OFFLINE // NO TELEMETRY STREAM', canvas.width / 2, canvas.height / 2);
+      if (!isConnected || !handshakeConfirmed) {
+        // Draw LOCKED state
+        ctx.fillStyle = 'rgba(12, 12, 12, 0.8)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         
+        // Dim crosshair reticle
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2, 0); ctx.lineTo(canvas.width / 2, canvas.height);
+        ctx.moveTo(0, canvas.height / 2); ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+
+        ctx.fillStyle = COLORS.red;
+        ctx.font = 'bold 14px "JetBrains Mono"';
+        ctx.textAlign = 'center';
+        ctx.fillText('HARDWARE NOT CONNECTED // HANDSHAKE PENDING', canvas.width / 2, canvas.height / 2 - 10);
+        ctx.fillStyle = COLORS.textDim;
+        ctx.font = '10px "JetBrains Mono"';
+        ctx.fillText('ESTABLISH SECURE LINK TO INITIALIZE KERNEL', canvas.width / 2, canvas.height / 2 + 15);
+        
+        // Draw dimmed safety envelope
+        ctx.strokeStyle = 'rgba(255, 34, 34, 0.1)';
+        ctx.setLineDash([10, 10]);
+        ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+        ctx.setLineDash([]);
+
         requestAnimationFrame(animate);
         return;
       }
