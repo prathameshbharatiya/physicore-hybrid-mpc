@@ -1783,10 +1783,6 @@ export default function App() {
 
 function AppContent() {
   const [user, loading, error] = useAuthState(auth);
-  
-  // Check if Firebase is properly configured
-  const isFirebaseConfigured = auth && auth.app && auth.app.options && auth.app.options.apiKey !== 'missing';
-
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
   const [hasTested, setHasTested] = useState<boolean | null>(null);
@@ -1864,6 +1860,13 @@ function AppContent() {
       return () => unsubscribe();
     }
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user) {
+      // Auto-bootstrap team if empty and we are admin
+      bootstrapTeam();
+    }
+  }, [isAdmin, allUsers.length, isBootstrapping, user]);
 
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
@@ -4461,42 +4464,6 @@ end`}
     </div>
   );
 };
-
-  if (!isFirebaseConfigured) {
-    return (
-      <div className="h-screen w-full bg-void flex flex-col items-center justify-center p-6 text-center">
-        <div className="max-w-[500px] space-y-8 bg-bgRaised border border-red/30 p-10">
-          <ShieldAlert className="text-red mx-auto" size={64} />
-          <div className="space-y-4">
-            <h2 className="font-display text-2xl font-bold text-white uppercase tracking-tighter">Configuration Required</h2>
-            <p className="font-body text-sm text-textSecondary leading-relaxed">
-              PhysiCore v3.0 requires Firebase environment variables to be configured in your Vercel project settings.
-            </p>
-            <div className="bg-black/50 p-4 border border-border text-left space-y-3">
-              <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">Required Environment Variables:</p>
-              <ul className="font-mono text-[9px] text-textDim space-y-1">
-                <li>VITE_FIREBASE_API_KEY</li>
-                <li>VITE_FIREBASE_AUTH_DOMAIN</li>
-                <li>VITE_FIREBASE_PROJECT_ID</li>
-                <li>VITE_FIREBASE_APP_ID</li>
-              </ul>
-            </div>
-            <p className="font-body text-[11px] text-amber italic">
-              Note: You must also add "physicore-mpc.vercel.app" to your Authorized Domains in the Firebase Console (Authentication &gt; Settings).
-            </p>
-          </div>
-          <a 
-            href="https://vercel.com/dashboard" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="btn-primary w-full h-12 flex items-center justify-center text-xs"
-          >
-            OPEN VERCEL DASHBOARD
-          </a>
-        </div>
-      </div>
-    );
-  }
 
   if (loading || checkingAccess) {
     return (
