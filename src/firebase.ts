@@ -1,7 +1,17 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDoc, updateDoc, getDocFromServer } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+// Use glob import to safely handle missing config file at build time
+const configFiles = import.meta.glob('../firebase-applet-config.json', { eager: true });
+const firebaseConfig = (configFiles['../firebase-applet-config.json'] as any)?.default || {
+  apiKey: '',
+  authDomain: '',
+  projectId: '',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: '',
+  firestoreDatabaseId: ''
+};
 
 // Use environment variables if available, otherwise fallback to the JSON config
 const config = {
