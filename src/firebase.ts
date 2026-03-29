@@ -25,30 +25,37 @@ const config = {
 };
 
 // Validate that we have real values before initializing
-const isConfigValid = config.apiKey && !config.apiKey.includes('YOUR_API_KEY');
+const isConfigValid = !!config.apiKey && !config.apiKey.includes('YOUR_API_KEY');
 
-if (typeof window !== 'undefined') {
-  const domain = window.location.hostname;
-  const isAuthorized = [
-    'localhost',
-    '127.0.0.1',
-    'firebaseapp.com',
-    'web.app',
-    'run.app'
-  ].some(d => domain.includes(d));
+let app: any;
+let auth: any;
+let db: any;
+let googleProvider: any;
 
-  if (!isAuthorized && !isConfigValid) {
-    console.warn(
-      `Domain ${domain} might not be authorized for Firebase authentication. ` +
-      'Please add it to your Firebase project settings in the console.'
-    );
+try {
+  if (!isConfigValid) {
+    console.warn("Firebase configuration is missing or invalid. App will run in limited mode.");
+    // Initialize with dummy values to prevent module load crash, but it will still fail on use
+    app = initializeApp({
+      apiKey: "missing",
+      authDomain: "missing",
+      projectId: "missing",
+      storageBucket: "missing",
+      messagingSenderId: "missing",
+      appId: "missing"
+    });
+  } else {
+    app = initializeApp(config);
   }
+  
+  auth = getAuth(app);
+  db = getFirestore(app, config.firestoreDatabaseId || undefined);
+  googleProvider = new GoogleAuthProvider();
+} catch (e) {
+  console.error("Firebase Initialization Error:", e);
 }
 
-const app = initializeApp(config);
-export const auth = getAuth(app);
-export const db = getFirestore(app, config.firestoreDatabaseId);
-export const googleProvider = new GoogleAuthProvider();
+export { auth, db, googleProvider };
 
 export enum OperationType {
   CREATE = 'create',
