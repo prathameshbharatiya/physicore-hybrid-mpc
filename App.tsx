@@ -36,6 +36,17 @@ const RKT_T0 = 288.15;
 const RKT_P0 = 101325;
 const RKT_RHO0 = 1.225;
 
+const BETA_TESTERS = [
+  "koshmarus@gmail.com",
+  "stesrocketryteam@gmail.com",
+  "darisglx@gmail.com",
+  "vladimir.robotics@gmail.com",
+  "projectauvm@manipal.edu",
+  "prathameshshirbhate8anpc@gmail.com"
+];
+
+const DEFAULT_GEMINI_KEY = "AIzaSyAgARuyw36M02J37mKH2RlHYvgu9bQ-lwc";
+
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
 interface RocketState {
@@ -291,7 +302,7 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
 
 // --- CONSTANTS ---
 async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "", userKey?: string) {
-  const apiKey = userKey || import.meta.env.VITE_GEMINI_API_KEY || (window as any).__GEMINI_KEY__ || localStorage.getItem('physicore_gemini_key');
+  const apiKey = userKey || import.meta.env.VITE_GEMINI_API_KEY || (window as any).__GEMINI_KEY__ || localStorage.getItem('physicore_gemini_key') || DEFAULT_GEMINI_KEY;
   
   if (!apiKey) {
     return { success: false, text: null, error: 'NO_API_KEY' };
@@ -1791,6 +1802,7 @@ function AppContent() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [quotaExceeded, setQuotaExceeded] = useState(false);
+  const [authError, setAuthError] = useState<{ message: string; domain?: string } | null>(null);
 
   const bootstrapTeam = async () => {
     if (user?.email !== "prathameshshirbhate8anpc@gmail.com") return;
@@ -1877,7 +1889,13 @@ function AppContent() {
       if (user) {
         setCheckingAccess(true);
         try {
-          // 1. Try UID-based doc
+          // 1. Check if user is in the hardcoded beta list
+          if (user.email && BETA_TESTERS.includes(user.email)) {
+            setIsAllowed(true);
+            setHasTested(false); // Default to false, will be updated if doc exists
+          }
+
+          // 2. Try UID-based doc
           const userDocRef = doc(db, 'allowed_users', user.uid);
           const userDoc = await getDoc(userDocRef);
           
@@ -1886,7 +1904,7 @@ function AppContent() {
             setIsAllowed(true);
             setHasTested(data.hasTested || false);
           } else {
-            // 2. Try Email-based query (for invited users)
+            // 3. Try Email-based query (for invited users)
             const q = query(collection(db, 'allowed_users'), where('email', '==', user.email));
             const querySnapshot = await getDocs(q);
             
@@ -1913,14 +1931,19 @@ function AppContent() {
               await setDoc(userDocRef, adminData);
               setIsAllowed(true);
               setHasTested(false);
-            } else {
+            } else if (isAllowed !== true) {
               setIsAllowed(false);
               setHasTested(false);
             }
           }
         } catch (err) {
-          handleFirestoreError(err, OperationType.GET, 'allowed_users');
-          setIsAllowed(false);
+          console.warn("Access check failed, falling back to beta list:", err);
+          // If Firestore fails (e.g. rules not deployed yet), still allow beta testers
+          if (user.email && BETA_TESTERS.includes(user.email)) {
+            setIsAllowed(true);
+          } else {
+            setIsAllowed(false);
+          }
         } finally {
           setCheckingAccess(false);
         }
@@ -1948,6 +1971,7 @@ function AppContent() {
   const handleLogin = async () => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
@@ -1956,14 +1980,16 @@ function AppContent() {
       } else if (err.code === 'auth/cancelled-by-user') {
         console.warn("Login cancelled by user.");
       } else if (err.code === 'auth/popup-blocked') {
-        alert("Login popup was blocked by your browser. Please allow popups for this site.");
+        setAuthError({ message: "Login popup was blocked by your browser. Please allow popups for this site." });
       } else if (err.code === 'auth/unauthorized-domain') {
         const domain = window.location.hostname;
-        console.error(`Domain not authorized: ${domain}`);
-        alert(`LOGIN FAILED: Domain "${domain}" is not authorized in Firebase Console.\n\nTo fix this:\n1. Go to Firebase Console > Authentication > Settings > Authorized domains\n2. Add "${domain}" to the list.`);
+        setAuthError({ 
+          message: `Domain "${domain}" is not authorized in Firebase Console.`,
+          domain 
+        });
       } else {
         console.error("Login failed:", err);
-        alert(`Login failed: ${err.message}`);
+        setAuthError({ message: `Login failed: ${err.message}` });
       }
     } finally {
       setIsLoggingIn(false);
@@ -1997,7 +2023,7 @@ function AppContent() {
   const [endpoint, setEndpoint] = useState('ws://localhost:9090');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || DEFAULT_GEMINI_KEY);
   const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
@@ -4500,6 +4526,66 @@ end`}
 
   return (
     <div className="w-full h-full">
+      {/* Auth Error Modal */}
+      <AnimatePresence>
+        {authError && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="max-w-md w-full bg-bgRaised border border-red/30 p-8 space-y-6"
+            >
+              <div className="flex items-center gap-4 text-red">
+                <ShieldAlert size={32} />
+                <h2 className="font-display text-xl font-bold uppercase tracking-widest">Access Protocol Failure</h2>
+              </div>
+              
+              <div className="space-y-4">
+                <p className="font-body text-sm text-textSecondary leading-relaxed">
+                  {authError.message}
+                </p>
+                
+                {authError.domain && (
+                  <div className="p-4 bg-black/50 border border-border space-y-3">
+                    <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">Required Action:</p>
+                    <ol className="font-mono text-[9px] text-textDim space-y-2 list-decimal pl-4">
+                      <li>Go to Firebase Console &gt; Authentication &gt; Settings</li>
+                      <li>Find "Authorized domains" section</li>
+                      <li>Add <span className="text-white">"{authError.domain}"</span> to the list</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <button 
+                  onClick={() => setAuthError(null)}
+                  className="flex-1 py-3 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:text-white transition-all"
+                >
+                  Dismiss
+                </button>
+                {authError.domain && (
+                  <a 
+                    href="https://console.firebase.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-3 bg-red/20 border border-red/40 text-red font-display text-[10px] font-bold uppercase tracking-widest hover:bg-red/40 transition-all text-center"
+                  >
+                    Open Console
+                  </a>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {renderNav()}
       <AnimatePresence mode="wait">
         {view === 'home' ? (
