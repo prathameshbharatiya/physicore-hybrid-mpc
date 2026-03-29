@@ -411,7 +411,6 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
     return new Promise(async (resolve) => {
       try {
         // HIL Simulation Handshake - REAL CHECK
-        // Prevent connecting to the app itself (localhost:3000)
         const currentOrigin = window.location.origin;
         if (endpoint.includes(currentOrigin) || endpoint.includes('localhost:3000')) {
           resolve({ success: false, reason: 'SELF_CONNECTION_FORBIDDEN. Cannot connect to the PhysiCore UI as a hardware endpoint.' });
@@ -419,14 +418,26 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
         }
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
         
-        const response = await fetch(endpoint, { 
-          method: 'HEAD', 
-          mode: 'no-cors',
+        // We expect a real hardware bridge to respond to a specific health check
+        const response = await fetch(endpoint + '/api/health', { 
+          method: 'GET', 
           signal: controller.signal 
         });
         
+        if (!response.ok) throw new Error('BRIDGE_OFFLINE');
+        
+        // Verify it's actually a PhysiCore bridge
+        const bridgeToken = response.headers.get('X-PhysiCore-Bridge');
+        if (bridgeToken !== 'active' && !endpoint.includes('physicore-bridge')) {
+           // If no header, check body for signature
+           const body = await response.json();
+           if (body.service !== 'physicore' && body.status !== 'ok') {
+             throw new Error('INVALID_BRIDGE_SIGNATURE');
+           }
+        }
+
         clearTimeout(timeoutId);
         resolve({
           success: true,
@@ -434,9 +445,10 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
           latency: 0.4
         });
       } catch (e) {
+        clearTimeout(2000); // Just in case
         resolve({ 
           success: false, 
-          reason: 'HIL_ENDPOINT_UNREACHABLE. Ensure your HIL server is running at ' + endpoint 
+          reason: 'HIL_ENDPOINT_UNREACHABLE. Ensure your HIL bridge is running at ' + endpoint + ' and responding to /api/health'
         });
       }
     });
@@ -621,7 +633,9 @@ const IntegrationActionPanel = ({
   onAction,
   projectCode,
   projectData,
-  onImportProjectCode
+  onImportProjectCode,
+  isSystemConnecting,
+  connectionError
 }: { 
   files: GeneratedFile[], 
   onTest: () => void, 
@@ -639,7 +653,9 @@ const IntegrationActionPanel = ({
   onAction?: () => void,
   projectCode: string,
   projectData: any,
-  onImportProjectCode: (code: string) => { success: boolean, data?: any, error?: string }
+  onImportProjectCode: (code: string) => { success: boolean, data?: any, error?: string },
+  isSystemConnecting: boolean,
+  connectionError: string | null
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'MY_CODE' | 'IMPORT'>('MY_CODE');
@@ -917,14 +933,23 @@ const IntegrationActionPanel = ({
 
         <button 
           onClick={onTest}
-          className="flex items-center justify-between p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group"
+          disabled={isSystemConnecting}
+          className={`flex items-center justify-between p-4 border ${isSystemConnecting ? 'border-borderDim bg-bg' : 'border-green/30 bg-bgRaised hover:bg-green hover:text-black'} transition-all group disabled:opacity-50`}
         >
           <div className="flex flex-col items-start">
-            <span className="font-display text-[11px] font-bold tracking-widest uppercase">TEST CONNECTION</span>
+            <span className="font-display text-[11px] font-bold tracking-widest uppercase">
+              {isSystemConnecting ? 'ESTABLISHING LINK...' : 'TEST CONNECTION'}
+            </span>
             <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">Verify HIL / Digital Twin link</span>
           </div>
-          <Wifi size={20} />
+          {isSystemConnecting ? <RefreshCw size={20} className="animate-spin" /> : <Wifi size={20} />}
         </button>
+
+        {connectionError && (
+          <div className="p-3 bg-red/10 border border-red/30 text-red font-mono text-[9px] uppercase tracking-widest">
+            ERROR: {connectionError}
+          </div>
+        )}
 
         <button 
           onClick={onContinue}
@@ -1738,15 +1763,15 @@ function AppContent() {
     for (const email of teamEmails) {
       try {
         const q = query(collection(db, 'allowed_users'), where('email', '==', email));
-        const snap = await getDocs(q);
-        if (snap.empty) {
+        const snap = await getDocs(q).catch(e => handleFirestoreError(e, OperationType.GET, 'allowed_users'));
+        if (snap && snap.empty) {
           await setDoc(doc(collection(db, 'allowed_users')), {
             email,
             role: 'client',
             hasTested: false,
             invitedBy: user.email,
             createdAt: new Date().toISOString()
-          });
+          }).catch(e => handleFirestoreError(e, OperationType.CREATE, 'allowed_users'));
           addedCount++;
         }
       } catch (err) {
@@ -1755,10 +1780,14 @@ function AppContent() {
     }
     
     // Refresh list
-    const q = query(collection(db, 'allowed_users'));
-    const querySnapshot = await getDocs(q);
-    const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    setAllUsers(users);
+    try {
+      const q = query(collection(db, 'allowed_users'));
+      const querySnapshot = await getDocs(q);
+      const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllUsers(users);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, 'allowed_users');
+    }
     
     setIsBootstrapping(false);
     alert(`Team authorization complete. ${addedCount} new members added.`);
@@ -1770,7 +1799,7 @@ function AppContent() {
       await deleteDoc(doc(db, 'allowed_users', userId));
       setAllUsers(prev => prev.filter(u => u.id !== userId));
     } catch (err) {
-      console.error("Failed to remove user:", err);
+      handleFirestoreError(err, OperationType.DELETE, `allowed_users/${userId}`);
     }
   };
 
@@ -1781,7 +1810,7 @@ function AppContent() {
         const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAllUsers(users);
       }, (err) => {
-        console.error("Failed to fetch team members:", err);
+        handleFirestoreError(err, OperationType.GET, 'allowed_users');
       });
       return () => unsubscribe();
     }
@@ -1817,7 +1846,9 @@ function AppContent() {
               // Optional: Migrate to UID-based doc for better performance/security rules
               try {
                 await setDoc(userDocRef, { ...data, uid: user.uid });
-              } catch (e) { console.error("Migration failed", e); }
+              } catch (e) { 
+                handleFirestoreError(e, OperationType.CREATE, `allowed_users/${user.uid}`);
+              }
               
             } else if (user.email === "prathameshshirbhate8anpc@gmail.com") {
               // Bootstrap Admin
@@ -1836,7 +1867,7 @@ function AppContent() {
             }
           }
         } catch (err) {
-          console.error("Access check failed:", err);
+          handleFirestoreError(err, OperationType.GET, 'allowed_users');
           setIsAllowed(false);
         } finally {
           setCheckingAccess(false);
@@ -1857,7 +1888,7 @@ function AppContent() {
         });
         setHasTested(true);
       } catch (err) {
-        console.error("Failed to mark as tested:", err);
+        handleFirestoreError(err, OperationType.UPDATE, `allowed_users/${user.uid}`);
       }
     }
   };
@@ -1907,6 +1938,7 @@ function AppContent() {
   const [inputValue, setInputValue] = useState('');
   const [isSystemConnected, setIsSystemConnected] = useState(false);
   const [isSystemConnecting, setIsSystemConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil'>('hil');
   const [endpoint, setEndpoint] = useState('ws://localhost:9090');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
@@ -2000,7 +2032,7 @@ function AppContent() {
       });
       setAllUsers(prev => [...prev, { id: inviteRef.id, email, role: 'user', hasTested: false }]);
     } catch (err) {
-      console.error("Failed to add user:", err);
+      handleFirestoreError(err, OperationType.CREATE, 'allowed_users');
     }
   };
 
@@ -2069,21 +2101,21 @@ function AppContent() {
   const [showImportOverlay, setShowImportOverlay] = useState(false);
 
   const [telemetry, setTelemetry] = useState({
-    mass: 2.714,
-    friction: 0.412,
-    actuatorEfficiency: 0.942,
-    residual: 0.023,
-    confidence: 98.5,
-    variance: 0.014,
+    mass: 0,
+    friction: 0,
+    actuatorEfficiency: 0,
+    residual: 0,
+    confidence: 0,
+    variance: 0,
     isStable: true,
     isFaulted: false,
-    cpuLoad: 12.4,
-    latency: 0.4,
+    cpuLoad: 0,
+    latency: 0,
     residualHistory: [] as any[],
     effortHistory: [] as any[],
     targetPos: { x: 0, y: 0 },
     // Rocket/Aviation specific telemetry
-    pos: { x: 0, y: 0, z: 0 } as any,
+    pos: null as any,
     vel: { x: 0, y: 0, z: 0 } as any,
     accel: { x: 0, y: 0, z: 0 } as any,
     orientation: { r: 0, p: 0, y: 0 } as any,
@@ -2153,6 +2185,7 @@ function AppContent() {
   const handleConnect = async () => {
     if (isSystemConnecting) return;
     setIsSystemConnecting(true);
+    setConnectionError(null);
     
     // Hardware Gate: initiate handshake
     const result: any = await initiateHandshake(endpoint, connectionMode);
@@ -2175,7 +2208,8 @@ function AppContent() {
       setIsSystemConnecting(false);
     } else {
       setIsSystemConnecting(false);
-      alert(`HARDWARE_GATE_ERROR: ${result.reason}`);
+      setConnectionError(result.reason || "Connection failed. Verify endpoint.");
+      console.error("Handshake failed:", result.reason);
     }
   };
 
@@ -2185,14 +2219,24 @@ function AppContent() {
       if (!auth.currentUser) return;
     }
     
-    setIsLaunching(true);
+    if (isSystemConnecting) return;
+    setIsSystemConnecting(true);
+    setConnectionError(null);
     
-    // We open the dashboard but do NOT automatically connect.
-    // The user must establish a connection via the Integrator or a manual action.
-    setTimeout(() => {
-      setIsLaunching(false);
+    // Attempt connection before launching
+    const result: any = await initiateHandshake(endpoint, connectionMode);
+    
+    if (result.success) {
+      setIsSystemConnected(true);
       setView('dashboard');
-    }, 1500);
+      markAsTested();
+    } else {
+      // If connection fails, we still go to dashboard but it will be in OFFLINE mode
+      // and show the connection error clearly.
+      setConnectionError(result.reason || "Hardware link failed.");
+      setView('dashboard');
+    }
+    setIsSystemConnecting(false);
   };
 
   // Scroll tracking
@@ -3447,6 +3491,8 @@ function AppContent() {
                     projectCode={projectCode}
                     projectData={projectData}
                     onImportProjectCode={handleImportProjectCode}
+                    isSystemConnecting={isSystemConnecting}
+                    connectionError={connectionError}
                   />
                 )}
               </>
@@ -4100,41 +4146,51 @@ end`}
             )}
 
             {!isSystemConnected && (
-              <div className="absolute inset-0 z-20 bg-void/40 backdrop-blur-[2px] flex items-center justify-center">
-                <div className="p-8 border border-border bg-bg/90 max-w-[320px] text-center space-y-6">
-                  <div className="w-12 h-12 border border-textDim flex items-center justify-center text-textDim mx-auto">
-                    {isSystemConnecting ? (
-                      <RefreshCw size={24} className="animate-spin text-cyan" />
-                    ) : (
-                      <Wifi size={24} className="animate-pulse" />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <h3 className="font-display text-lg font-bold text-white tracking-widest uppercase">
-                      {isSystemConnecting ? 'Establishing Link...' : 'Hardware Offline'}
-                    </h3>
-                    <p className="font-body text-xs text-textSecondary leading-relaxed">
-                      {isSystemConnecting 
-                        ? 'Handshaking with Sentinel OS infrastructure. Verifying neural bridge integrity...'
-                        : 'Physics intelligence engine is idle. Connect your system via the Integration Engineer or establish a manual link.'}
-                    </p>
-                  </div>
-                  <div className="space-y-3">
-                    <button 
-                      onClick={handleConnect}
-                      disabled={isSystemConnecting}
-                      className="w-full py-2 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50"
-                    >
-                      {isSystemConnecting ? 'CONNECTING...' : '▣ ESTABLISH MANUAL LINK'}
-                    </button>
-                    <button 
-                      onClick={() => setView('integrator')}
-                      disabled={isSystemConnecting}
-                      className="w-full py-2 border border-border text-textSecondary font-display text-[11px] font-bold uppercase tracking-widest hover:text-white transition-all disabled:opacity-50"
-                    >
-                      ⬡ OPEN INTEGRATOR
-                    </button>
-                  </div>
+              <div className="absolute inset-0 z-20 bg-bg flex flex-col items-center justify-center space-y-8 p-12 text-center">
+                <div className="w-24 h-24 border-2 border-dashed border-border flex items-center justify-center text-textDim">
+                  {isSystemConnecting ? (
+                    <RefreshCw size={48} className="animate-spin text-cyan" />
+                  ) : (
+                    <Cpu size={48} className="opacity-20" />
+                  )}
+                </div>
+                
+                <div className="max-w-md space-y-4">
+                  <h3 className="font-display text-xl font-bold text-white tracking-widest uppercase">
+                    {isSystemConnecting ? 'Establishing Secure Link' : 'Hardware Connection Required'}
+                  </h3>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    {isSystemConnecting 
+                      ? `Attempting to handshake with ${connectionMode.toUpperCase()} endpoint at ${endpoint}...`
+                      : 'PhysiCore is currently in "Observer Mode". To view live telemetry and control the system, you must establish a manual link to your hardware bridge or simulation environment.'}
+                  </p>
+                  
+                  {connectionError && (
+                    <div className="p-4 bg-red/10 border border-red/30 text-red font-mono text-[10px] uppercase tracking-widest">
+                      ERROR: {connectionError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-3 w-full max-w-[280px]">
+                  <button 
+                    onClick={() => setView('integrator')}
+                    className="w-full p-4 border border-cyan/30 bg-bgRaised hover:bg-cyan hover:text-black transition-all group flex items-center justify-between"
+                  >
+                    <span className="font-display text-[11px] font-bold tracking-widest uppercase">Return to Integrator</span>
+                    <Settings size={18} />
+                  </button>
+                  
+                  <button 
+                    onClick={handleConnect}
+                    disabled={isSystemConnecting}
+                    className="w-full p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group flex items-center justify-between disabled:opacity-50"
+                  >
+                    <span className="font-display text-[11px] font-bold tracking-widest uppercase">
+                      {isSystemConnecting ? 'Retrying...' : 'Retry Connection'}
+                    </span>
+                    <Wifi size={18} />
+                  </button>
                 </div>
               </div>
             )}

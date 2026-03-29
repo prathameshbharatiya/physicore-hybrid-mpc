@@ -1,7 +1,25 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: allowed_users
+    // Document ID: userId (UID or random ID)
+    // Fields:
+    //   - email: string (required, email format)
+    //   - role: string (required, ['admin', 'user', 'guest'])
+    //   - hasTested: boolean (optional)
+    //   - invitedBy: string (optional)
+    //   - uid: string (optional)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -12,30 +30,51 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/allowed_users/$(request.auth.uid)).data.role == 'admin' ||
-         (request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true));
+        (exists(/databases/$(database)/documents/allowed_users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/allowed_users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true));
     }
 
-    // Allowed Users collection
-    match /allowed_users/{docId} {
-      // Users can read their own access record (either by UID or by Email)
-      allow read: if isOwner(docId) || 
-                    (isAuthenticated() && resource.data.email == request.auth.token.email) ||
-                    isAdmin();
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidAllowedUser(data) {
+      return data.keys().hasAll(['email', 'role']) &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'user', 'guest'] &&
+             (!('hasTested' in data) || data.hasTested is bool) &&
+             (!('invitedBy' in data) || data.invitedBy is string) &&
+             (!('uid' in data) || data.uid is string);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /allowed_users/{userId} {
+      // Admins can do anything
+      // Users can read their own document
+      // Users can update their own 'hasTested' status
       
-      // Only admins can create or update allowed users
-      allow create, update, delete: if isAdmin();
+      allow read: if isAuthenticated() && (isOwner(userId) || isAdmin() || request.auth.token.email == resource.data.email);
       
-      // Exception: Users can update their own 'hasTested' field once
-      allow update: if (isOwner(docId) || (isAuthenticated() && resource.data.email == request.auth.token.email)) && 
-                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['hasTested']) &&
-                    request.resource.data.hasTested == true &&
-                    resource.data.hasTested == false;
+      allow create: if isAuthenticated() && isValidAllowedUser(request.resource.data) && 
+                    (isAdmin() || (isOwner(userId) && request.resource.data.role == 'user'));
+      
+      allow update: if isAuthenticated() && isValidAllowedUser(request.resource.data) && 
+                    (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
+      
+      allow delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true; // For connection testing
     }
 
     // Default deny
     match /{document=**} {
-      allow read, write: if isAdmin();
+      allow read, write: if false;
     }
   }
 }
