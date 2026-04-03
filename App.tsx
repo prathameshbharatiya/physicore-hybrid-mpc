@@ -3309,6 +3309,24 @@ function AppContent() {
         </div>
       </section>
 
+      {/* FOUNDER SECTION */}
+      <section className="bg-void py-12 px-6 border-t border-border/30">
+        <div className="max-w-[1100px] mx-auto flex flex-col items-center justify-center space-y-4">
+          <span className="font-mono text-[10px] text-textDim uppercase tracking-[0.3em]">Founder</span>
+          <a 
+            href="https://prathameshshirbhate.vercel.app/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="group flex flex-col items-center gap-2 transition-all hover:scale-105"
+          >
+            <span className="font-display text-xl text-white font-bold uppercase tracking-widest group-hover:text-cyan transition-colors">
+              Prathamesh Shirbhate
+            </span>
+            <div className="w-12 h-[1px] bg-cyan/30 group-hover:w-20 group-hover:bg-cyan transition-all" />
+          </a>
+        </div>
+      </section>
+
       {/* FOOTER */}
       <footer className="bg-bg border-t border-border py-20 px-6">
         <div className="max-w-[1100px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-12">
