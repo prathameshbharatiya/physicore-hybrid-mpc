@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const GEMINI_KEY = 'AIzaSyAgARuyw36M02J37mKH2RlHYvgu9bQ-lwc';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -345,11 +345,13 @@ function buildContents(systemPrompt: string, conversationHistory: any[]) {
 async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
   const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
   
-  // Using v1beta for better compatibility with Flash models and increasing timeout to 60s
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
+  const models = [
+    'gemini-1.5-flash-latest',
+    'gemini-2.0-flash',
+    'gemini-1.5-pro-latest'
+  ];
   
   const contents = buildContents(systemPrompt, conversationHistory);
-  
   const requestBody = {
     contents: contents,
     generationConfig: {
@@ -357,23 +359,50 @@ async function callGemini(systemPrompt: string, conversationHistory: any[] = [],
       temperature: 0.2
     }
   };
-  
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // Increased to 60s
+
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`;
     
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      signal: controller.signal,
-      body: JSON.stringify(requestBody)
-    });
+    if (i > 0) {
+      console.log(`Retrying with fallback model: ${model}...`);
+    }
     
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        signal: controller.signal,
+        body: JSON.stringify(requestBody)
+      });
+      
+      clearTimeout(timeout);
+      
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          return { success: true, text };
+        }
+      }
+      
+      if (response.status === 404) {
+        if (i === models.length - 1) {
+          return {
+            success: false,
+            status: 404,
+            error: 'HTTP_404',
+            message: "Model unavailable. Please check that the Generative Language API is enabled in your Google Cloud Console for the project that owns your API key."
+          };
+        }
+        continue; // Try next model
+      }
+      
       let errorDetail = '';
       try {
         const errBody = await response.json();
@@ -388,37 +417,19 @@ async function callGemini(systemPrompt: string, conversationHistory: any[] = [],
         error: `HTTP_${response.status}`,
         message: errorDetail
       };
+      
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return { success: false, error: 'TIMEOUT', message: 'Request timed out' };
+      }
+      if (i === models.length - 1) {
+        return { success: false, error: 'FETCH_ERROR', message: err.message };
+      }
+      continue;
     }
-    
-    const data = await response.json();
-    
-    // Extract text from response
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    
-    if (!text) {
-      return {
-        success: false,
-        error: 'EMPTY_RESPONSE',
-        message: 'No text in response'
-      };
-    }
-    
-    return { success: true, text: text };
-    
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      return {
-        success: false,
-        error: 'TIMEOUT',
-        message: 'Request timed out'
-      };
-    }
-    return {
-      success: false,
-      error: 'NETWORK_ERROR',
-      message: err.message
-    };
   }
+  
+  return { success: false, error: 'UNKNOWN', message: 'All models failed.' };
 }
 
 const COLORS = {
