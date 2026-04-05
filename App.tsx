@@ -345,21 +345,22 @@ function buildContents(systemPrompt: string, conversationHistory: any[]) {
 async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
   const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
   
-  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
+  // Using v1beta for better compatibility with Flash models and increasing timeout to 60s
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
   
   const contents = buildContents(systemPrompt, conversationHistory);
   
   const requestBody = {
     contents: contents,
     generationConfig: {
-      maxOutputTokens: 2000,
+      maxOutputTokens: 4000,
       temperature: 0.2
     }
   };
   
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
+    const timeout = setTimeout(() => controller.abort(), 60000); // Increased to 60s
     
     const response = await fetch(endpoint, {
       method: 'POST',
