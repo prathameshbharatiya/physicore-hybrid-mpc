@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const GEMINI_KEY = 'AIzaSyCbzygUBGnRd3ycmvw791adXGF2VdivVF4';
+const GEMINI_KEY = 'AIzaSyAgARuyw36M02J37mKH2RlHYvgu9bQ-lwc';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -345,7 +345,7 @@ function buildContents(systemPrompt: string, conversationHistory: any[]) {
 async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
   const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
   
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
   
   const contents = buildContents(systemPrompt, conversationHistory);
   
@@ -1855,6 +1855,9 @@ export default function App() {
 function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
+  const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
+  const isAuthorized = isAdmin || isBetaTester;
+  
   const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
   const [hasTested, setHasTested] = useState<boolean | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(false);
@@ -2016,7 +2019,7 @@ function AppContent() {
   }, [user]);
 
   const markAsTested = async () => {
-    if (user && isAllowed && !hasTested && !isAdmin) {
+    if (user && isAllowed && !hasTested && !isAuthorized) {
       try {
         await updateDoc(doc(db, 'allowed_users', user.uid), {
           hasTested: true
@@ -3458,7 +3461,7 @@ function AppContent() {
   );
 
   const renderIntegrator = () => {
-    if (hasTested && !isAdmin) return renderQuotaExceeded();
+    if (hasTested && !isAuthorized) return renderQuotaExceeded();
     return (
       <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
       {/* LEFT PANEL */}
@@ -4244,7 +4247,7 @@ end`}
   };
 
   const renderDashboard = () => {
-    if (hasTested && !isAdmin) return renderQuotaExceeded();
+    if (hasTested && !isAuthorized) return renderQuotaExceeded();
     return (
       <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
@@ -4598,7 +4601,7 @@ end`}
     );
   }
 
-  if (user && hasTested && !isAdmin && view !== 'home') {
+  if (user && hasTested && !isAuthorized && view !== 'home') {
     return renderQuotaExceeded();
   }
 
