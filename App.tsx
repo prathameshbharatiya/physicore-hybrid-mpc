@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const DEFAULT_GEMINI_KEY = "AIzaSyAgARuyw36M02J37mKH2RlHYvgu9bQ-lwc";
+const GEMINI_KEY = 'AIzaSyCbzygUBGnRd3ycmvw791adXGF2VdivVF4';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -300,63 +300,123 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-// --- CONSTANTS ---
-async function callGemini(prompt: string, history: any[] = [], systemInstruction: string = "", userKey?: string) {
-  const apiKey = userKey || import.meta.env.VITE_GEMINI_API_KEY || (window as any).__GEMINI_KEY__ || localStorage.getItem('physicore_gemini_key') || DEFAULT_GEMINI_KEY;
+// --- GEMINI API FIXED IMPLEMENTATION ---
+function buildContents(systemPrompt: string, conversationHistory: any[]) {
+  const contents = [];
   
-  if (!apiKey) {
-    return { success: false, text: null, error: 'NO_API_KEY' };
-  }
-
-  const model = "gemini-1.5-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
-  // Format contents for Gemini API
-  let contents = [];
-  if (history.length > 0) {
-    // Ensure history alternates correctly and starts with user
-    contents = history.map(m => ({
-      role: m.role === 'ai' ? 'model' : 'user',
-      parts: [{ text: m.content }]
-    }));
-  } else {
-    contents = [{ role: 'user', parts: [{ text: prompt }] }];
-  }
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents,
-        systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 2000,
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const status = response.status;
-      if (status === 400) return { success: false, text: null, error: 'HTTP_400' };
-      if (status === 403) return { success: false, text: null, error: 'HTTP_403' };
-      if (status === 401) return { success: false, text: null, error: 'HTTP_401' };
-      if (status === 429) return { success: false, text: null, error: 'HTTP_429' };
-      throw new Error(`HTTP_${status}`);
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  // ALWAYS start with system prompt as first user message
+  contents.push({
+    role: 'user',
+    parts: [{ text: systemPrompt }]
+  });
+  
+  // ALWAYS follow with model acknowledgment
+  contents.push({
+    role: 'model',
+    parts: [{ text: 'Understood. Ready.' }]
+  });
+  
+  // Add conversation history
+  // Normalize all roles to 'user' or 'model'
+  conversationHistory.forEach(msg => {
+    // Skip empty messages
+    if (!msg.content || !msg.content.trim()) return;
     
-    if (text) {
-      return { success: true, text, error: null };
+    // Normalize role
+    const role = (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model';
+    
+    // Check last role to prevent consecutive same-role messages
+    const lastContent = contents[contents.length - 1];
+    
+    if (lastContent && lastContent.role === role) {
+      // Merge into previous message
+      lastContent.parts[0].text += '\n' + msg.content;
+    } else {
+      contents.push({
+        role: role,
+        parts: [{ text: msg.content }]
+      });
     }
-    return { success: false, text: null, error: 'EMPTY_RESPONSE' };
+  });
+  
+  return contents;
+}
+
+async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
+  const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
+  
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${effectiveKey}`;
+  
+  const contents = buildContents(systemPrompt, conversationHistory);
+  
+  const requestBody = {
+    contents: contents,
+    generationConfig: {
+      maxOutputTokens: 2000,
+      temperature: 0.2
+    }
+  };
+  
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: controller.signal,
+      body: JSON.stringify(requestBody)
+    });
+    
+    clearTimeout(timeout);
+    
+    if (!response.ok) {
+      let errorDetail = '';
+      try {
+        const errBody = await response.json();
+        errorDetail = errBody?.error?.message || response.statusText;
+      } catch (_) {
+        errorDetail = response.statusText;
+      }
+      
+      return {
+        success: false,
+        status: response.status,
+        error: `HTTP_${response.status}`,
+        message: errorDetail
+      };
+    }
+    
+    const data = await response.json();
+    
+    // Extract text from response
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    if (!text) {
+      return {
+        success: false,
+        error: 'EMPTY_RESPONSE',
+        message: 'No text in response'
+      };
+    }
+    
+    return { success: true, text: text };
+    
   } catch (err: any) {
-    console.error("Gemini API Call Failed:", err);
-    if (err.name === 'AbortError') return { success: false, text: null, error: 'TIMEOUT' };
-    return { success: false, text: null, error: 'NETWORK_ERROR' };
+    if (err.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'TIMEOUT',
+        message: 'Request timed out'
+      };
+    }
+    return {
+      success: false,
+      error: 'NETWORK_ERROR',
+      message: err.message
+    };
   }
 }
 
@@ -2023,8 +2083,9 @@ function AppContent() {
   const [endpoint, setEndpoint] = useState('ws://localhost:9090');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || DEFAULT_GEMINI_KEY);
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || GEMINI_KEY);
   const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
+  const [keyStatus, setKeyStatus] = useState<'default' | 'testing' | 'valid' | 'failed'>('default');
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [showKeyInput, setShowKeyInput] = useState(false);
   const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
@@ -2242,7 +2303,11 @@ function AppContent() {
         - Prefix with '> META-ANALYST:'.
       `;
 
-      const result = await callGemini(prompt, [], "You are the PhysiCore Meta-Analyst, a high-level diagnostic AI for advanced robotics control systems.");
+      const result = await callGemini(
+        "You are the PhysiCore Meta-Analyst, a high-level diagnostic AI for advanced robotics control systems.",
+        [{ role: 'user', content: prompt }],
+        geminiApiKey
+      );
       
       if (result.success) {
         setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
@@ -2605,31 +2670,27 @@ function AppContent() {
   }, [isSystemConnected, view, projectData, telemetry.mass, telemetry.friction, telemetry.confidence]);
 
   const testGeminiKey = async (key: string) => {
+    if (!key.trim()) return;
+    setKeyStatus('testing');
     setIsTestingKey(true);
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: 'Reply with one word: ready' }] }] })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
-          setIsKeyValid(true);
-          localStorage.setItem('physicore_gemini_key', key);
-          setGeminiApiKey(key);
-          setShowKeyInput(false);
-          return true;
-        }
-      }
+    
+    // Use a minimal but correctly structured call
+    const result = await callGemini(
+      'You are a test assistant.',
+      [{ role: 'user', content: 'Say: ready' }],
+      key
+    );
+
+    setIsTestingKey(false);
+    if (result.success) {
+      localStorage.setItem('physicore_gemini_key', key);
+      setGeminiApiKey(key);
+      setIsKeyValid(true);
+      setKeyStatus('valid');
+      setShowKeyInput(false);
+    } else {
       setIsKeyValid(false);
-      return false;
-    } catch (e) {
-      setIsKeyValid(false);
-      return false;
-    } finally {
-      setIsTestingKey(false);
+      setKeyStatus('failed');
     }
   };
 
@@ -2644,11 +2705,6 @@ function AppContent() {
     setIsTyping(true);
 
     try {
-      const history = newHistory.map(m => ({
-        role: m.role === 'ai' ? 'model' : 'user',
-        parts: [{ text: m.content }]
-      }));
-
       const systemInstruction = `You are the PhysiCore Integration Engineer.
            You help engineers integrate PhysiCore — a Physics Intelligence Engine — into their systems (Robotics, Rockets, and Aviation).
 
@@ -2688,7 +2744,7 @@ function AppContent() {
            PHYSICORE VERSION: v3.0
            CURRENT DATE: ${new Date().toISOString()}`;
 
-      const result = await callGemini(msg, history, systemInstruction, geminiApiKey);
+      const result = await callGemini(systemInstruction, newHistory, geminiApiKey);
 
       if (result.success) {
         const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
@@ -3417,9 +3473,13 @@ function AppContent() {
             {!showKeyInput ? (
               <button 
                 onClick={() => setShowKeyInput(true)}
-                className={`flex items-center gap-1.5 px-2 py-1 border ${isKeyValid ? 'border-green/30 text-green' : 'border-amber/30 text-amber'} font-mono text-[8px] uppercase tracking-widest hover:bg-white/5 transition-all`}
+                className={`flex items-center gap-1.5 px-2 py-1 border ${
+                  keyStatus === 'valid' || keyStatus === 'default' ? 'border-green/30 text-green' : 'border-amber/30 text-amber'
+                } font-mono text-[8px] uppercase tracking-widest hover:bg-white/5 transition-all`}
               >
-                {isKeyValid ? '▣ NEURAL LINK' : geminiApiKey ? '⚠ KEY INVALID' : '⚠ NO API KEY'}
+                {keyStatus === 'valid' || keyStatus === 'default' ? '▣ NEURAL LINK' : 
+                 keyStatus === 'testing' ? '▣ TESTING...' : 
+                 '▣ CUSTOM KEY FAILED — USING DEFAULT'}
               </button>
             ) : (
               <div className="flex items-center gap-1">
