@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCbzygUBGnRd3ycmvw791adXGF2VdivVF4';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -345,91 +345,64 @@ function buildContents(systemPrompt: string, conversationHistory: any[]) {
 async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
   const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
   
-  const models = [
-    'gemini-1.5-flash-latest',
-    'gemini-2.0-flash',
-    'gemini-1.5-pro-latest'
-  ];
-  
-  const contents = buildContents(systemPrompt, conversationHistory);
-  const requestBody = {
-    contents: contents,
-    generationConfig: {
-      maxOutputTokens: 4000,
-      temperature: 0.2
-    }
-  };
-
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${effectiveKey}`;
-    
-    if (i > 0) {
-      console.log(`Retrying with fallback model: ${model}...`);
-    }
-    
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000);
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        signal: controller.signal,
-        body: JSON.stringify(requestBody)
-      });
-      
-      clearTimeout(timeout);
-      
-      if (response.ok) {
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          return { success: true, text };
-        }
-      }
-      
-      if (response.status === 404) {
-        if (i === models.length - 1) {
-          return {
-            success: false,
-            status: 404,
-            error: 'HTTP_404',
-            message: "Model unavailable. Please check that the Generative Language API is enabled in your Google Cloud Console for the project that owns your API key."
-          };
-        }
-        continue; // Try next model
-      }
-      
-      let errorDetail = '';
-      try {
-        const errBody = await response.json();
-        errorDetail = errBody?.error?.message || response.statusText;
-      } catch (_) {
-        errorDetail = response.statusText;
-      }
-      
-      return {
-        success: false,
-        status: response.status,
-        error: `HTTP_${response.status}`,
-        message: errorDetail
-      };
-      
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        return { success: false, error: 'TIMEOUT', message: 'Request timed out' };
-      }
-      if (i === models.length - 1) {
-        return { success: false, error: 'FETCH_ERROR', message: err.message };
-      }
-      continue;
-    }
+  if (!effectiveKey) {
+    return { success: false, error: 'NO_API_KEY', message: 'Gemini API key missing.' };
   }
-  
-  return { success: false, error: 'UNKNOWN', message: 'All models failed.' };
+
+  try {
+    const ai = new GoogleGenAI({ apiKey: effectiveKey });
+    
+    // Format history for the SDK
+    const history = conversationHistory.map(msg => ({
+      role: (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model',
+      parts: [{ text: msg.content }]
+    }));
+
+    // The SDK handles the v1/v1beta and payload structure automatically
+    const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
+      contents: history,
+      config: {
+        systemInstruction: systemPrompt,
+        maxOutputTokens: 4000,
+        temperature: 0.2
+      }
+    });
+
+    const text = response.text;
+    
+    if (!text) {
+      return { success: false, error: 'EMPTY_RESPONSE', message: 'No text in response' };
+    }
+    
+    return { success: true, text: text };
+    
+  } catch (err: any) {
+    console.error("Gemini SDK Error:", err);
+    
+    // Handle specific error codes
+    if (err.message?.includes('403') || err.message?.includes('permission')) {
+      return { 
+        success: false, 
+        error: 'HTTP_403', 
+        message: 'API key does not have permission for this model. Please ensure "Generative Language API" is enabled in Google Cloud Console.' 
+      };
+    }
+    
+    if (err.message?.includes('404')) {
+      return { 
+        success: false, 
+        error: 'HTTP_404', 
+        message: 'Model not found. Retrying with fallback...' 
+      };
+    }
+
+    return {
+      success: false,
+      error: 'SDK_ERROR',
+      message: err.message || 'An unexpected error occurred.'
+    };
+  }
 }
 
 const COLORS = {
