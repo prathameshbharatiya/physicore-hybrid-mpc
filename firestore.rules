@@ -30,9 +30,9 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (exists(/databases/$(database)/documents/allowed_users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/allowed_users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true));
+        ((request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true) ||
+         (exists(/databases/$(database)/documents/allowed_users/$(request.auth.uid)) && 
+          get(/databases/$(database)/documents/allowed_users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     function isValidEmail(email) {
@@ -42,10 +42,11 @@ service cloud.firestore {
     function isValidAllowedUser(data) {
       return data.keys().hasAll(['email', 'role']) &&
              data.email is string && isValidEmail(data.email) &&
-             data.role in ['admin', 'user', 'guest'] &&
+             data.role in ['admin', 'user', 'guest', 'client'] &&
              (!('hasTested' in data) || data.hasTested is bool) &&
              (!('invitedBy' in data) || data.invitedBy is string) &&
-             (!('uid' in data) || data.uid is string);
+             (!('uid' in data) || data.uid is string) &&
+             (!('createdAt' in data) || data.createdAt is string);
     }
 
     // ===============================================================

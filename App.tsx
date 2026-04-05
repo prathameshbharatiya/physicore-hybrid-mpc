@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY || 'AIzaSyCbzygUBGnRd3ycmvw791adXGF2VdivVF4';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -346,63 +346,84 @@ async function callGemini(systemPrompt: string, conversationHistory: any[] = [],
   const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
   
   if (!effectiveKey) {
-    return { success: false, error: 'NO_API_KEY', message: 'Gemini API key missing.' };
+    return { success: false, error: 'NO_API_KEY', message: 'Gemini API key missing. Please enter your key in the header.' };
   }
 
-  try {
-    const ai = new GoogleGenAI({ apiKey: effectiveKey });
-    
-    // Format history for the SDK
-    const history = conversationHistory.map(msg => ({
-      role: (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model',
-      parts: [{ text: msg.content }]
-    }));
+  const models = [
+    'gemini-2.0-flash',
+    'gemini-2.0-flash-lite',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro-latest'
+  ];
 
-    // The SDK handles the v1/v1beta and payload structure automatically
-    const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
-      contents: history,
-      config: {
-        systemInstruction: systemPrompt,
-        maxOutputTokens: 4000,
-        temperature: 0.2
+  const contents: any[] = [];
+
+  conversationHistory.forEach(msg => {
+    if (!msg.content?.trim()) return;
+    const role = (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model';
+    if (contents.length > 0 && contents[contents.length - 1].role === role) {
+      contents[contents.length - 1].parts[0].text += '\n' + msg.content;
+    } else {
+      contents.push({ role, parts: [{ text: msg.content }] });
+    }
+  });
+
+  if (contents.length === 0) {
+    contents.push({ role: 'user', parts: [{ text: 'Hello' }] });
+  }
+
+  for (const modelName of models) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${effectiveKey}`;
+    
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: { maxOutputTokens: 4000, temperature: 0.2 }
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          console.log(`Gemini OK: ${modelName}`);
+          return { success: true, text };
+        }
       }
-    });
 
-    const text = response.text;
-    
-    if (!text) {
-      return { success: false, error: 'EMPTY_RESPONSE', message: 'No text in response' };
-    }
-    
-    return { success: true, text: text };
-    
-  } catch (err: any) {
-    console.error("Gemini SDK Error:", err);
-    
-    // Handle specific error codes
-    if (err.message?.includes('403') || err.message?.includes('permission')) {
-      return { 
-        success: false, 
-        error: 'HTTP_403', 
-        message: 'API key does not have permission for this model. Please ensure "Generative Language API" is enabled in Google Cloud Console.' 
-      };
-    }
-    
-    if (err.message?.includes('404')) {
-      return { 
-        success: false, 
-        error: 'HTTP_404', 
-        message: 'Model not found. Retrying with fallback...' 
-      };
-    }
+      const errData = await response.json().catch(() => ({}));
+      const errMsg = errData?.error?.message || '';
 
-    return {
-      success: false,
-      error: 'SDK_ERROR',
-      message: err.message || 'An unexpected error occurred.'
-    };
+      if (response.status === 404) {
+        console.warn(`404 on ${modelName} — trying next model...`);
+        continue;
+      }
+      if (response.status === 400) {
+        return { success: false, error: 'HTTP_400', message: `Bad request: ${errMsg}` };
+      }
+      if (response.status === 403) {
+        return { success: false, error: 'HTTP_403', message: errMsg || 'API key blocked. Enable Generative Language API at console.cloud.google.com.' };
+      }
+      if (response.status === 429) {
+        return { success: false, error: 'HTTP_429', message: 'Rate limit hit. Wait a moment and try again.' };
+      }
+      console.warn(`Error ${response.status} on ${modelName}: ${errMsg}`);
+
+    } catch (err: any) {
+      console.error(`Network error on ${modelName}:`, err.message);
+    }
   }
+
+  return { 
+    success: false, 
+    error: 'HTTP_404', 
+    message: 'All Gemini models returned 404. Go to console.cloud.google.com → APIs & Services → Library → search "Generative Language API" → Enable it. Then get a fresh API key from aistudio.google.com.'
+  };
 }
 
 const COLORS = {
@@ -514,7 +535,8 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
         const timeoutId = setTimeout(() => controller.abort(), 2000);
         
         // We expect a real hardware bridge to respond to a specific health check
-        const response = await fetch(endpoint + '/api/health', { 
+        const httpEndpoint = endpoint.startsWith('ws') ? endpoint.replace('ws', 'http') : endpoint;
+        const response = await fetch(httpEndpoint + '/api/health', { 
           method: 'GET', 
           signal: controller.signal 
         });
