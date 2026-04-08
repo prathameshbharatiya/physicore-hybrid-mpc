@@ -4642,6 +4642,36 @@ end`}
                   )}
                 </div>
 
+                <div className="flex flex-col gap-2 mb-4">
+                  <span className="micro-label text-textDim uppercase text-center">Select Connection Mode</span>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => setConnectionMode('digital_twin')}
+                      className={`flex-1 py-2 font-mono text-[9px] border ${connectionMode === 'digital_twin' ? 'bg-cyan text-black border-cyan' : 'border-border text-textDim'}`}
+                    >
+                      TWIN
+                    </button>
+                    <button 
+                      onClick={() => setConnectionMode('hil')}
+                      className={`flex-1 py-2 font-mono text-[9px] border ${connectionMode === 'hil' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
+                    >
+                      HIL
+                    </button>
+                    <button 
+                      onClick={() => setConnectionMode('ros2_websocket')}
+                      className={`flex-1 py-2 font-mono text-[9px] border ${connectionMode === 'ros2_websocket' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
+                    >
+                      ROS2
+                    </button>
+                    <button
+                      onClick={() => { setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765'); }}
+                      className={`flex-1 py-2 font-mono text-[9px] border ${connectionMode === 'mavlink_bridge' ? 'bg-amber text-black border-amber' : 'border-border text-textDim'}`}
+                    >
+                      MAVLINK
+                    </button>
+                  </div>
+                </div>
+
                 <div className="flex flex-col gap-3 w-full max-w-[280px]">
                   <button 
                     onClick={() => setView('integrator')}
@@ -4657,7 +4687,10 @@ end`}
                     className="w-full p-4 border border-green/30 bg-bgRaised hover:bg-green hover:text-black transition-all group flex items-center justify-between disabled:opacity-50"
                   >
                     <span className="font-display text-[11px] font-bold tracking-widest uppercase">
-                      {isSystemConnecting ? 'Retrying...' : 'Retry Connection'}
+                      {isSystemConnecting ? 'Retrying...' : 
+                        connectionMode === 'digital_twin' ? 'Verify Digital Twin simulation' : 
+                        connectionMode === 'mavlink_bridge' ? 'Connect MAVLink Bridge' : 
+                        'Verify HIL / Hardware link'}
                     </span>
                     <Wifi size={18} />
                   </button>
