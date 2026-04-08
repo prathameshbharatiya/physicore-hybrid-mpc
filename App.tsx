@@ -45,7 +45,7 @@ const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com"
 ];
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || 'AIzaSyAPvkKDFgKIi7TlGnDxuSG9gllj26DMfxA';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -115,6 +115,12 @@ interface AviationParams {
   fuelBurnRate: number;
   vne: number; // Never exceed speed
   vso: number; // Stall speed
+}
+
+interface RoboticsParams {
+  mass: number;
+  friction: number;
+  actuatorEfficiency: number;
 }
 
 const atmosphericDensity = (altitude: number) => {
@@ -234,6 +240,57 @@ const rocketRK4Step = (state: RocketState, params: RocketParams, dt: number) => 
     mass: Math.max(params.dryMass, state.mass + (k1.dm + 2 * k2.dm + 2 * k3.dm + k4.dm) * dt / 6),
     time: state.time + dt,
     propMass: Math.max(0, state.propMass + (k1.dm + 2 * k2.dm + 2 * k3.dm + k4.dm) * dt / 6)
+  };
+};
+
+const aviationDerivatives = (state: AviationState, params: AviationParams) => {
+  const rho = atmosphericDensity(state.y);
+  const v = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+  const q = 0.5 * rho * v * v;
+  
+  const alpha = state.aoa * Math.PI / 180;
+  const cl = params.cl0 + params.cla * alpha;
+  const cd = params.cd0 + params.k * cl * cl;
+  
+  const lift = q * params.wingArea * cl;
+  const drag = q * params.wingArea * cd;
+  const thrust = params.thrustMax;
+  const Fgy = -state.mass * RKT_G;
+  const gamma = Math.atan2(state.vy, state.vx);
+  
+  const Ftx = thrust * Math.cos(state.pitch * Math.PI / 180);
+  const Fty = thrust * Math.sin(state.pitch * Math.PI / 180);
+  const Flx = -lift * Math.sin(gamma);
+  const Fly = lift * Math.cos(gamma);
+  const Fdx = -drag * Math.cos(gamma);
+  const Fdy = -drag * Math.sin(gamma);
+  
+  return {
+    dx: state.vx, dy: state.vy,
+    dvx: (Ftx + Flx + Fdx) / state.mass,
+    dvy: (Fty + Fly + Fdy + Fgy) / state.mass,
+    dm: -params.fuelBurnRate,
+    dt: 1
+  };
+};
+
+const aviationRK4Step = (state: AviationState, params: AviationParams, dt: number) => {
+  const k1 = aviationDerivatives(state, params);
+  const s2 = { ...state, x: state.x + k1.dx * dt/2, y: state.y + k1.dy * dt/2, vx: state.vx + k1.dvx * dt/2, vy: state.vy + k1.dvy * dt/2, mass: state.mass + k1.dm * dt/2, time: state.time + dt/2 };
+  const k2 = aviationDerivatives(s2, params);
+  const s3 = { ...state, x: state.x + k2.dx * dt/2, y: state.y + k2.dy * dt/2, vx: state.vx + k2.dvx * dt/2, vy: state.vy + k2.dvy * dt/2, mass: state.mass + k2.dm * dt/2, time: state.time + dt/2 };
+  const k3 = aviationDerivatives(s3, params);
+  const s4 = { ...state, x: state.x + k3.dx * dt, y: state.y + k3.dy * dt, vx: state.vx + k3.dvx * dt, vy: state.vy + k3.dvy * dt, mass: state.mass + k3.dm * dt, time: state.time + dt };
+  const k4 = aviationDerivatives(s4, params);
+  
+  return {
+    ...state,
+    x: state.x + (k1.dx + 2*k2.dx + 2*k3.dx + k4.dx) * dt / 6,
+    y: state.y + (k1.dy + 2*k2.dy + 2*k3.dy + k4.dy) * dt / 6,
+    vx: state.vx + (k1.dvx + 2*k2.dvx + 2*k3.dvx + k4.dvx) * dt / 6,
+    vy: state.vy + (k1.dvy + 2*k2.dvy + 2*k3.dvy + k4.dvy) * dt / 6,
+    mass: state.mass + (k1.dm + 2*k2.dm + 2*k3.dm + k4.dm) * dt / 6,
+    time: state.time + dt
   };
 };
 
@@ -469,7 +526,7 @@ const formatTime = (date: Date) => {
 };
 
 // --- HARDWARE GATE ---
-const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil' | 'digital_twin') => {
+const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge') => {
   if (mode === 'digital_twin') {
     return new Promise((resolve) => {
       // Digital Twin is a local simulation, but we still simulate a handshake
@@ -523,6 +580,7 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
   
   if (mode === 'hil') {
     return new Promise(async (resolve) => {
+      let timeoutId: any = null;
       try {
         // HIL Simulation Handshake - REAL CHECK
         const currentOrigin = window.location.origin;
@@ -532,7 +590,7 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
         }
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        timeoutId = setTimeout(() => controller.abort(), 2000);
         
         // We expect a real hardware bridge to respond to a specific health check
         const httpEndpoint = endpoint.startsWith('ws') ? endpoint.replace('ws', 'http') : endpoint;
@@ -560,7 +618,7 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
           latency: 0.4
         });
       } catch (e) {
-        clearTimeout(2000); // Just in case
+        if (timeoutId) clearTimeout(timeoutId);
         resolve({ 
           success: false, 
           reason: 'HIL_ENDPOINT_UNREACHABLE. Ensure your HIL bridge is running at ' + endpoint + ' and responding to /api/health'
@@ -568,6 +626,45 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
       }
     });
   }
+  if (mode === 'mavlink_bridge') {
+    return new Promise((resolve) => {
+      try {
+        const ws = new WebSocket(endpoint);
+        const timeout = setTimeout(() => {
+          ws.close();
+          resolve({ success: false, reason: 'BRIDGE_TIMEOUT. Is physicore_bridge.py running?' });
+        }, 5000);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ op: 'ping' }));
+        };
+        ws.onmessage = (msg) => {
+          try {
+            const data = JSON.parse(msg.data);
+            clearTimeout(timeout);
+            ws.close();
+            if (data.op === 'status' && data.msg?.service === 'physicore') {
+              resolve({ success: true, vehicle_type: data.msg.vehicle_type || 'UNKNOWN', bridge_version: data.msg.bridge_version, latency: performance.now() });
+            } else if (data.op === 'pong') {
+              resolve({ success: true, vehicle_type: 'UNKNOWN', latency: performance.now() });
+            } else {
+              resolve({ success: false, reason: 'INVALID_BRIDGE_RESPONSE' });
+            }
+          } catch (e) {
+            clearTimeout(timeout);
+            ws.close();
+            resolve({ success: false, reason: 'PARSE_ERROR' });
+          }
+        };
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          resolve({ success: false, reason: 'BRIDGE_OFFLINE. Run: python physicore_bridge.py --connection udp:14550' });
+        };
+      } catch (e) {
+        resolve({ success: false, reason: 'WEBSOCKET_ERROR' });
+      }
+    });
+  }
+
   return { success: false, reason: 'UNKNOWN_MODE' };
 };
 
@@ -755,8 +852,8 @@ const IntegrationActionPanel = ({
   files: GeneratedFile[], 
   onTest: () => void, 
   onContinue: () => void,
-  connectionMode: 'ros2_websocket' | 'hil' | 'digital_twin',
-  setConnectionMode: (m: 'ros2_websocket' | 'hil' | 'digital_twin') => void,
+  connectionMode: 'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge',
+  setConnectionMode: (m: 'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge') => void,
   endpoint: string,
   setEndpoint: (e: string) => void,
   dRealEndpoint: string,
@@ -990,6 +1087,12 @@ const IntegrationActionPanel = ({
                 className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'ros2_websocket' ? 'bg-green text-black border-green' : 'border-border text-textDim'}`}
               >
                 ROS2
+              </button>
+              <button
+                onClick={() => { setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765'); }}
+                className={`px-3 py-1 font-mono text-[9px] border ${connectionMode === 'mavlink_bridge' ? 'bg-amber text-black border-amber' : 'border-border text-textDim'}`}
+              >
+                MAVLINK
               </button>
             </div>
           </div>
@@ -1512,7 +1615,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Wingspan (m)</label>
               <input 
                 type="number" 
-                value={params.wingspan} 
+                step="0.1" 
+                value={params.wingspan || 0} 
                 onChange={(e) => setParams({ ...params, wingspan: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1521,7 +1625,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Wing Area (m²)</label>
               <input 
                 type="number" 
-                value={params.wingArea} 
+                step="0.01" 
+                value={params.wingArea || 0} 
                 onChange={(e) => setParams({ ...params, wingArea: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1536,7 +1641,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Lift Slope (Clα)</label>
               <input 
                 type="number" 
-                value={params.cla} 
+                step="0.1" 
+                value={params.cla || 0} 
                 onChange={(e) => setParams({ ...params, cla: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1545,7 +1651,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Parasitic Drag (Cd0)</label>
               <input 
                 type="number" 
-                value={params.cd0} 
+                step="0.001" 
+                value={params.cd0 || 0} 
                 onChange={(e) => setParams({ ...params, cd0: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1560,7 +1667,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Max Thrust (N)</label>
               <input 
                 type="number" 
-                value={params.thrustMax} 
+                step="1" 
+                value={params.thrustMax || 0} 
                 onChange={(e) => setParams({ ...params, thrustMax: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1569,7 +1677,8 @@ const AviationManifestWizard = ({ params, setParams, projectEmail, setProjectEma
               <label className="font-mono text-[9px] text-textDim uppercase">Fuel Cap (kg)</label>
               <input 
                 type="number" 
-                value={params.fuelCapacity} 
+                step="0.1" 
+                value={params.fuelCapacity || 0} 
                 onChange={(e) => setParams({ ...params, fuelCapacity: parseFloat(e.target.value) || 0 })}
                 className="w-full bg-bg border border-border p-2 font-mono text-xs text-white focus:border-cyan outline-none"
               />
@@ -1655,7 +1764,7 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
     reader.readAsText(file);
   };
 
-  const twr = params.motorCurve.length > 0 ? (Math.max(...params.motorCurve.map(p => p.f)) / ((params.dryMass + params.propMassInitial) * RKT_G)) : 0;
+  const twr = params.motorCurve.length > 0 ? (Math.max(...params.motorCurve.map(p => p.f || 0)) / (((params.dryMass || 0) + (params.propMassInitial || 0)) * RKT_G)) : 0;
 
   return (
     <div className="space-y-8 p-6 bg-bgRaised border border-border">
@@ -1695,19 +1804,19 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="micro-label text-textDim">Dry Mass (kg)</label>
-              <input type="number" step="0.1" value={params.dryMass} onChange={e => setParams({...params, dryMass: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+              <input type="number" step="0.1" value={params.dryMass || 0} onChange={e => setParams({...params, dryMass: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
             </div>
             <div className="space-y-1">
               <label className="micro-label text-textDim">Propellant Mass (kg)</label>
-              <input type="number" step="0.01" value={params.propMassInitial} onChange={e => setParams({...params, propMassInitial: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+              <input type="number" step="0.01" value={params.propMassInitial || 0} onChange={e => setParams({...params, propMassInitial: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
             </div>
             <div className="space-y-1">
               <label className="micro-label text-textDim">Diameter (m)</label>
-              <input type="number" step="0.001" value={params.diameter} onChange={e => setParams({...params, diameter: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+              <input type="number" step="0.001" value={params.diameter || 0} onChange={e => setParams({...params, diameter: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
             </div>
             <div className="space-y-1">
               <label className="micro-label text-textDim">Drag Coeff (Cd)</label>
-              <input type="number" step="0.01" value={params.cd} onChange={e => setParams({...params, cd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
+              <input type="number" step="0.01" value={params.cd || 0} onChange={e => setParams({...params, cd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-green" />
             </div>
           </div>
         </div>
@@ -1721,11 +1830,11 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className="micro-label text-textDim">Launch Angle (deg)</label>
-              <input type="number" value={params.launchAngle} onChange={e => setParams({...params, launchAngle: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
+              <input type="number" value={params.launchAngle || 0} onChange={e => setParams({...params, launchAngle: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
             </div>
             <div className="space-y-1">
               <label className="micro-label text-textDim">Rail Length (m)</label>
-              <input type="number" value={params.railLength} onChange={e => setParams({...params, railLength: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
+              <input type="number" value={params.railLength || 0} onChange={e => setParams({...params, railLength: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-amber" />
             </div>
             <div className="p-3 bg-bgRaised border border-borderDim col-span-2 flex justify-between items-center">
               <div>
@@ -1776,8 +1885,8 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
             </div>
             {(manualCurve.length > 10 ? manualCurve.slice(0, 10) : manualCurve).map((p, i) => (
               <div key={i} className="grid grid-cols-2 gap-2">
-                <input type="number" step="0.1" value={p.t} onChange={e => handleManualCurveChange(i, 't', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
-                <input type="number" step="1" value={p.f} onChange={e => handleManualCurveChange(i, 'f', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
+                <input type="number" step="0.1" value={p.t || 0} onChange={e => handleManualCurveChange(i, 't', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
+                <input type="number" step="1" value={p.f || 0} onChange={e => handleManualCurveChange(i, 'f', e.target.value)} className="bg-bg border border-border p-1 font-mono text-[10px] text-white outline-none" />
               </div>
             ))}
             {manualCurve.length > 10 && <div className="text-center font-mono text-[8px] text-textDim uppercase pt-2">... {manualCurve.length - 10} more points ...</div>}
@@ -1804,17 +1913,17 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
               {params.drogueAlt !== 0 && (
                 <div className="flex items-center justify-between">
                   <span className="micro-label text-textDim">Deployment Alt (m)</span>
-                  <input type="number" value={params.drogueAlt} onChange={e => setParams({...params, drogueAlt: parseFloat(e.target.value) || 0})} className="w-20 bg-bg border border-border p-1 font-mono text-[10px] text-white text-right" />
+                  <input type="number" value={params.drogueAlt || 0} onChange={e => setParams({...params, drogueAlt: parseFloat(e.target.value) || 0})} className="w-20 bg-bg border border-border p-1 font-mono text-[10px] text-white text-right" />
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="micro-label text-textDim">Drogue Cd</label>
-                  <input type="number" step="0.1" value={params.drogueCd} onChange={e => setParams({...params, drogueCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                  <input type="number" step="0.1" value={params.drogueCd || 0} onChange={e => setParams({...params, drogueCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
                 </div>
                 <div className="space-y-1">
                   <label className="micro-label text-textDim">Drogue Diam (m)</label>
-                  <input type="number" step="0.01" value={params.drogueDiam} onChange={e => setParams({...params, drogueDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                  <input type="number" step="0.01" value={params.drogueDiam || 0} onChange={e => setParams({...params, drogueDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
                 </div>
               </div>
             </div>
@@ -1824,21 +1933,21 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
               <div className="flex items-center justify-between">
                 <span className="micro-label text-textDim">Main Deployment</span>
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] text-white">{params.mainAlt}m</span>
+                  <span className="font-mono text-[10px] text-white">{params.mainAlt || 0}m</span>
                 </div>
               </div>
               <div className="space-y-1">
                 <label className="micro-label text-textDim">Deployment Altitude (m)</label>
-                <input type="range" min="50" max="1000" step="50" value={params.mainAlt} onChange={e => setParams({...params, mainAlt: parseInt(e.target.value)})} className="w-full h-1 bg-border appearance-none cursor-pointer accent-red" />
+                <input type="range" min="50" max="1000" step="50" value={params.mainAlt || 0} onChange={e => setParams({...params, mainAlt: parseInt(e.target.value) || 0})} className="w-full h-1 bg-border appearance-none cursor-pointer accent-red" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label className="micro-label text-textDim">Main Cd</label>
-                  <input type="number" step="0.1" value={params.mainCd} onChange={e => setParams({...params, mainCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                  <input type="number" step="0.1" value={params.mainCd || 0} onChange={e => setParams({...params, mainCd: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
                 </div>
                 <div className="space-y-1">
                   <label className="micro-label text-textDim">Main Diam (m)</label>
-                  <input type="number" step="0.01" value={params.mainDiam} onChange={e => setParams({...params, mainDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
+                  <input type="number" step="0.01" value={params.mainDiam || 0} onChange={e => setParams({...params, mainDiam: parseFloat(e.target.value) || 0})} className="w-full bg-bg border border-border p-1 font-mono text-[10px] text-white" />
                 </div>
               </div>
             </div>
@@ -2087,10 +2196,10 @@ function AppContent() {
   const [isSystemConnected, setIsSystemConnected] = useState(false);
   const [isSystemConnecting, setIsSystemConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil' | 'digital_twin'>('hil');
+  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge'>('mavlink_bridge');
   const [digitalTwinConfirmed, setDigitalTwinConfirmed] = useState(false);
   const [showDigitalTwinModal, setShowDigitalTwinModal] = useState(false);
-  const [endpoint, setEndpoint] = useState('ws://localhost:9090');
+  const [endpoint, setEndpoint] = useState('ws://localhost:8765');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
   const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || GEMINI_KEY);
@@ -2101,6 +2210,7 @@ function AppContent() {
   const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
 
   const [isLaunching, setIsLaunching] = useState(false);
+  const [simulationConfig, setSimulationConfig] = useState<any | null>(null);
   const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
   const [showUserManagement, setShowUserManagement] = useState(false);
 
@@ -2108,7 +2218,7 @@ function AppContent() {
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    if (isSystemConnected && connectionMode === 'ros2_websocket' && endpoint) {
+    if (isSystemConnected && (connectionMode === 'ros2_websocket' || connectionMode === 'mavlink_bridge') && endpoint) {
       try {
         const ws = new WebSocket(endpoint);
         socketRef.current = ws;
@@ -2415,6 +2525,24 @@ function AppContent() {
     setIsSystemConnecting(false);
   };
 
+  const handleLaunchSimulation = () => {
+    if (!simulationConfig) return;
+    
+    if (systemProfile.domain === 'ROCKETS') {
+      setRocketParams(prev => ({ ...prev, ...simulationConfig }));
+      resetRocketSim();
+    } else if (systemProfile.domain === 'AVIATION') {
+      setAviationParams(prev => ({ ...prev, ...simulationConfig }));
+    }
+    
+    setConnectionMode('digital_twin');
+    setDigitalTwinConfirmed(true);
+    setHandshakeConfirmed(true);
+    setIsSystemConnected(true);
+    setView('dashboard');
+    markAsTested();
+  };
+
   // Scroll tracking
   useEffect(() => {
     if (view !== 'home') return;
@@ -2507,6 +2635,24 @@ function AppContent() {
 
     return () => clearInterval(interval);
   }, [isRocketSimRunning, rocketSimSpeed, rocketParams, systemProfile.domain, isSystemConnected]);
+
+  // Aviation Simulation Loop
+  useEffect(() => {
+    if (!isRocketSimRunning || isSystemConnected || systemProfile.domain !== 'AVIATION') return;
+
+    const dt = 0.01;
+    const interval = setInterval(() => {
+      setAviationState(prev => {
+        let current = prev;
+        for (let i = 0; i < rocketSimSpeed; i++) {
+          current = aviationRK4Step(current, aviationParams, dt);
+        }
+        return current;
+      });
+    }, 10);
+
+    return () => clearInterval(interval);
+  }, [isRocketSimRunning, rocketSimSpeed, aviationParams, systemProfile.domain, isSystemConnected]);
 
   // Update rocketState from real telemetry when connected
   useEffect(() => {
@@ -2745,6 +2891,10 @@ function AppContent() {
              The UI will parse these tags and apply highlighting.
            — Always reference the detected system profile in answers.
            — Never give generic answers. Always specific.
+           — When the user has provided enough physical details (mass, dimensions, thrust, etc.), provide a [SIMULATION_CONFIG] block in JSON format.
+           — The JSON should match either RocketParams or AviationParams interfaces depending on the domain.
+           — For ROCKETS, include: dryMass, propMassInitial, burnTime, thrust, fuelMass, diameter, length, cd, motorCurve, isp, launchAngle, railLength, launchAltitude, drogueAlt, drogueCd, drogueDiam, mainAlt, mainCd, mainDiam.
+           — For AVIATION, include: mass, wingspan, wingArea, chord, cl0, cla, cd0, k, thrustMax, fuelCapacity, fuelBurnRate, vne, vso.
            — Speak as a system: prefix with '> INTEGRATION ENGINEER:'
            — Be concise in questions. Be thorough in code.
 
@@ -2772,6 +2922,29 @@ function AppContent() {
         if (aiText.includes('PROTOCOLS:')) updatedProfile.protocols = aiText.split('PROTOCOLS:')[1].split('\n')[0].trim();
         
         setSystemProfile(updatedProfile);
+
+        // Simulation Config extraction
+        const simConfigMatch = aiText.match(/\[SIMULATION_CONFIG\]([\s\S]*?)\[\/SIMULATION_CONFIG\]/);
+        if (simConfigMatch) {
+          try {
+            const config = JSON.parse(simConfigMatch[1].trim());
+            // Sanitize numeric fields to avoid NaN
+            const sanitizedConfig: any = {};
+            Object.keys(config).forEach(key => {
+              const val = config[key];
+              if (typeof val === 'number') {
+                sanitizedConfig[key] = isNaN(val) ? 0 : val;
+              } else if (typeof val === 'string' && !isNaN(parseFloat(val))) {
+                sanitizedConfig[key] = parseFloat(val);
+              } else {
+                sanitizedConfig[key] = val;
+              }
+            });
+            setSimulationConfig(sanitizedConfig);
+          } catch (e) {
+            console.error("Failed to parse simulation config:", e);
+          }
+        }
 
         // Code parsing
         const codeMatches = aiText.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g);
@@ -3568,6 +3741,21 @@ function AppContent() {
                   </div>
                 ))}
               </div>
+            </section>
+          )}
+
+          {simulationConfig && (
+            <section className="space-y-4">
+              <div className="border-l-2 border-amber pl-3">
+                <span className="micro-label text-amber uppercase">Simulation Ready</span>
+              </div>
+              <button 
+                onClick={handleLaunchSimulation}
+                className="w-full p-4 bg-amber text-black font-display font-bold text-[11px] uppercase tracking-widest hover:bg-white transition-all flex items-center justify-between"
+              >
+                <span>Launch Simulation</span>
+                <Play size={16} />
+              </button>
             </section>
           )}
 
@@ -4407,6 +4595,15 @@ end`}
                 isConnected={isSystemConnected}
                 handshakeConfirmed={handshakeConfirmed}
               />
+            ) : systemProfile.domain === 'AVIATION' ? (
+              <AviationTrajectoryCanvas 
+                state={aviationState} 
+                params={aviationParams} 
+                isRunning={isRocketSimRunning}
+                setIsRunning={setIsRocketSimRunning}
+                isConnected={isSystemConnected}
+                handshakeConfirmed={handshakeConfirmed}
+              />
             ) : (
               <DashboardCanvas 
                 isConnected={isSystemConnected} 
@@ -4414,6 +4611,7 @@ end`}
                 onTelemetryUpdate={setTelemetry} 
                 telemetry={telemetry} 
                 connectionMode={connectionMode} 
+                simulationConfig={simulationConfig}
               />
             )}
 
@@ -4897,18 +5095,93 @@ const HeroCanvas = () => {
     return () => window.removeEventListener('resize', resize);
   }, []);
 
-  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
 };
 
-const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, telemetry, connectionMode }: { isConnected: boolean, handshakeConfirmed: boolean, onTelemetryUpdate: (data: any) => void, telemetry: any, connectionMode: string }) => {
+const AviationTrajectoryCanvas = ({ state, params, isRunning, setIsRunning, isConnected, handshakeConfirmed }: { state: AviationState, params: AviationParams, isRunning: boolean, setIsRunning: (r: boolean) => void, isConnected: boolean, handshakeConfirmed: boolean }) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const resize = () => {
+      const parent = canvas.parentElement;
+      if (parent) {
+        canvas.width = parent.clientWidth;
+        canvas.height = parent.clientHeight;
+      }
+    };
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    let frame = 0;
+    const animate = () => {
+      frame++;
+      ctx.fillStyle = COLORS.bgInset;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Grid
+      ctx.strokeStyle = '#121212';
+      ctx.lineWidth = 1;
+      for (let x = 0; x < canvas.width; x += 40) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+      }
+      for (let y = 0; y < canvas.height; y += 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+      }
+
+      // Draw Aircraft
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(state.pitch * Math.PI / 180);
+      
+      ctx.strokeStyle = COLORS.cyan;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-20, 0); ctx.lineTo(20, 0);
+      ctx.moveTo(0, -5); ctx.lineTo(0, 5);
+      ctx.stroke();
+      
+      ctx.restore();
+
+      // Telemetry
+      ctx.fillStyle = COLORS.textDim;
+      ctx.font = '10px "JetBrains Mono"';
+      ctx.fillText(`ALT: ${state.y.toFixed(0)}m`, 20, 30);
+      ctx.fillText(`SPD: ${Math.sqrt(state.vx**2 + state.vy**2).toFixed(1)}m/s`, 20, 45);
+
+      requestAnimationFrame(animate);
+    };
+
+    const animId = requestAnimationFrame(animate);
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animId);
+    };
+  }, [state]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
+};
+
+const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, telemetry, connectionMode, simulationConfig }: { isConnected: boolean, handshakeConfirmed: boolean, onTelemetryUpdate: (data: any) => void, telemetry: any, connectionMode: string, simulationConfig?: any }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const stateRef = useRef({
     robot: { x: 0, y: 0, vx: 0, vy: 0 },
     target: { x: 0, y: 0 },
-    trueParams: { mass: 5.2, friction: 0.65 }, // Hidden true parameters
+    trueParams: { 
+      mass: simulationConfig?.mass || 5.2, 
+      friction: simulationConfig?.friction || 0.65 
+    }, // Use simulationConfig if available
     estParams: { mass: 1.0, friction: 0.1 },   // AI's current estimates
-    actuatorEfficiency: 0.95,
+    actuatorEfficiency: simulationConfig?.actuatorEfficiency || 0.95,
     residualHistory: [] as any[],
     effortHistory: [] as any[],
     frame: 0
