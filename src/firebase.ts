@@ -6,7 +6,7 @@ const configFiles = import.meta.glob('../firebase-applet-config.json', { eager: 
 const firebaseConfig = (configFiles['../firebase-applet-config.json'] as any)?.default || {
   projectId: "gen-lang-client-0400823843",
   appId: "1:1026415005415:web:cf6d1b2f38a0c7ac1f9c42",
-  apiKey: "AIzaSyAPvkKDFgKIi7TlGnDxuSG9gllj26DMfxA",
+  apiKey: "AIzaSyBjvw8ewBhuVhjqy86LqeNNTw-egmdAXW8",
   authDomain: "gen-lang-client-0400823843.firebaseapp.com",
   firestoreDatabaseId: "ai-studio-43ca046c-b369-457f-ab19-e34c45d76090",
   storageBucket: "gen-lang-client-0400823843.firebasestorage.app",
