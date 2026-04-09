@@ -42,7 +42,8 @@ const BETA_TESTERS = [
   "darisglx@gmail.com",
   "vladimir.robotics@gmail.com",
   "projectauvm@manipal.edu",
-  "prathameshshirbhate8anpc@gmail.com"
+  "prathameshshirbhate8anpc@gmail.com",
+  "ashwanth123creations@gmail.com"
 ];
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || 'AIzaSyAPvkKDFgKIi7TlGnDxuSG9gllj26DMfxA';
@@ -1992,7 +1993,8 @@ function AppContent() {
       "stesrocketryteam@gmail.com",
       "darisglx@gmail.com",
       "vladimir.robotics@gmail.com",
-      "projectauvm@manipal.edu"
+      "projectauvm@manipal.edu",
+      "ashwanth123creations@gmail.com"
     ];
     
     let addedCount = 0;
