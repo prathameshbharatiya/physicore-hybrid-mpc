@@ -1165,7 +1165,7 @@ const IntegrationActionPanel = ({
               {isSystemConnecting ? 'ESTABLISHING LINK...' : 'TEST CONNECTION'}
             </span>
             <span className="font-mono text-[9px] text-textDim group-hover:text-black/60 uppercase">
-              {connectionMode === 'digital_twin' ? 'Verify Digital Twin simulation' : 'Verify HIL / Hardware link'}
+              {connectionMode === 'digital_twin' ? 'Verify Digital Twin simulation' : connectionMode === 'mavlink_bridge' ? 'Connect MAVLink Bridge' : connectionMode === 'ros2_websocket' ? 'Connect ROS2 Hardware' : 'Verify HIL / Hardware link'}
             </span>
           </div>
           {isSystemConnecting ? <RefreshCw size={20} className="animate-spin" /> : <Wifi size={20} />}
@@ -2871,12 +2871,23 @@ function AppContent() {
            — MPC lookahead: 12-step CEM trajectory planning
            — Hardware gate: LIVE / HIL / Digital Twin modes
            — Sentinel OS integration: safety governance layer
-           — Export: JSON pack + ROS2/ArduPilot/PX4 bridge code
+           — Export: JSON pack + ROS2/ArduPilot/PX4/Arduino/ESP32/Custom bridge code
 
            DOMAIN SPECIFICS:
            — ROBOTICS: Focus on mass, friction, actuator efficiency, and joint constraints.
            — ROCKETS: Focus on thrust curves, mass depletion (fuel), drag coefficients (Cd), and recovery triggers.
            — AVIATION: Focus on lift/drag ratios, control surface mapping, and flight envelope protection.
+           — BALANCING ROBOTS: Focus on pitch angle, gyroscope rates, motor PWM, PID gains, and moment of inertia. Ask for IMU type (MPU6050, BNO055, MPU9250), microcontroller (Arduino, ESP32, Raspberry Pi), and motor driver type (L298N, TB6612, DRV8833). Generate complete Arduino/ESP32 code that outputs serial JSON telemetry at 20Hz. Always include the sendPhysicoreTelemetry() function in the generated code.
+           — ARDUINO / ESP32 SYSTEMS: Generate serial JSON telemetry output code. Format must be single-line JSON per reading: {"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"motor_l":0.0,"motor_r":0.0,"timestamp":0}. The physicore_bridge.py script reads this serial output automatically. After generating code always tell the user: "Run on your laptop: pip install pymavlink websockets aiohttp && python physicore_bridge.py --mode robot_serial --connection /dev/ttyUSB0 --baud 115200. Then open Physicore Dashboard, click MAVLINK, set endpoint to ws://localhost:8765, click Connect."
+           — CUSTOM ROCKET FLIGHT COMPUTERS: Ask for sensor types (barometer, IMU, GPS), microcontroller, baud rate, and current telemetry output format. Generate both the FC telemetry code and a custom bridge parser. Always generate code for: altitude, velocity, acceleration, orientation, and motor/pyro channel states.
+           — GROUND ROBOTS AND ROVERS: Focus on wheel odometry, IMU orientation, motor commands, and surface friction. Ask if running ROS2 or direct serial. Generate appropriate bridge code for each case.
+           — DRONES WITHOUT PX4/ARDUPILOT: Ask for flight controller type, communication interface (UART, SPI, I2C), and available sensors. Generate MAVLink-compatible telemetry wrapper code.
+           — AFTER GENERATING ANY CODE: Always end with these exact steps formatted clearly:
+             STEP 1 — Flash the generated code to your hardware.
+             STEP 2 — On your laptop run: pip install pymavlink websockets aiohttp
+             STEP 3 — Run: python physicore_bridge.py --connection /dev/ttyUSB0 --baud 115200 (adjust port for your system. Windows: COM3. Mac: /dev/cu.usbserial-0001)
+             STEP 4 — Open Physicore Dashboard. Click MAVLINK. Set endpoint to ws://localhost:8765. Click Connect.
+             STEP 5 — Your real telemetry will appear immediately.
 
            YOUR BEHAVIOR:
            — Follow the workflow phases strictly:
@@ -3799,9 +3810,29 @@ function AppContent() {
           )}
 
           <section className="space-y-4">
+            <div className="micro-label text-textDim">Bridge Setup</div>
+            <div className="space-y-2">
+              <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                <div className="font-mono text-[9px] text-green uppercase tracking-widest">① Install</div>
+                <div className="font-mono text-[8px] text-textDim select-all">pip install pymavlink websockets aiohttp</div>
+              </div>
+              <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                <div className="font-mono text-[9px] text-green uppercase tracking-widest">② Run Bridge</div>
+                <div className="font-mono text-[8px] text-textDim select-all">python physicore_bridge.py --connection udp:14550</div>
+                <div className="font-mono text-[8px] text-textDim opacity-50">Arduino: --connection /dev/ttyUSB0</div>
+                <div className="font-mono text-[8px] text-textDim opacity-50">Windows: --connection COM3</div>
+              </div>
+              <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                <div className="font-mono text-[9px] text-green uppercase tracking-widest">③ Connect</div>
+                <div className="font-mono text-[8px] text-textDim">Dashboard → MAVLINK → ws://localhost:8765</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="space-y-4">
             <div className="micro-label text-textDim">Quick Start</div>
             <div className="flex flex-col gap-2">
-              {['ROS2 INTEGRATION', 'ARDUPILOT / AP_DDS', 'PX4 / uXRCE-DDS', 'MATLAB / SIMULINK'].map(p => (
+              {['ROS2 ROBOT', 'ARDUPILOT / AP_DDS', 'PX4 / uXRCE-DDS', 'ARDUINO / ESP32', 'BALANCING BOT', 'CUSTOM ROCKET FC', 'MATLAB / SIMULINK', 'CUSTOM HARDWARE'].map(p => (
                 <button key={p} onClick={() => handleSendMessage(`I want to integrate with ${p}`)} className="text-left px-3 py-2 border border-border text-textSecondary font-body text-[11px] hover:border-cyan hover:text-cyan transition-all uppercase tracking-widest">{p}</button>
               ))}
             </div>
@@ -3827,7 +3858,11 @@ function AppContent() {
                 <div className="grid grid-cols-2 gap-4 w-full">
                   {[
                     "I have a ROS2 robot",
-                    "I'm using ArduPilot / PX4",
+                    "I'm using ArduPilot or PX4",
+                    "I have an Arduino or ESP32",
+                    "I have a balancing bot",
+                    "I have a custom rocket",
+                    "I have a drone",
                     "I have a MATLAB workflow",
                     "I have custom hardware"
                   ].map(chip => (
@@ -3903,8 +3938,8 @@ function AppContent() {
                             <label className="micro-label text-textDim">System Mass (kg)</label>
                             <input 
                               type="number" 
-                              value={telemetry.mass} 
-                              onChange={e => setTelemetry({ ...telemetry, mass: parseFloat(e.target.value) })}
+                              value={telemetry.mass || 0} 
+                              onChange={e => setTelemetry({ ...telemetry, mass: parseFloat(e.target.value) || 0 })}
                               className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
                             />
                           </div>
@@ -3912,8 +3947,8 @@ function AppContent() {
                             <label className="micro-label text-textDim">Friction Coeff (μ)</label>
                             <input 
                               type="number" 
-                              value={telemetry.friction} 
-                              onChange={e => setTelemetry({ ...telemetry, friction: parseFloat(e.target.value) })}
+                              value={telemetry.friction || 0} 
+                              onChange={e => setTelemetry({ ...telemetry, friction: parseFloat(e.target.value) || 0 })}
                               className="w-full bg-bg border border-border p-2 font-mono text-xs text-white outline-none focus:border-cyan" 
                             />
                           </div>
@@ -4095,14 +4130,17 @@ function AppContent() {
     const sections = [
       { id: 'intro', title: '01. INTRODUCTION', icon: <Info size={14} /> },
       { id: 'arch', title: '02. ARCHITECTURE', icon: <Layers size={14} /> },
-      { id: 'ros2', title: '03. ROS2 INTEGRATION', icon: <Terminal size={14} /> },
-      { id: 'ardupilot', title: '04. ARDUPILOT / PX4', icon: <Navigation size={14} /> },
-      { id: 'matlab', title: '05. MATLAB / SIMULINK', icon: <BarChart3 size={14} /> },
-      { id: 'bot', title: '06. BALANCING BOT', icon: <Activity size={14} /> },
-      { id: 'drone', title: '07. AUTO DRONE', icon: <Wind size={14} /> },
-      { id: 'robot', title: '08. ROBOTIC ARM', icon: <Cpu size={14} /> },
-      { id: 'rocket', title: '09. HIGH-POWER ROCKET', icon: <Rocket size={14} /> },
-      { id: 'aviation', title: '10. AVIATION DYNAMICS', icon: <Globe size={14} /> },
+      { id: 'bridge', title: '03. HARDWARE BRIDGE', icon: <Wifi size={14} /> },
+      { id: 'ros2', title: '04. ROS2 INTEGRATION', icon: <Terminal size={14} /> },
+      { id: 'ardupilot', title: '05. ARDUPILOT / PX4', icon: <Navigation size={14} /> },
+      { id: 'arduino', title: '06. ARDUINO / ESP32', icon: <Cpu size={14} /> },
+      { id: 'matlab', title: '07. MATLAB / SIMULINK', icon: <BarChart3 size={14} /> },
+      { id: 'bot', title: '08. BALANCING BOT', icon: <Activity size={14} /> },
+      { id: 'drone', title: '09. AUTO DRONE', icon: <Wind size={14} /> },
+      { id: 'robot', title: '10. ROBOTIC ARM', icon: <Cpu size={14} /> },
+      { id: 'rocket', title: '11. HIGH-POWER ROCKET', icon: <Rocket size={14} /> },
+      { id: 'aviation', title: '12. AVIATION DYNAMICS', icon: <Globe size={14} /> },
+      { id: 'custom', title: '13. CUSTOM HARDWARE', icon: <Settings size={14} /> },
     ];
 
     return (
@@ -4141,6 +4179,29 @@ function AppContent() {
                     PhysiCore is a high-fidelity multiphysics intelligence engine designed for real-time system identification, 
                     optimal control, and safety governance in robotics and aerospace systems.
                   </p>
+                  <p className="font-body text-sm text-textDim uppercase tracking-widest">
+                    Supported Platforms: ROS2, ArduPilot, PX4, Arduino, ESP32, Balancing Robots, Custom Rocket FCs, Ground Robots, Custom Hardware, MATLAB
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">Universal Bridge — Any Hardware</h3>
+                  <p className="font-body text-sm text-textSecondary">Physicore connects to any autonomous system through the Universal Hardware Bridge. One Python script. Any flight stack.</p>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'PX4 / ArduPilot (UDP)', cmd: 'python physicore_bridge.py --connection udp:14550' },
+                      { label: 'Arduino / ESP32 (USB)', cmd: 'python physicore_bridge.py --connection /dev/ttyUSB0 --baud 115200' },
+                      { label: 'Windows Serial', cmd: 'python physicore_bridge.py --connection COM3 --baud 115200' },
+                      { label: 'ROS2 Robot', cmd: 'python physicore_bridge.py --mode ros2' },
+                      { label: 'Custom Rocket FC', cmd: 'python physicore_bridge.py --mode rocket --connection /dev/ttyUSB0' },
+                    ].map((item, i) => (
+                      <div key={i} className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                        <div className="font-mono text-[9px] text-cyan uppercase tracking-widest">{item.label}</div>
+                        <div className="font-mono text-[8px] text-textDim select-all">{item.cmd}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="font-body text-[11px] text-textDim">After running the bridge, open the Dashboard, click MAVLINK, set endpoint to ws://localhost:8765, and click Connect. Your real telemetry appears immediately.</p>
                 </div>
 
                 <div className="p-6 border border-green/30 bg-green/5 space-y-4">
@@ -4165,6 +4226,91 @@ function AppContent() {
                     <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">Sentinel OS</h3>
                     <p className="font-body text-xs text-textSecondary leading-relaxed">Safety governance layer that monitors Lyapunov stability and enforces operational bounds.</p>
                   </div>
+                </div>
+              </section>
+            )}
+
+            {manualSection === 'bridge' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Universal Hardware Bridge</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    The PhysiCore Universal Bridge is a Python-based relay that connects any hardware platform to the PhysiCore Dashboard via WebSockets.
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">Connection Methods</h3>
+                  <div className="space-y-2">
+                    {[
+                      { label: 'PX4 / ArduPilot (UDP)', cmd: 'python physicore_bridge.py --connection udp:14550' },
+                      { label: 'Arduino / ESP32 (USB)', cmd: 'python physicore_bridge.py --connection /dev/ttyUSB0 --baud 115200' },
+                      { label: 'Windows Serial', cmd: 'python physicore_bridge.py --connection COM3 --baud 115200' },
+                      { label: 'ROS2 Robot', cmd: 'python physicore_bridge.py --mode ros2' },
+                      { label: 'Custom Rocket FC', cmd: 'python physicore_bridge.py --mode rocket --connection /dev/ttyUSB0' },
+                    ].map((item, i) => (
+                      <div key={i} className="p-3 bg-bgRaised border border-borderDim space-y-1">
+                        <div className="font-mono text-[9px] text-cyan uppercase tracking-widest">{item.label}</div>
+                        <div className="font-mono text-[8px] text-textDim select-all">{item.cmd}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-6 bg-cyan/5 border border-cyan/20 space-y-4">
+                  <h3 className="font-display text-sm font-bold text-cyan uppercase tracking-widest">How it works</h3>
+                  <p className="font-body text-xs text-textSecondary leading-relaxed">
+                    1. The bridge script connects to your hardware (Serial, UDP, or ROS2).<br/>
+                    2. It translates incoming telemetry into a standardized JSON format.<br/>
+                    3. It hosts a WebSocket server at `ws://localhost:8765`.<br/>
+                    4. The PhysiCore Dashboard connects to this WebSocket to visualize real-time data.
+                  </p>
+                </div>
+              </section>
+            )}
+
+            {manualSection === 'arduino' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Arduino / ESP32 Systems</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    Connect microcontrollers directly via USB Serial. The bridge reads JSON strings from the serial port.
+                  </p>
+                </div>
+                <CodeBlock 
+                  filename="physicore_telemetry.ino"
+                  content={`void sendPhysicoreTelemetry() {
+  StaticJsonDocument<256> doc;
+  doc["pitch"] = pitch;
+  doc["roll"] = roll;
+  doc["gyro_x"] = gx;
+  doc["gyro_y"] = gy;
+  doc["gyro_z"] = gz;
+  doc["timestamp"] = millis();
+  
+  serializeJson(doc, Serial);
+  Serial.println(); // Critical: Bridge reads line by line
+}`}
+                />
+              </section>
+            )}
+
+            {manualSection === 'custom' && (
+              <section className="space-y-8">
+                <div className="space-y-4">
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight uppercase">Custom Hardware</h2>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    For proprietary systems, you can implement a custom parser in the `physicore_bridge.py` script.
+                  </p>
+                </div>
+                <div className="p-6 bg-bg border border-border space-y-4">
+                  <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">Integration Steps</h3>
+                  <ol className="list-decimal list-inside font-body text-xs text-textSecondary space-y-2">
+                    <li>Define your telemetry packet structure.</li>
+                    <li>Update the bridge script to decode your specific protocol.</li>
+                    <li>Map your fields to PhysiCore standard fields (pitch, roll, yaw, etc.).</li>
+                    <li>Verify connection in the Dashboard.</li>
+                  </ol>
                 </div>
               </section>
             )}
@@ -4463,7 +4609,7 @@ end`}
               <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
                 <div className="micro-label text-textDim">CONNECTION SOURCE</div>
                 <div className="font-mono text-[10px] text-cyan uppercase">
-                  {connectionMode === 'ros2_websocket' ? 'Real Hardware (ROS2)' : 'Hardware-in-the-Loop'}
+                  {connectionMode === 'ros2_websocket' ? 'Real Hardware (ROS2)' : connectionMode === 'mavlink_bridge' ? 'Real Hardware (MAVLink Bridge)' : connectionMode === 'digital_twin' ? 'Digital Twin Simulation' : 'Hardware-in-the-Loop'}
                 </div>
                 <div className="font-mono text-[9px] text-textDim truncate">{endpoint}</div>
               </div>
