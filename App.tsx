@@ -2239,13 +2239,58 @@ function AppContent() {
           try {
             const data = JSON.parse(msg.data);
             if (data.op === 'publish' && data.topic === '/telemetry') {
-              const telemetryData = data.msg;
+              const d = data.msg;
               setTelemetry(prev => ({
                 ...prev,
-                ...telemetryData,
-                // Ensure we keep history
-                residualHistory: [...(prev.residualHistory || []), { x: Date.now(), y: telemetryData.residual || 0 }].slice(-30),
-                effortHistory: [...(prev.effortHistory || []), { x: Date.now(), y: telemetryData.effort || 0 }].slice(-30)
+                // Direct fields
+                altitude:           d.altitude           ?? prev.altitude,
+                airspeed:           d.airspeed           ?? prev.airspeed,
+                groundspeed:        d.groundspeed        ?? prev.groundspeed,
+                climb_rate:         d.climb_rate         ?? prev.climb_rate,
+                // Orientation — handle both flat and nested
+                roll:               d.roll               ?? d.orientation?.roll  ?? prev.roll,
+                pitch:              d.pitch              ?? d.orientation?.pitch ?? prev.pitch,
+                yaw:                d.yaw                ?? d.orientation?.yaw   ?? prev.yaw,
+                // Velocity
+                vel:                d.velocity           ?? prev.vel,
+                // Acceleration
+                accel: {
+                  x: d.accel_x ?? d.acceleration?.x ?? prev.accel?.x ?? 0,
+                  y: d.accel_y ?? d.acceleration?.y ?? prev.accel?.y ?? 0,
+                  z: d.accel_z ?? d.acceleration?.z ?? prev.accel?.z ?? 0,
+                },
+                // Gyro
+                gyro: {
+                  x: d.gyro_x ?? d.gyro?.x ?? prev.gyro?.x ?? 0,
+                  y: d.gyro_y ?? d.gyro?.y ?? prev.gyro?.y ?? 0,
+                  z: d.gyro_z ?? d.gyro?.z ?? prev.gyro?.z ?? 0,
+                },
+                // Motor
+                motor_l:            d.motor_l            ?? prev.motor_l,
+                motor_r:            d.motor_r            ?? prev.motor_r,
+                // Battery
+                battery_pct:        d.battery?.percentage ?? d.battery_pct ?? prev.battery_pct,
+                battery_v:          d.battery?.voltage    ?? d.battery_v   ?? prev.battery_v,
+                // Status
+                armed:              d.armed              ?? prev.armed,
+                flight_mode:        d.flight_mode        ?? prev.flight_mode,
+                vehicle_type:       d.vehicle_type       ?? prev.vehicle_type,
+                connected:          d.connected          ?? prev.connected,
+                // GPS
+                gps_fix:            d.gps?.fix           ?? d.gps_fix      ?? prev.gps_fix,
+                satellites:         d.gps?.satellites    ?? d.satellites    ?? prev.satellites,
+                // SystemID fields — keep existing if not in packet
+                mass:               d.mass               ?? prev.mass,
+                friction:           d.friction           ?? prev.friction,
+                actuatorEfficiency: d.actuatorEfficiency ?? prev.actuatorEfficiency,
+                residual:           d.residual           ?? prev.residual,
+                confidence:         d.confidence         ?? prev.confidence,
+                variance:           d.variance           ?? prev.variance,
+                isStable:           d.isStable           ?? prev.isStable,
+                isFaulted:          d.isFaulted          ?? prev.isFaulted,
+                // History
+                residualHistory: [...(prev.residualHistory || []), { x: Date.now(), y: d.residual || 0 }].slice(-30),
+                effortHistory:   [...(prev.effortHistory   || []), { x: Date.now(), y: d.effort   || 0 }].slice(-30),
               }));
             }
           } catch (e) {
@@ -2387,15 +2432,31 @@ function AppContent() {
     pos: null as any,
     vel: { x: 0, y: 0, z: 0 } as any,
     accel: { x: 0, y: 0, z: 0 } as any,
+    gyro: { x: 0, y: 0, z: 0 } as any,
     orientation: { r: 0, p: 0, y: 0 } as any,
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
     propMass: 0,
     time: 0,
     phase: 'PRELAUNCH' as string,
     altitude: 0,
     airspeed: 0,
+    groundspeed: 0,
+    climb_rate: 0,
     mach: 0,
     aoa: 0,
-    bank: 0
+    bank: 0,
+    motor_l: 0,
+    motor_r: 0,
+    battery_pct: 0,
+    battery_v: 0,
+    armed: false,
+    flight_mode: 'UNKNOWN',
+    vehicle_type: 'UNKNOWN',
+    connected: false,
+    gps_fix: 0,
+    satellites: 0
   });
 
   const performMetaAnalysis = async () => {

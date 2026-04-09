@@ -68,7 +68,7 @@ class TelemetryState:
     def to_dict(self):
         return {
             "op": "publish",
-            "topic": "/physicore/telemetry",
+            "topic": "/telemetry",
             "msg": {
                 "timestamp": self.timestamp,
                 "altitude": round(self.altitude, 3),
