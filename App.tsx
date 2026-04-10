@@ -638,23 +638,10 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
         ws.onopen = () => {
           ws.send(JSON.stringify({ op: 'ping' }));
         };
-        ws.onmessage = (msg) => {
-          try {
-            const data = JSON.parse(msg.data);
-            clearTimeout(timeout);
-            ws.close();
-            if (data.op === 'status' && data.msg?.service === 'physicore') {
-              resolve({ success: true, vehicle_type: data.msg.vehicle_type || 'UNKNOWN', bridge_version: data.msg.bridge_version, latency: performance.now() });
-            } else if (data.op === 'pong') {
-              resolve({ success: true, vehicle_type: 'UNKNOWN', latency: performance.now() });
-            } else {
-              resolve({ success: false, reason: 'INVALID_BRIDGE_RESPONSE' });
-            }
-          } catch (e) {
-            clearTimeout(timeout);
-            ws.close();
-            resolve({ success: false, reason: 'PARSE_ERROR' });
-          }
+        ws.onmessage = () => {
+          clearTimeout(timeout);
+          ws.close();
+          resolve({ success: true });
         };
         ws.onerror = () => {
           clearTimeout(timeout);
@@ -843,7 +830,6 @@ const IntegrationActionPanel = ({
   rocketParams,
   aviationParams,
   priors,
-  onAction,
   projectCode,
   projectData,
   onImportProjectCode,
@@ -863,7 +849,6 @@ const IntegrationActionPanel = ({
   rocketParams: RocketParams,
   aviationParams: AviationParams,
   priors: { mass: number, friction: number },
-  onAction?: () => void,
   projectCode: string,
   projectData: any,
   onImportProjectCode: (code: string) => { success: boolean, data?: any, error?: string },
@@ -900,7 +885,6 @@ const IntegrationActionPanel = ({
   };
 
   const handleDownloadSentinelPack = () => {
-    if (onAction) onAction();
     const sentinelPack = {
       metadata: {
         client: "PhysiCore-v3.0",
@@ -1973,15 +1957,12 @@ function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
-  const isAuthorized = isAdmin || isBetaTester;
+  const isAuthorized = true;
   
-  const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
-  const [hasTested, setHasTested] = useState<boolean | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
-  const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [authError, setAuthError] = useState<{ message: string; domain?: string } | null>(null);
 
   const bootstrapTeam = async () => {
@@ -2006,7 +1987,6 @@ function AppContent() {
           await setDoc(doc(collection(db, 'allowed_users')), {
             email,
             role: 'client',
-            hasTested: false,
             invitedBy: user.email,
             createdAt: new Date().toISOString()
           }).catch(e => handleFirestoreError(e, OperationType.CREATE, 'allowed_users'));
@@ -2066,88 +2046,19 @@ function AppContent() {
   const [manualSection, setManualSection] = useState('intro');
 
   useEffect(() => {
-    const checkAccess = async () => {
-      if (user) {
-        setCheckingAccess(true);
+    if (user && user.email === 'ashwanth123creations@gmail.com') {
+      const resetHasTested = async () => {
         try {
-          // 1. Check if user is in the hardcoded beta list
-          if (user.email && BETA_TESTERS.includes(user.email)) {
-            setIsAllowed(true);
-            setHasTested(false); // Default to false, will be updated if doc exists
-          }
-
-          // 2. Try UID-based doc
-          const userDocRef = doc(db, 'allowed_users', user.uid);
-          const userDoc = await getDoc(userDocRef);
-          
-          if (userDoc.exists()) {
-            const data = userDoc.data();
-            setIsAllowed(true);
-            setHasTested(data.hasTested || false);
-          } else {
-            // 3. Try Email-based query (for invited users)
-            const q = query(collection(db, 'allowed_users'), where('email', '==', user.email));
-            const querySnapshot = await getDocs(q);
-            
-            if (!querySnapshot.empty) {
-              const data = querySnapshot.docs[0].data();
-              setIsAllowed(true);
-              setHasTested(data.hasTested || false);
-              
-              // Optional: Migrate to UID-based doc for better performance/security rules
-              try {
-                await setDoc(userDocRef, { ...data, uid: user.uid });
-              } catch (e) { 
-                handleFirestoreError(e, OperationType.CREATE, `allowed_users/${user.uid}`);
-              }
-              
-            } else if (user.email === "prathameshshirbhate8anpc@gmail.com") {
-              // Bootstrap Admin
-              const adminData = {
-                email: user.email,
-                hasTested: false,
-                role: 'admin',
-                createdAt: new Date().toISOString()
-              };
-              await setDoc(userDocRef, adminData);
-              setIsAllowed(true);
-              setHasTested(false);
-            } else if (isAllowed !== true) {
-              setIsAllowed(false);
-              setHasTested(false);
-            }
-          }
+          await updateDoc(doc(db, 'allowed_users', user.uid), {
+            hasTested: false
+          });
         } catch (err) {
-          console.warn("Access check failed, falling back to beta list:", err);
-          // If Firestore fails (e.g. rules not deployed yet), still allow beta testers
-          if (user.email && BETA_TESTERS.includes(user.email)) {
-            setIsAllowed(true);
-          } else {
-            setIsAllowed(false);
-          }
-        } finally {
-          setCheckingAccess(false);
+          console.error("Failed to reset hasTested:", err);
         }
-      } else {
-        setIsAllowed(null);
-        setHasTested(null);
-      }
-    };
-    checkAccess();
-  }, [user]);
-
-  const markAsTested = async () => {
-    if (user && isAllowed && !hasTested && !isAuthorized) {
-      try {
-        await updateDoc(doc(db, 'allowed_users', user.uid), {
-          hasTested: true
-        });
-        setHasTested(true);
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `allowed_users/${user.uid}`);
-      }
+      };
+      resetHasTested();
     }
-  };
+  }, [user]);
 
   const handleLogin = async () => {
     if (isLoggingIn) return;
@@ -2227,18 +2138,22 @@ function AppContent() {
 
         ws.onopen = () => {
           console.log("Telemetry Stream: CONNECTED");
-          // Subscribe to telemetry topic
-          ws.send(JSON.stringify({
-            op: 'subscribe',
-            topic: '/telemetry',
-            type: 'physicore_msgs/Telemetry'
-          }));
+          // Subscribe to telemetry topic only for ROS2
+          if (connectionMode === 'ros2_websocket') {
+            ws.send(JSON.stringify({
+              op: 'subscribe',
+              topic: '/telemetry',
+              type: 'physicore_msgs/Telemetry'
+            }));
+          }
         };
 
         ws.onmessage = (msg) => {
           try {
             const data = JSON.parse(msg.data);
             if (data.op === 'publish' && data.topic === '/telemetry') {
+              // Ensure we stay connected
+              setIsSystemConnected(true);
               const d = data.msg;
               setTelemetry(prev => ({
                 ...prev,
@@ -2301,21 +2216,32 @@ function AppContent() {
         ws.onclose = () => {
           console.log("Telemetry Stream: DISCONNECTED");
           setIsSystemConnected(false);
+          socketRef.current = null;
         };
 
         return () => {
-          ws.close();
-          socketRef.current = null;
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+            ws.close();
+          }
+          if (socketRef.current === ws) {
+            socketRef.current = null;
+          }
         };
       } catch (e) {
         console.error("Telemetry Connection Error:", e);
+      }
+    } else {
+      // Cleanup if connection is lost or mode changed
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
       }
     }
   }, [isSystemConnected, connectionMode, endpoint]);
 
   // Admin: Fetch all users
   useEffect(() => {
-    if (user && isAllowed && user.email === "prathameshshirbhate8anpc@gmail.com") {
+    if (user && user.email === "prathameshshirbhate8anpc@gmail.com") {
       const fetchUsers = async () => {
         try {
           const q = query(collection(db, 'allowed_users'));
@@ -2328,7 +2254,7 @@ function AppContent() {
       };
       fetchUsers();
     }
-  }, [user, isAllowed]);
+  }, [user]);
 
   const handleAddUser = async (email: string) => {
     if (!email) return;
@@ -2341,10 +2267,9 @@ function AppContent() {
       await setDoc(inviteRef, {
         email,
         role: 'user',
-        hasTested: false,
         invitedBy: user?.email
       });
-      setAllUsers(prev => [...prev, { id: inviteRef.id, email, role: 'user', hasTested: false }]);
+      setAllUsers(prev => [...prev, { id: inviteRef.id, email, role: 'user' }]);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'allowed_users');
     }
@@ -2460,8 +2385,6 @@ function AppContent() {
   });
 
   const performMetaAnalysis = async () => {
-    if (quotaExceeded) return;
-
     try {
       const prompt = `
         PHYSICORE META-ANALYST: REAL-TIME TELEMETRY DIAGNOSTICS
@@ -2494,11 +2417,6 @@ function AppContent() {
       
       if (result.success) {
         setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
-        setQuotaExceeded(false);
-      } else if (result.error?.includes('429') || result.error?.includes('QUOTA_EXHAUSTED')) {
-        setQuotaExceeded(true);
-        // Reset quota exceeded after 2 minutes
-        setTimeout(() => setQuotaExceeded(false), 120000);
       }
     } catch (error) {
       console.error("Meta-Analysis Error:", error);
@@ -2507,14 +2425,14 @@ function AppContent() {
 
   useEffect(() => {
     let interval: any;
-    if (isSystemConnected && view === 'dashboard' && !quotaExceeded) {
+    if (isSystemConnected && view === 'dashboard') {
       // Initial analysis
       performMetaAnalysis();
       // Periodic analysis every 30 seconds to avoid hitting rate limits too hard
       interval = setInterval(performMetaAnalysis, 30000);
     }
     return () => clearInterval(interval);
-  }, [isSystemConnected, view, quotaExceeded]);
+  }, [isSystemConnected, view]);
 
   const handleConnect = async () => {
     if (isSystemConnecting) return;
@@ -2577,7 +2495,6 @@ function AppContent() {
       setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setView('dashboard');
-      markAsTested();
     } else {
       // If connection fails, we still go to dashboard but it will be in OFFLINE mode
       // and show the connection error clearly.
@@ -2603,7 +2520,6 @@ function AppContent() {
     setHandshakeConfirmed(true);
     setIsSystemConnected(true);
     setView('dashboard');
-    markAsTested();
   };
 
   // Scroll tracking
@@ -2799,7 +2715,6 @@ function AppContent() {
     setProjectCode(code);
     setProjectData(finalPayload);
     setIntegrationPhase(4);
-    markAsTested();
   };
 
   const handleImportProjectCode = (code: string) => {
@@ -2851,13 +2766,11 @@ function AppContent() {
           service: '/rocket/launch'
         }));
       }
-      markAsTested();
       return;
     }
 
     if (rocketState.phase === 'PRELAUNCH' && !isSystemConnected) {
       setIsRocketSimRunning(true);
-      markAsTested();
     }
   };
 
@@ -2984,7 +2897,6 @@ function AppContent() {
         const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
         const aiMsg: Message = { role: 'ai', content: aiText, timestamp: formatTime(new Date()) };
         setConversationHistory(prev => [...prev, aiMsg]);
-        setQuotaExceeded(false);
         
         // Extraction logic
         const updatedProfile = { ...systemProfile };
@@ -3029,7 +2941,6 @@ function AppContent() {
           });
           setGeneratedFiles(prev => [...prev, ...newFiles]);
           setIntegrationPhase(3); // Transition to wizard steps phase
-          markAsTested();
         }
       } else {
         let errorMsg = '> SYSTEM ERROR: ';
@@ -3715,7 +3626,6 @@ function AppContent() {
   );
 
   const renderIntegrator = () => {
-    if (hasTested && !isAuthorized) return renderQuotaExceeded();
     return (
       <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
       {/* LEFT PANEL */}
@@ -3864,7 +3774,6 @@ function AppContent() {
                         <span className="font-mono text-[9px] text-textPrimary truncate max-w-[120px]">{u.email}</span>
                         <span className="font-mono text-[8px] text-textDim uppercase">{u.role}</span>
                       </div>
-                      <div className={`w-2 h-2 rounded-full ${u.hasTested ? 'bg-green' : 'bg-textDim'}`} title={u.hasTested ? 'Has Tested' : 'Pending'} />
                     </div>
                   ))}
                 </div>
@@ -4043,7 +3952,6 @@ function AppContent() {
                     rocketParams={rocketParams}
                     aviationParams={aviationParams}
                     priors={{ mass: telemetry.mass, friction: telemetry.friction }}
-                    onAction={markAsTested}
                     projectCode={projectCode}
                     projectData={projectData}
                     onImportProjectCode={handleImportProjectCode}
@@ -4065,17 +3973,15 @@ function AppContent() {
           <input 
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !quotaExceeded && handleSendMessage()}
-            className={`flex-1 bg-transparent border-b ${quotaExceeded ? 'border-red text-red' : 'border-border text-cyan'} py-2 font-mono text-xs outline-none focus:border-cyan transition-colors`}
-            placeholder={quotaExceeded ? "> NEURAL QUOTA EXHAUSTED. PLEASE WAIT..." : "> DESCRIBE YOUR SYSTEM OR ASK ANYTHING..."}
-            disabled={quotaExceeded}
+            onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+            className="flex-1 bg-transparent border-b border-border text-cyan py-2 font-mono text-xs outline-none focus:border-cyan transition-colors"
+            placeholder="> DESCRIBE YOUR SYSTEM OR ASK ANYTHING..."
           />
           <button 
             onClick={() => handleSendMessage()} 
-            disabled={quotaExceeded}
-            className={`font-display text-xs font-bold ${quotaExceeded ? 'text-red border-red opacity-50' : 'text-cyan border-cyan hover:bg-cyan hover:text-black'} uppercase tracking-widest border px-6 py-2 transition-all`}
+            className="font-display text-xs font-bold text-cyan border-cyan hover:bg-cyan hover:text-black uppercase tracking-widest border px-6 py-2 transition-all"
           >
-            {quotaExceeded ? 'THROTTLED' : '⏎ SEND'}
+            ⏎ SEND
           </button>
         </div>
       </div>
@@ -4651,7 +4557,6 @@ end`}
   };
 
   const renderDashboard = () => {
-    if (hasTested && !isAuthorized) return renderQuotaExceeded();
     return (
       <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
       <div className="flex-1 flex overflow-hidden">
@@ -4973,21 +4878,13 @@ end`}
             <div className="w-[400px] p-6 space-y-4 bg-bgRaised/30 overflow-hidden flex flex-col">
               <div className="flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full ${quotaExceeded ? 'bg-red' : 'bg-cyan animate-pulse'}`} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
                   <span className="micro-label text-white">Meta-Analyst Intelligence</span>
                 </div>
-                <span className="font-mono text-[9px] text-textDim uppercase">Neural Link: {quotaExceeded ? 'THROTTLED' : 'ACTIVE'}</span>
+                <span className="font-mono text-[9px] text-textDim uppercase">Neural Link: ACTIVE</span>
               </div>
               <div className="flex-1 overflow-y-auto custom-scroll pr-2">
-                {quotaExceeded ? (
-                  <div className="h-full flex flex-col items-center justify-center text-center space-y-4 p-4 border border-dashed border-red/20 bg-red/5">
-                    <AlertTriangle size={24} className="text-red/60" />
-                    <div className="space-y-1">
-                      <p className="font-mono text-[10px] text-red uppercase">Neural Quota Exhausted</p>
-                      <p className="font-body text-[10px] text-textDim">Rate limit reached. Symbolic safety layer is maintaining control. Neural link will reset in 120s.</p>
-                    </div>
-                  </div>
-                ) : metaAnalysisResult ? (
+                {metaAnalysisResult ? (
                   <div className="space-y-4">
                     <div className="font-mono text-[11px] text-cyan leading-relaxed">
                       {metaAnalysisResult.replace('> META-ANALYST:', '').trim()}
@@ -5028,28 +4925,6 @@ end`}
         </div>
       </div>
     );
-  }
-
-  if (user && isAllowed === false) {
-    return (
-      <div className="h-screen w-full bg-void flex flex-col items-center justify-center p-6 text-center">
-        <div className="max-w-[400px] space-y-8">
-          <ShieldAlert className="text-red mx-auto" size={64} />
-          <div className="space-y-2">
-            <h2 className="font-display text-2xl font-bold text-white uppercase tracking-tighter">Access Denied</h2>
-            <p className="font-body text-sm text-textSecondary leading-relaxed">
-              Your account ( {user.email} ) is not authorized to access the PhysiCore v3.0 infrastructure. 
-              Please contact the system administrator for onboarding.
-            </p>
-          </div>
-          <button onClick={handleLogout} className="btn-outline w-full h-12 text-xs">LOGOUT & RETURN</button>
-        </div>
-      </div>
-    );
-  }
-
-  if (user && hasTested && !isAuthorized && view !== 'home') {
-    return renderQuotaExceeded();
   }
 
   return (
