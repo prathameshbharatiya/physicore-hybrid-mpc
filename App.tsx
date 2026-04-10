@@ -4615,7 +4615,9 @@ end`}
                       { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
                       { label: 'PITCH', val: `${(telemetry.pitch || 0).toFixed(1)}°`, color: COLORS.white },
                       { label: 'ROLL', val: `${(telemetry.roll || 0).toFixed(1)}°`, color: COLORS.white },
-                      { label: 'GYRO Y', val: `${(telemetry.gyro?.y || telemetry.gyro_y || 0).toFixed(2)}°/s`, color: COLORS.white },
+                      { label: 'GYRO Y', val: `${(telemetry.gyro?.y ?? telemetry.gyro_y ?? 0).toFixed(2)} °/s`, delta: '', color: COLORS.textSecondary },
+                      { label: 'MOTOR L', val: `${(telemetry.motor_l ?? 0)}`, delta: '', color: COLORS.cyan },
+                      { label: 'MOTOR R', val: `${(telemetry.motor_r ?? 0)}`, delta: '', color: COLORS.cyan },
                       { label: 'ALTITUDE', val: `${(telemetry.altitude || 0).toFixed(1)}m`, color: COLORS.white },
                       { label: 'SPEED', val: `${(telemetry.speed || 0).toFixed(1)}m/s`, color: COLORS.white },
                     ].map((item, i) => (
@@ -5312,6 +5314,11 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
     effortHistory: [] as any[],
     frame: 0
   });
+  const telemetryRef = useRef(telemetry);
+
+  useEffect(() => {
+    telemetryRef.current = telemetry;
+  }, [telemetry]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -5444,35 +5451,36 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
 
       // If connected, use real hardware telemetry
       if (isConnected) {
-        // Use pos if available (ROS2/MAVLink)
-        if (telemetry.pos) {
-          state.robot.x = telemetry.pos.x;
-          state.robot.y = telemetry.pos.y;
-          state.robot.vx = telemetry.vel?.x || 0;
-          state.robot.vy = telemetry.vel?.y || 0;
-          state.target = telemetry.targetPos || state.target;
-        } 
-        // Use pitch/roll for balancing bots / IMU-only
-        else if (telemetry.pitch !== undefined || telemetry.roll !== undefined) {
-          // Map pitch/roll to small canvas movements for visualization
-          state.robot.x = canvas.width / 2 + (telemetry.roll || 0) * 2;
-          state.robot.y = canvas.height / 2 - (telemetry.pitch || 0) * 2;
-        }
-        // Use altitude for drones/rockets
-        else if (telemetry.altitude !== undefined) {
-          state.robot.x = canvas.width / 2;
-          state.robot.y = canvas.height - 100 - (telemetry.altitude * 2);
-        }
-        else {
-          // Connected but no recognized telemetry fields yet
+        const t = telemetryRef.current;
+        if (t.pos) {
+          state.robot.x = t.pos.x;
+          state.robot.y = t.pos.y;
+          state.robot.vx = t.vel?.x || 0;
+          state.robot.vy = t.vel?.y || 0;
+        } else if (t.pitch !== undefined && t.pitch !== 0 || t.roll !== undefined && t.roll !== 0 || t.gyro?.x !== undefined) {
+          const pitch = t.pitch || 0;
+          const roll  = t.roll  || 0;
+          state.robot.x = canvas.width  / 2 + (roll  * 4);
+          state.robot.y = canvas.height / 2 + (pitch * 4);
+          state.robot.vx = t.gyro?.x || t.gyro_x || 0;
+          state.robot.vy = t.gyro?.y || t.gyro_y || 0;
+        } else if (t.altitude && t.altitude > 0) {
+          state.robot.x = canvas.width  / 2 + (t.vel?.x || 0) * 2;
+          state.robot.y = canvas.height / 2 - (t.altitude * 0.05);
+          state.robot.vx = t.vel?.x || 0;
+          state.robot.vy = t.vel?.z || 0;
+        } else {
           ctx.fillStyle = COLORS.amber;
           ctx.font = 'bold 12px "JetBrains Mono"';
           ctx.textAlign = 'center';
-          ctx.fillText('WAITING FOR FIRST PACKET...', canvas.width / 2, canvas.height / 2);
-          
+          ctx.fillText('CONNECTED — WAITING FOR FIRST PACKET...', canvas.width / 2, canvas.height / 2);
+          ctx.fillStyle = COLORS.textDim;
+          ctx.font = '10px "JetBrains Mono"';
+          ctx.fillText('Check bridge is running and sending data', canvas.width / 2, canvas.height / 2 + 20);
           requestAnimationFrame(animate);
           return;
         }
+        state.target = t.targetPos || state.target;
       }
 
       // Draw MPC Trajectory
@@ -5536,27 +5544,27 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
       ctx.stroke();
 
       // Update sidebar telemetry via callback
-      onTelemetryUpdate({
-        ...telemetry,
-        pitch: telemetry.pitch || 0,
-        roll: telemetry.roll || 0,
-        gyro_x: telemetry.gyro?.x || telemetry.gyro_x || 0,
-        gyro_y: telemetry.gyro?.y || telemetry.gyro_y || 0,
-        gyro_z: telemetry.gyro?.z || telemetry.gyro_z || 0,
-        altitude: telemetry.altitude || 0,
-        speed: telemetry.speed || 0,
-        armed: telemetry.armed || false,
-        vehicle_type: telemetry.vehicle_type || 'UNKNOWN',
-        motor_l: telemetry.motor_l || 0,
-        motor_r: telemetry.motor_r || 0
-      });
+      const t = telemetryRef.current;
+      onTelemetryUpdate((prev: any) => ({
+        ...prev,
+        mass:               state.estParams.mass,
+        friction:           state.estParams.friction,
+        actuatorEfficiency: state.actuatorEfficiency,
+        residual:           state.residualHistory?.[state.residualHistory.length - 1]?.y ?? prev.residual,
+        confidence:         (state as any).lastEnsemble?.confidence ?? prev.confidence,
+        variance:           (state as any).lastEnsemble?.variance   ?? prev.variance,
+        isStable:           (state as any).lastLyapunov             ?? prev.isStable,
+        isFaulted:          (state as any).lastFault                ?? prev.isFaulted,
+        residualHistory:    state.residualHistory,
+        effortHistory:      state.effortHistory,
+      }));
 
       requestAnimationFrame(animate);
     };
 
     animate();
     return () => window.removeEventListener('resize', resize);
-  }, [isConnected, telemetry]);
+  }, [isConnected]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
 };
