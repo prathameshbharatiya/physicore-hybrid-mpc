@@ -2469,6 +2469,16 @@ function AppContent() {
       setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setIsSystemConnecting(false);
+
+      // Auto-detect domain from vehicle type reported by bridge
+      const vtype = result.vehicle_type || '';
+      if (['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+        setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
+      } else if (vtype === 'ROCKET') {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
+      } else if (['GROUND_ROVER','GROUND_ROBOT'].includes(vtype) || vtype === 'UNKNOWN') {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
+      }
     } else {
       setIsSystemConnecting(false);
       setConnectionError(result.reason || "Connection failed. Verify endpoint.");
@@ -2499,6 +2509,16 @@ function AppContent() {
       setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setView('dashboard');
+
+      // Auto-detect domain from vehicle type reported by bridge
+      const vtype = result.vehicle_type || '';
+      if (['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+        setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
+      } else if (vtype === 'ROCKET') {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
+      } else if (['GROUND_ROVER','GROUND_ROBOT'].includes(vtype) || vtype === 'UNKNOWN') {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
+      }
     } else {
       // If connection fails, we still go to dashboard but it will be in OFFLINE mode
       // and show the connection error clearly.
@@ -2639,11 +2659,16 @@ function AppContent() {
 
   // Update rocketState from real telemetry when connected
   useEffect(() => {
-    if (isSystemConnected && systemProfile.domain === 'ROCKETS' && telemetry.pos) {
+    if (isSystemConnected && systemProfile.domain === 'ROCKETS') {
+      const rocketPos = telemetry.pos || {
+        x: telemetry.vel?.x ? (telemetry.vel.x * (telemetry.time || 0)) : 0,
+        y: telemetry.altitude || 0
+      };
+
       setRocketState(prev => ({
         ...prev,
-        x: telemetry.pos.x,
-        y: telemetry.pos.y,
+        x: rocketPos.x,
+        y: rocketPos.y,
         vx: telemetry.vel?.x || 0,
         vy: telemetry.vel?.y || 0,
         mass: telemetry.mass || prev.mass,
@@ -2655,8 +2680,8 @@ function AppContent() {
       // Also record flight data for the graph
       setFlightData(fd => {
         const newData = { 
-          x: telemetry.pos.x, 
-          y: telemetry.pos.y, 
+          x: rocketPos.x, 
+          y: rocketPos.y, 
           vx: telemetry.vel?.x || 0, 
           vy: telemetry.vel?.y || 0,
           mass: telemetry.mass || 0,

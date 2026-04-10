@@ -62,6 +62,7 @@ class TelemetryState:
         self.airspeed = 0.0
         self.groundspeed = 0.0
         self.climb_rate = 0.0
+        self.motor = 0.0
         self.vehicle_type = "UNKNOWN"
         self.connected = False
 
@@ -82,6 +83,7 @@ class TelemetryState:
                 "groundspeed": round(self.groundspeed, 3),
                 "climb_rate": round(self.climb_rate, 3),
                 "throttle": round(self.throttle, 3),
+                "motor": round(self.motor, 3),
                 "battery": {"voltage": round(self.battery_v, 2), "percentage": round(self.battery_pct, 1)},
                 "armed": self.armed,
                 "flight_mode": self.flight_mode,
@@ -147,6 +149,35 @@ def mavlink_reader(connection_string, baud):
                 state.flight_mode = f"MODE_{msg.custom_mode}"
         except Exception as e:
             time.sleep(0.1)
+
+def robot_serial_reader(connection_string, baud):
+    """
+    Reads raw telemetry from a serial connection.
+    Expected format: "P:pitch,R:roll,M:motor"
+    """
+    import serial
+    global state
+    print(f"[BRIDGE] Connecting Serial: {connection_string} at {baud}")
+    try:
+        ser = serial.Serial(connection_string, baud, timeout=1)
+        state.connected = True
+        state.vehicle_type = "GROUND_ROVER"
+        print(f"[BRIDGE] Serial Connected. Vehicle: {state.vehicle_type}")
+        while True:
+            line = ser.readline().decode('utf-8').strip()
+            if line:
+                try:
+                    # Parse "P:1.2,R:3.4,M:0.5"
+                    parts = dict(item.split(":") for item in line.split(",") if ":" in item)
+                    state.timestamp = time.time()
+                    if 'P' in parts: state.pitch = float(parts['P'])
+                    if 'R' in parts: state.roll = float(parts['R'])
+                    if 'M' in parts: state.motor = float(parts['M'])
+                except Exception as e:
+                    print(f"[BRIDGE] Parse Error: {e} on line: {line}")
+    except Exception as e:
+        print(f"[BRIDGE] Serial Error: {e}")
+        state.connected = False
 
 def ros2_reader(topic):
     try:
@@ -229,14 +260,18 @@ async def main(args):
         threading.Thread(target=mavlink_reader, args=(args.connection, args.baud), daemon=True).start()
     elif args.mode == 'ros2':
         threading.Thread(target=ros2_reader, args=(args.topic,), daemon=True).start()
+    elif args.mode == 'robot_serial':
+        threading.Thread(target=robot_serial_reader, args=(args.connection, args.baud), daemon=True).start()
     port = int(args.physicore.split(":")[-1]) if ":" in args.physicore else 8765
     print(f"[BRIDGE] WebSocket on port {port}. In Physicore: set endpoint to ws://localhost:{port}")
     async with websockets.serve(ws_handler, "0.0.0.0", port):
         await asyncio.gather(broadcast_telemetry(), status_printer(), health_endpoint())
 
 if __name__ == "__main__":
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', default='mavlink', choices=['mavlink','px4','ardupilot','rocket','ros2'])
+    parser.add_argument('--mode', default='mavlink', choices=['mavlink','px4','ardupilot','rocket','ros2','robot_serial'])
     parser.add_argument('--connection', default='udp:14550')
     parser.add_argument('--baud', type=int, default=57600)
     parser.add_argument('--physicore', default='ws://localhost:8765')
