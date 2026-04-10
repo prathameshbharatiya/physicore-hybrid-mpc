@@ -2366,6 +2366,10 @@ function AppContent() {
     time: 0,
     phase: 'PRELAUNCH' as string,
     altitude: 0,
+    speed: 0,
+    gyro_x: 0,
+    gyro_y: 0,
+    gyro_z: 0,
     airspeed: 0,
     groundspeed: 0,
     climb_rate: 0,
@@ -4577,7 +4581,7 @@ end`}
               <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
                 <div className="micro-label text-textDim">CONNECTION SOURCE</div>
                 <div className="font-mono text-[10px] text-cyan uppercase">
-                  {connectionMode === 'ros2_websocket' ? 'Real Hardware (ROS2)' : connectionMode === 'mavlink_bridge' ? 'Real Hardware (MAVLink Bridge)' : connectionMode === 'digital_twin' ? 'Digital Twin Simulation' : 'Hardware-in-the-Loop'}
+                  {connectionMode.replace('_', ' ')}
                 </div>
                 <div className="font-mono text-[9px] text-textDim truncate">{endpoint}</div>
               </div>
@@ -4609,6 +4613,11 @@ end`}
                       { label: 'ESTIMATED MASS', val: `${telemetry.mass.toFixed(3)} kg`, delta: telemetry.mass > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
                       { label: 'FRICTION COEFF', val: `${telemetry.friction.toFixed(3)} μ`, delta: telemetry.friction > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
                       { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
+                      { label: 'PITCH', val: `${(telemetry.pitch || 0).toFixed(1)}°`, color: COLORS.white },
+                      { label: 'ROLL', val: `${(telemetry.roll || 0).toFixed(1)}°`, color: COLORS.white },
+                      { label: 'GYRO Y', val: `${(telemetry.gyro?.y || telemetry.gyro_y || 0).toFixed(2)}°/s`, color: COLORS.white },
+                      { label: 'ALTITUDE', val: `${(telemetry.altitude || 0).toFixed(1)}m`, color: COLORS.white },
+                      { label: 'SPEED', val: `${(telemetry.speed || 0).toFixed(1)}m/s`, color: COLORS.white },
                     ].map((item, i) => (
                       <div key={i} className="space-y-1">
                         <div className="flex justify-between items-center">
@@ -5433,22 +5442,37 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         return;
       }
 
-      // If connected, we use the telemetry data from the hardware
-      if (isConnected && telemetry.pos) {
-        state.robot.x = telemetry.pos.x;
-        state.robot.y = telemetry.pos.y;
-        state.robot.vx = telemetry.vel?.x || 0;
-        state.robot.vy = telemetry.vel?.y || 0;
-        state.target = telemetry.targetPos || state.target;
-      } else if (isConnected) {
-        // Connected but no data yet
-        ctx.fillStyle = COLORS.amber;
-        ctx.font = 'bold 12px "JetBrains Mono"';
-        ctx.textAlign = 'center';
-        ctx.fillText('WAITING FOR TELEMETRY STREAM...', canvas.width / 2, canvas.height / 2);
-        
-        requestAnimationFrame(animate);
-        return;
+      // If connected, use real hardware telemetry
+      if (isConnected) {
+        // Use pos if available (ROS2/MAVLink)
+        if (telemetry.pos) {
+          state.robot.x = telemetry.pos.x;
+          state.robot.y = telemetry.pos.y;
+          state.robot.vx = telemetry.vel?.x || 0;
+          state.robot.vy = telemetry.vel?.y || 0;
+          state.target = telemetry.targetPos || state.target;
+        } 
+        // Use pitch/roll for balancing bots / IMU-only
+        else if (telemetry.pitch !== undefined || telemetry.roll !== undefined) {
+          // Map pitch/roll to small canvas movements for visualization
+          state.robot.x = canvas.width / 2 + (telemetry.roll || 0) * 2;
+          state.robot.y = canvas.height / 2 - (telemetry.pitch || 0) * 2;
+        }
+        // Use altitude for drones/rockets
+        else if (telemetry.altitude !== undefined) {
+          state.robot.x = canvas.width / 2;
+          state.robot.y = canvas.height - 100 - (telemetry.altitude * 2);
+        }
+        else {
+          // Connected but no recognized telemetry fields yet
+          ctx.fillStyle = COLORS.amber;
+          ctx.font = 'bold 12px "JetBrains Mono"';
+          ctx.textAlign = 'center';
+          ctx.fillText('WAITING FOR FIRST PACKET...', canvas.width / 2, canvas.height / 2);
+          
+          requestAnimationFrame(animate);
+          return;
+        }
       }
 
       // Draw MPC Trajectory
@@ -5511,12 +5535,28 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
       ctx.strokeStyle = COLORS.white;
       ctx.stroke();
 
+      // Update sidebar telemetry via callback
+      onTelemetryUpdate({
+        ...telemetry,
+        pitch: telemetry.pitch || 0,
+        roll: telemetry.roll || 0,
+        gyro_x: telemetry.gyro?.x || telemetry.gyro_x || 0,
+        gyro_y: telemetry.gyro?.y || telemetry.gyro_y || 0,
+        gyro_z: telemetry.gyro?.z || telemetry.gyro_z || 0,
+        altitude: telemetry.altitude || 0,
+        speed: telemetry.speed || 0,
+        armed: telemetry.armed || false,
+        vehicle_type: telemetry.vehicle_type || 'UNKNOWN',
+        motor_l: telemetry.motor_l || 0,
+        motor_r: telemetry.motor_r || 0
+      });
+
       requestAnimationFrame(animate);
     };
 
     animate();
     return () => window.removeEventListener('resize', resize);
-  }, [isConnected]);
+  }, [isConnected, telemetry]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
 };
