@@ -2470,13 +2470,14 @@ function AppContent() {
       setIsSystemConnected(true);
       setIsSystemConnecting(false);
 
-      // Auto-detect domain from vehicle type reported by bridge
-      const vtype = result.vehicle_type || '';
-      if (['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+      const vtype  = result.vehicle_type || '';
+      const domain = result.domain || '';
+
+      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
         setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
-      } else if (vtype === 'ROCKET') {
+      } else if (domain === 'ROCKETS' || vtype === 'ROCKET') {
         setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
-      } else if (['GROUND_ROVER','GROUND_ROBOT'].includes(vtype) || vtype === 'UNKNOWN') {
+      } else {
         setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
       }
     } else {
@@ -2510,13 +2511,14 @@ function AppContent() {
       setIsSystemConnected(true);
       setView('dashboard');
 
-      // Auto-detect domain from vehicle type reported by bridge
-      const vtype = result.vehicle_type || '';
-      if (['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+      const vtype  = result.vehicle_type || '';
+      const domain = result.domain || '';
+
+      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
         setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
-      } else if (vtype === 'ROCKET') {
+      } else if (domain === 'ROCKETS' || vtype === 'ROCKET') {
         setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
-      } else if (['GROUND_ROVER','GROUND_ROBOT'].includes(vtype) || vtype === 'UNKNOWN') {
+      } else {
         setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
       }
     } else {
@@ -2660,33 +2662,34 @@ function AppContent() {
   // Update rocketState from real telemetry when connected
   useEffect(() => {
     if (isSystemConnected && systemProfile.domain === 'ROCKETS') {
-      const rocketPos = telemetry.pos || {
-        x: telemetry.vel?.x ? (telemetry.vel.x * (telemetry.time || 0)) : 0,
-        y: telemetry.altitude || 0
+      const t = telemetry as any;
+      const rocketPos = t.pos || {
+        x: (t.velocity?.x || t.velocity_x || t.vel?.x || 0) * (t.time || 0),
+        y: t.altitude || 0
       };
-
+      
       setRocketState(prev => ({
         ...prev,
         x: rocketPos.x,
         y: rocketPos.y,
-        vx: telemetry.vel?.x || 0,
-        vy: telemetry.vel?.y || 0,
-        mass: telemetry.mass || prev.mass,
-        propMass: telemetry.propMass || prev.propMass,
-        time: telemetry.time || prev.time,
-        phase: (telemetry.phase as RocketPhase) || prev.phase
+        vx: t.velocity?.x || t.velocity_x || t.vel?.x || 0,
+        vy: t.velocity?.y || t.velocity_y || t.vel?.y || 0,
+        mass: t.mass || prev.mass,
+        propMass: t.propMass || prev.propMass,
+        time: t.time || prev.time,
+        phase: (t.phase as RocketPhase) || prev.phase
       }));
-      
+
       // Also record flight data for the graph
       setFlightData(fd => {
         const newData = { 
           x: rocketPos.x, 
           y: rocketPos.y, 
-          vx: telemetry.vel?.x || 0, 
-          vy: telemetry.vel?.y || 0,
-          mass: telemetry.mass || 0,
-          time: telemetry.time || 0,
-          phase: telemetry.phase || 'UNKNOWN'
+          vx: t.velocity?.x || t.velocity_x || t.vel?.x || 0, 
+          vy: t.velocity?.y || t.velocity_y || t.vel?.y || 0,
+          mass: t.mass || 0,
+          time: t.time || 0,
+          phase: t.phase || 'UNKNOWN'
         };
         // Avoid duplicate timestamps
         if (fd.length > 0 && fd[fd.length - 1].time === newData.time) return fd;
@@ -4606,7 +4609,10 @@ end`}
               <div className="p-3 bg-bgRaised border border-borderDim space-y-1">
                 <div className="micro-label text-textDim">CONNECTION SOURCE</div>
                 <div className="font-mono text-[10px] text-cyan uppercase">
-                  {connectionMode.replace('_', ' ')}
+                  {connectionMode === 'ros2_websocket' ? 'Real Hardware (ROS2)'
+                    : connectionMode === 'mavlink_bridge' ? 'Real Hardware (MAVLink Bridge)'
+                    : connectionMode === 'digital_twin' ? 'Digital Twin Simulation'
+                    : 'Hardware-in-the-Loop'}
                 </div>
                 <div className="font-mono text-[9px] text-textDim truncate">{endpoint}</div>
               </div>
@@ -4635,16 +4641,21 @@ end`}
                   </div>
                   <div className="space-y-4">
                     {[
-                      { label: 'ESTIMATED MASS', val: `${telemetry.mass.toFixed(3)} kg`, delta: telemetry.mass > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
-                      { label: 'FRICTION COEFF', val: `${telemetry.friction.toFixed(3)} μ`, delta: telemetry.friction > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
-                      { label: 'ACTUATOR EFF', val: `${(telemetry.actuatorEfficiency * 100).toFixed(1)}%`, delta: telemetry.actuatorEfficiency > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
-                      { label: 'PITCH', val: `${(telemetry.pitch || 0).toFixed(1)}°`, color: COLORS.white },
-                      { label: 'ROLL', val: `${(telemetry.roll || 0).toFixed(1)}°`, color: COLORS.white },
-                      { label: 'GYRO Y', val: `${(telemetry.gyro?.y ?? telemetry.gyro_y ?? 0).toFixed(2)} °/s`, delta: '', color: COLORS.textSecondary },
-                      { label: 'MOTOR L', val: `${(telemetry.motor_l ?? 0)}`, delta: '', color: COLORS.cyan },
-                      { label: 'MOTOR R', val: `${(telemetry.motor_r ?? 0)}`, delta: '', color: COLORS.cyan },
-                      { label: 'ALTITUDE', val: `${(telemetry.altitude || 0).toFixed(1)}m`, color: COLORS.white },
-                      { label: 'SPEED', val: `${(telemetry.speed || 0).toFixed(1)}m/s`, color: COLORS.white },
+                      { label: 'ESTIMATED MASS', val: `${(telemetry.mass || 0).toFixed(3)} kg`, delta: (telemetry.mass || 0) > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
+                      { label: 'FRICTION COEFF', val: `${(telemetry.friction || 0).toFixed(3)} μ`, delta: (telemetry.friction || 0) > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
+                      { label: 'ACTUATOR EFF', val: `${((telemetry.actuatorEfficiency || 0) * 100).toFixed(1)}%`, delta: (telemetry.actuatorEfficiency || 0) > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
+                      ...(telemetry.pitch !== undefined ? [
+                        { label: 'PITCH', val: `${(telemetry.pitch || 0).toFixed(2)}°`, delta: Math.abs(telemetry.pitch || 0) < 5 ? 'STABLE' : 'LEANING', color: Math.abs(telemetry.pitch || 0) < 5 ? COLORS.green : COLORS.amber },
+                        { label: 'ROLL',  val: `${(telemetry.roll  || 0).toFixed(2)}°`, delta: '', color: COLORS.cyan },
+                        { label: 'GYRO Y', val: `${(telemetry.gyro?.y ?? telemetry.gyro_y ?? 0).toFixed(2)} °/s`, delta: '', color: COLORS.textSecondary },
+                        { label: 'MOTOR L', val: `${Math.round(telemetry.motor_l ?? 0)}`, delta: '', color: COLORS.green },
+                        { label: 'MOTOR R', val: `${Math.round(telemetry.motor_r ?? 0)}`, delta: '', color: COLORS.green },
+                      ] : []),
+                      ...(telemetry.altitude > 0 && !telemetry.pitch ? [
+                        { label: 'ALTITUDE', val: `${(telemetry.altitude || 0).toFixed(2)} m`, delta: '', color: COLORS.green },
+                        { label: 'SPEED',    val: `${(telemetry.speed    || 0).toFixed(2)} m/s`, delta: '', color: COLORS.cyan },
+                        { label: 'ARMED',    val: telemetry.armed ? 'YES' : 'NO', delta: '', color: telemetry.armed ? COLORS.green : COLORS.textDim },
+                      ] : []),
                     ].map((item, i) => (
                       <div key={i} className="space-y-1">
                         <div className="flex justify-between items-center">
@@ -5575,7 +5586,9 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         mass:               state.estParams.mass,
         friction:           state.estParams.friction,
         actuatorEfficiency: state.actuatorEfficiency,
-        residual:           state.residualHistory?.[state.residualHistory.length - 1]?.y ?? prev.residual,
+        residual:           state.residualHistory?.length > 0
+                              ? state.residualHistory[state.residualHistory.length - 1].y
+                              : prev.residual,
         confidence:         (state as any).lastEnsemble?.confidence ?? prev.confidence,
         variance:           (state as any).lastEnsemble?.variance   ?? prev.variance,
         isStable:           (state as any).lastLyapunov             ?? prev.isStable,
