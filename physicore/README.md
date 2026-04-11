@@ -5,7 +5,7 @@ This directory contains the core multiphysics engine for the PhysiCore AI platfo
 ## Contents
 
 - `core/engine.py`: Python implementation of the physics dynamics and integration.
-- `physicore-bridge/`: Hardware bridge for connecting real robots to the simulator.
+- `bridge/`: Hardware bridge for connecting real robots to the simulator.
 
 ## Usage (Python Engine)
 
