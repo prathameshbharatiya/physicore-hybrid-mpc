@@ -2473,10 +2473,12 @@ function AppContent() {
       const vtype  = result.vehicle_type || '';
       const domain = result.domain || '';
 
-      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER','EVTOL'].includes(vtype)) {
         setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
       } else if (domain === 'ROCKETS' || vtype === 'ROCKET') {
         setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
+      } else if (['MANIPULATOR','SURGICAL','LEGGED','AUV','SATELLITE','GROUND_ROVER','GROUND_ROBOT'].includes(vtype)) {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype }));
       } else {
         setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
       }
@@ -2514,10 +2516,12 @@ function AppContent() {
       const vtype  = result.vehicle_type || '';
       const domain = result.domain || '';
 
-      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER'].includes(vtype)) {
+      if (domain === 'AVIATION' || ['QUADROTOR','HEXAROTOR','OCTOROTOR','TRICOPTER','COAXIAL','FIXED_WING','HELICOPTER','EVTOL'].includes(vtype)) {
         setSystemProfile(prev => ({ ...prev, domain: 'AVIATION', platform: vtype }));
       } else if (domain === 'ROCKETS' || vtype === 'ROCKET') {
         setSystemProfile(prev => ({ ...prev, domain: 'ROCKETS', platform: 'CUSTOM_ROCKET_FC' }));
+      } else if (['MANIPULATOR','SURGICAL','LEGGED','AUV','SATELLITE','GROUND_ROVER','GROUND_ROBOT'].includes(vtype)) {
+        setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype }));
       } else {
         setSystemProfile(prev => ({ ...prev, domain: 'ROBOTICS', platform: vtype || 'ROBOT' }));
       }

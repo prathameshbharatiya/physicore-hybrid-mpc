@@ -80,8 +80,22 @@ class PhysicoreSimulator:
         self.state_dim   = state_dim
         self.action_dim  = action_dim
 
+        PLATFORM_DEFAULTS = {
+            "quadrotor":       {"mass": 1.5,   "friction": 0.1,  "inertia": 0.02},
+            "fixed_wing":      {"mass": 12.5,  "friction": 0.025,"inertia": 5.7},
+            "evtol":           {"mass": 500.0, "friction": 0.05, "inertia": 0.02},
+            "manipulator_arm": {"mass": 2.0,   "friction": 0.3,  "inertia": 0.1},
+            "surgical_robot":  {"mass": 0.05,  "friction": 0.8,  "inertia": 0.1},
+            "legged_robot":    {"mass": 30.0,  "friction": 0.7,  "inertia": 0.5},
+            "balancing_bot":   {"mass": 1.0,   "friction": 0.15, "inertia": 0.01},
+            "rocket":          {"mass": 0.15,  "friction": 0.45, "inertia": 220.0},
+            "ground_rover":    {"mass": 5.0,   "friction": 0.5,  "inertia": 0.1},
+            "auv":             {"mass": 50.0,  "friction": 2.0,  "inertia": 0.02},
+            "satellite":       {"mass": 100.0, "friction": 1e-5, "inertia": 10.0},
+            "rover":           {"mass": 5.0,   "friction": 0.5,  "inertia": 0.1},
+        }
         if initial_params is None:
-            initial_params = {"mass": 1.0, "friction": 0.3, "inertia": 0.1}
+            initial_params = PLATFORM_DEFAULTS.get(platform, {"mass": 1.0, "friction": 0.3, "inertia": 0.1})
         self.initial_params = initial_params
 
         self.engine = PhysiCore.for_platform(
