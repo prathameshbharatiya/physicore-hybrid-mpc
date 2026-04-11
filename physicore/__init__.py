@@ -10,10 +10,20 @@ from .core.engine import (
     PLATFORM_DYNAMICS,
     PhysicoreSimulator
 )
+from .sentinel import (
+    SentinelOS,
+    SentinelConfig,
+    SentinelMode,
+    SentinelLog
+)
 
 __all__ = [
     "PhysiCore",
     "PhysiCoreConfig",
     "PLATFORM_DYNAMICS",
-    "PhysicoreSimulator"
+    "PhysicoreSimulator",
+    "SentinelOS",
+    "SentinelConfig",
+    "SentinelMode",
+    "SentinelLog"
 ]

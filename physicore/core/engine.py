@@ -49,7 +49,7 @@ def quadrotor_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> n
 
 def rover_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
     """
-    2D Rover dynamics.
+    2D Rover dynamics (5-dim).
     State: [x, y, theta, v, omega]
     Action: [throttle, steer]
     """
@@ -67,9 +67,54 @@ def rover_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.nd
     
     return np.array([dx, dy, dtheta, dv, domega])
 
+def balancing_bot_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Inverted Pendulum / Balancing Bot dynamics.
+    State: [theta, theta_dot, x, x_dot]
+    Action: [force]
+    """
+    m = params.get("mass", 1.0)
+    l = params.get("length", 0.5)
+    g = 9.81
+    I = params.get("inertia", 0.01)
+    b = params.get("friction", 0.1)
+    
+    theta, theta_dot, x, x_dot = state
+    u = action[0]
+    
+    # Simplified inverted pendulum on a cart
+    d_theta = theta_dot
+    d_theta_dot = (m * g * l * math.sin(theta) - b * theta_dot + u * math.cos(theta)) / I
+    d_x = x_dot
+    d_x_dot = (u - b * x_dot) / m
+    
+    return np.array([d_theta, d_theta_dot, d_x, d_x_dot])
+
+def ground_rover_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Ground Rover dynamics (6-dim).
+    State: [x, y, theta, vx, vy, omega]
+    Action: [throttle, steer]
+    """
+    m = params.get("mass", 5.0)
+    b = params.get("friction", 0.5)
+    I = params.get("inertia", 0.1)
+    
+    x, y, theta, vx, vy, omega = state
+    throttle, steer = action
+    
+    # Acceleration in world frame
+    ax = (throttle / m) * math.cos(theta) - b * vx
+    ay = (throttle / m) * math.sin(theta) - b * vy
+    domega = (steer / I) - b * omega
+    
+    return np.array([vx, vy, omega, ax, ay, domega])
+
 PLATFORM_DYNAMICS = {
-    "quadrotor": (quadrotor_dynamics, 12, 4),
-    "rover":     (rover_dynamics, 5, 2),
+    "quadrotor":     (quadrotor_dynamics, 12, 4),
+    "rover":         (rover_dynamics, 5, 2),
+    "balancing_bot": (balancing_bot_dynamics, 4, 1),
+    "ground_rover":  (ground_rover_dynamics, 6, 2),
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -129,10 +174,13 @@ class PhysiCore:
             action[1] = error[6] * 0.5
             action[2] = error[7] * 0.5
             action[3] = error[8] * 0.5
-        elif self.cfg.platform == "rover":
+        elif self.cfg.platform in ["rover", "ground_rover"]:
             # throttle, steer
             action[0] = error[3] * 1.0
             action[1] = error[4] * 1.0
+        elif self.cfg.platform == "balancing_bot":
+            # force
+            action[0] = error[0] * 10.0 + error[1] * 2.0
             
         # 2. Predict next state using current physics model
         state_predicted = self._rk4_step(state, action, self.params)
