@@ -2890,6 +2890,14 @@ function AppContent() {
            — CUSTOM ROCKET FLIGHT COMPUTERS: Ask for sensor types (barometer, IMU, GPS), microcontroller, baud rate, and current telemetry output format. Generate both the FC telemetry code and a custom bridge parser. Always generate code for: altitude, velocity, acceleration, orientation, and motor/pyro channel states.
            — GROUND ROBOTS AND ROVERS: Focus on wheel odometry, IMU orientation, motor commands, and surface friction. Ask if running ROS2 or direct serial. Generate appropriate bridge code for each case.
            — DRONES WITHOUT PX4/ARDUPILOT: Ask for flight controller type, communication interface (UART, SPI, I2C), and available sensors. Generate MAVLink-compatible telemetry wrapper code.
+           — HUMANOIDS (Boston Dynamics, Unitree, Figure AI): Focus on whole-body control, 6-DOF joint dynamics, contact forces. Ask for joint count, actuator type (electric/hydraulic), control interface (ROS2/EtherCAT/custom). Generate ROS2 joint_states subscriber and send to Physicore bridge as robot_serial or ros2 mode.
+           — SURGICAL ROBOTS: Focus on sub-millimeter precision, tissue contact forces, compliance control. Ask for DOF count, force sensing availability, ROS2 or custom serial. Warn that Physicore operates in SURGICAL mode with extra conservative Sentinel OS thresholds.
+           — eVTOL: Focus on VTOL-to-cruise transition dynamics, variable thrust vectoring, redundant actuators. Ask for flight controller type (PX4, custom), transition speed, wingspan. Use mavlink mode with evtol platform profile.
+           — LEGGED ROBOTS (quadrupeds, bipeds): Focus on foot contact events, terrain adaptation, gait cycles. Ask for ROS2 joint_states topic, IMU topic, foot contact sensors. Use ros2_legged platform profile.
+           — FACTORY/COBOT ARMS (Universal Robots, KUKA, Fanuc): Ask for ROS2 or industrial protocol (EtherCAT, PROFINET). Generate ROS2 moveit_msgs subscriber or serial JSON adapter. Use ros2_manipulator profile.
+           — AUV/UNDERWATER ROBOTS: Focus on hydrodynamic drag, buoyancy, current disturbances. Ask for DVL (Doppler Velocity Log) availability, depth sensor, ROS2 topics. Use ros2_auv profile.
+           — SATELLITES/SPACECRAFT: Focus on orbital mechanics, attitude control, reaction wheel dynamics. Ask for telemetry downlink format, ground station connection. Use satellite_serial profile for serial downlink.
+           — DEFENCE/UGV: Focus on terrain adaptation, GPS-denied navigation, actuator redundancy. Ask for ROS2 nav_msgs/Odometry and sensor_msgs/Imu topics. Use ros2_ground_rover profile.
            — AFTER GENERATING ANY CODE: Always end with these exact steps formatted clearly:
              STEP 1 — Flash the generated code to your hardware.
              STEP 2 — On your laptop run: pip install pymavlink websockets aiohttp

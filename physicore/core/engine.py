@@ -110,11 +110,175 @@ def ground_rover_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -
     
     return np.array([vx, vy, omega, ax, ay, domega])
 
+def manipulator_arm_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    6-DOF manipulator arm (joint space).
+    State:  [q1,q2,q3,q4,q5,q6, dq1,dq2,dq3,dq4,dq5,dq6]  12-dim
+    Action: [tau1,tau2,tau3,tau4,tau5,tau6]                   6-dim
+    """
+    n     = 6
+    q     = state[:n]
+    dq    = state[n:]
+    tau   = action
+    m     = params.get("mass", 2.0)
+    fric  = params.get("friction", 0.3)
+    M     = np.ones(n) * m * 0.1 + np.array([0.5, 0.4, 0.3, 0.2, 0.1, 0.05])
+    ddq   = (tau - fric * dq) / M
+    return np.concatenate([dq, ddq])
+
+
+def fixed_wing_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Fixed-wing aircraft 6-DOF.
+    State:  [x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r]  12-dim
+    Action: [throttle,aileron,elevator,rudder]        4-dim
+    """
+    m      = params.get("mass", 12.5)
+    cd0    = params.get("friction", 0.025)
+    cla    = params.get("inertia", 5.7)
+    g      = 9.81
+    x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r = state
+    throttle,aileron,elevator,rudder = action
+    v      = max(np.sqrt(vx**2+vy**2+vz**2), 1.0)
+    lift   = 0.5*1.225*v**2*cla*0.85*np.deg2rad(pitch)
+    drag   = 0.5*1.225*v**2*cd0*0.85
+    ax     = throttle*10.0/m - drag*vx/(m*v)
+    ay     = -drag*vy/(m*v)
+    az     = lift/m - g
+    dp,dq_,dr = aileron*2.0, elevator*2.0, rudder*1.5
+    return np.array([vx,vy,vz,ax,ay,az,p,q,r,dp,dq_,dr])
+
+
+def evtol_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    eVTOL transition dynamics (VTOL + cruise blend).
+    State:  [x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r]  12-dim
+    Action: [thrust,roll_cmd,pitch_cmd,fwd_thrust]    4-dim
+    """
+    m      = params.get("mass", 500.0)
+    b      = params.get("friction", 0.05)
+    g      = 9.81
+    x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r = state
+    thrust,roll_cmd,pitch_cmd,fwd_thrust = action
+    v      = max(np.sqrt(vx**2+vy**2+vz**2), 0.1)
+    transition_ratio = min(v / 30.0, 1.0)
+    lift_vtol  = (thrust / m) * np.cos(pitch) * np.cos(roll)
+    lift_wing  = 0.5*1.225*v**2*5.0*0.85*np.deg2rad(pitch)/m
+    ax  = fwd_thrust/m - b*vx/m
+    ay  = -b*vy/m
+    az  = (1-transition_ratio)*lift_vtol + transition_ratio*lift_wing - g
+    dp  = (roll_cmd - p) / 0.08
+    dq_ = (pitch_cmd - q) / 0.08
+    dr  = -r * 0.5
+    return np.array([vx,vy,vz,ax,ay,az,p,q,r,dp,dq_,dr])
+
+
+def legged_robot_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Legged robot (biped/quadruped) simplified whole-body dynamics.
+    State:  [x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r]  12-dim
+    Action: [fx,fy,fz,tau_roll,tau_pitch,tau_yaw]    6-dim
+    """
+    m    = params.get("mass", 30.0)
+    fric = params.get("friction", 0.7)
+    g    = 9.81
+    x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r = state
+    fx,fy,fz,tr,tp,ty_ = action
+    ax   = fx/m - fric*vx/m
+    ay   = fy/m - fric*vy/m
+    az   = fz/m - g - fric*vz/m
+    Ixx  = params.get("inertia", 0.5)
+    dp   = tr/Ixx - fric*p
+    dq_  = tp/Ixx - fric*q
+    dr   = ty_/Ixx - fric*r
+    return np.array([vx,vy,vz,ax,ay,az,p,q,r,dp,dq_,dr])
+
+
+def auv_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Autonomous Underwater Vehicle dynamics.
+    State:  [x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r]  12-dim
+    Action: [surge,sway,heave,yaw_rate]               4-dim
+    """
+    m    = params.get("mass", 50.0)
+    drag = params.get("friction", 2.0)
+    g    = 9.81
+    buoy = params.get("inertia", 0.02)
+    x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r = state
+    surge,sway,heave,yaw_cmd = action
+    ax   = surge/m - drag*vx/m
+    ay   = sway/m  - drag*vy/m
+    az   = heave/m - drag*vz/m + buoy
+    dp   = -drag*p*0.1
+    dq_  = -drag*q*0.1
+    dr   = (yaw_cmd - r) / 0.1
+    return np.array([vx,vy,vz,ax,ay,az,p,q,r,dp,dq_,dr])
+
+
+def satellite_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Spacecraft/satellite attitude control dynamics.
+    State:  [x,y,z,vx,vy,vz,q0,q1,q2,q3,wx,wy,wz]  13-dim — approximated as 12
+    Action: [Tx,Ty,Tz,thrust]                          4-dim
+    """
+    m    = params.get("mass", 100.0)
+    Ixx  = params.get("inertia", 10.0)
+    drag = params.get("friction", 1e-5)
+    x,y,z,vx,vy,vz,roll,pitch,yaw,p,q,r = state
+    Tx,Ty,Tz,thrust = action
+    ax   = thrust*np.cos(pitch)*np.cos(yaw)/m - drag*vx
+    ay   = thrust*np.cos(pitch)*np.sin(yaw)/m - drag*vy
+    az   = thrust*np.sin(pitch)/m            - drag*vz
+    dp   = Tx/Ixx - (Ixx*0.1)*q*r/Ixx
+    dq_  = Ty/Ixx - (Ixx*0.1)*p*r/Ixx
+    dr   = Tz/Ixx - (Ixx*0.1)*p*q/Ixx
+    return np.array([vx,vy,vz,ax,ay,az,p,q,r,dp,dq_,dr])
+
+
+def surgical_robot_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Surgical robot / micro-manipulator dynamics.
+    State:  [q1..q6, dq1..dq6]  12-dim (same as manipulator but sub-mm scale)
+    Action: [tau1..tau6]          6-dim
+    """
+    n     = 6
+    dq    = state[n:]
+    tau   = action
+    m     = params.get("mass", 0.05)
+    fric  = params.get("friction", 0.8)
+    tissue_k = params.get("inertia", 0.1)
+    M     = np.ones(n) * m * 0.001 + np.array([0.005,0.004,0.003,0.002,0.001,0.0005])
+    ddq   = (tau - fric*dq - tissue_k*state[:n]) / M
+    return np.concatenate([dq, ddq])
+
+def rocket_dynamics(state: np.ndarray, action: np.ndarray, params: dict) -> np.ndarray:
+    """
+    Simplified 2D Rocket dynamics.
+    State: [x, y, theta, vx, vy, omega]
+    Action: [thrust, gimbal]
+    """
+    m = params.get("mass", 500.0)
+    g = 9.81
+    x, y, theta, vx, vy, omega = state
+    thrust, gimbal = action
+    ax = (thrust / m) * math.sin(theta + gimbal)
+    ay = (thrust / m) * math.cos(theta + gimbal) - g
+    domega = gimbal * 10.0 # Simplified
+    return np.array([vx, vy, omega, ax, ay, domega])
+
 PLATFORM_DYNAMICS = {
-    "quadrotor":     (quadrotor_dynamics, 12, 4),
-    "rover":         (rover_dynamics, 5, 2),
-    "balancing_bot": (balancing_bot_dynamics, 4, 1),
-    "ground_rover":  (ground_rover_dynamics, 6, 2),
+    "quadrotor":         (quadrotor_dynamics,       12, 4),
+    "fixed_wing":        (fixed_wing_dynamics,       12, 4),
+    "evtol":             (evtol_dynamics,            12, 4),
+    "manipulator_arm":   (manipulator_arm_dynamics,  12, 6),
+    "surgical_robot":    (surgical_robot_dynamics,   12, 6),
+    "legged_robot":      (legged_robot_dynamics,     12, 6),
+    "balancing_bot":     (balancing_bot_dynamics,     4, 1),
+    "rocket":            (rocket_dynamics,            6, 2),
+    "ground_rover":      (ground_rover_dynamics,      6, 2),
+    "auv":               (auv_dynamics,              12, 4),
+    "satellite":         (satellite_dynamics,         12, 4),
+    "rover":             (ground_rover_dynamics,      6, 2),
 }
 
 # ──────────────────────────────────────────────────────────────────────────────

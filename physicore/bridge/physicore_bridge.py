@@ -68,36 +68,19 @@ TELEMETRY_HZ   = 20
 
 # ── Platform profiles ──────────────────────────────────────────────────────────
 PLATFORM_PROFILES = {
-    "px4_quadrotor": {
-        "mode": "mavlink", "baud": 57600,
-        "vehicle_type": "QUADROTOR", "domain": "AVIATION",
-        "default_connection": "udp:14550",
-    },
-    "ardupilot_plane": {
-        "mode": "mavlink", "baud": 57600,
-        "vehicle_type": "FIXED_WING", "domain": "AVIATION",
-        "default_connection": "udp:14550",
-    },
-    "ros2_manipulator": {
-        "mode": "ros2", "baud": 0,
-        "vehicle_type": "MANIPULATOR", "domain": "ROBOTICS",
-        "default_connection": "ros2",
-    },
-    "balancing_bot_arduino": {
-        "mode": "robot_serial", "baud": 115200,
-        "vehicle_type": "GROUND_ROVER", "domain": "ROBOTICS",
-        "default_connection": "COM3",
-    },
-    "custom_rocket_fc": {
-        "mode": "robot_serial", "baud": 115200,
-        "vehicle_type": "ROCKET", "domain": "ROCKETS",
-        "default_connection": "COM3",
-    },
-    "ground_rover_ros2": {
-        "mode": "ros2", "baud": 0,
-        "vehicle_type": "GROUND_ROVER", "domain": "ROBOTICS",
-        "default_connection": "ros2",
-    },
+    "px4_quadrotor":          {"mode":"mavlink",       "baud":57600,  "vehicle_type":"QUADROTOR",   "domain":"AVIATION",  "default_connection":"udp:14550"},
+    "ardupilot_plane":        {"mode":"mavlink",       "baud":57600,  "vehicle_type":"FIXED_WING",  "domain":"AVIATION",  "default_connection":"udp:14550"},
+    "ardupilot_quadrotor":    {"mode":"mavlink",       "baud":57600,  "vehicle_type":"QUADROTOR",   "domain":"AVIATION",  "default_connection":"udp:14550"},
+    "evtol":                  {"mode":"mavlink",       "baud":57600,  "vehicle_type":"EVTOL",        "domain":"AVIATION",  "default_connection":"udp:14550"},
+    "ros2_manipulator":       {"mode":"ros2",          "baud":0,      "vehicle_type":"MANIPULATOR", "domain":"ROBOTICS",  "default_connection":"ros2"},
+    "ros2_legged":            {"mode":"ros2",          "baud":0,      "vehicle_type":"LEGGED",      "domain":"ROBOTICS",  "default_connection":"ros2"},
+    "ros2_ground_rover":      {"mode":"ros2",          "baud":0,      "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "default_connection":"ros2"},
+    "ros2_auv":               {"mode":"ros2",          "baud":0,      "vehicle_type":"AUV",          "domain":"ROBOTICS",  "default_connection":"ros2"},
+    "ros2_surgical":          {"mode":"ros2",          "baud":0,      "vehicle_type":"SURGICAL",    "domain":"ROBOTICS",  "default_connection":"ros2"},
+    "balancing_bot_arduino":  {"mode":"robot_serial",  "baud":115200, "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "default_connection":"COM3"},
+    "custom_rocket_fc":       {"mode":"robot_serial",  "baud":115200, "vehicle_type":"ROCKET",      "domain":"ROCKETS",   "default_connection":"COM3"},
+    "ground_rover_serial":    {"mode":"robot_serial",  "baud":115200, "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "default_connection":"COM3"},
+    "satellite_serial":       {"mode":"robot_serial",  "baud":115200, "vehicle_type":"SATELLITE",   "domain":"AVIATION",  "default_connection":"COM3"},
 }
 
 # ── Telemetry state ────────────────────────────────────────────────────────────
@@ -195,12 +178,14 @@ def mavlink_reader(connection_string: str, baud: int):
     vtypes = {
         1:"FIXED_WING", 2:"QUADROTOR", 3:"COAXIAL", 4:"HELICOPTER",
         6:"GROUND_ROVER", 8:"ROCKET", 10:"FLAPPING_WING",
-        13:"HEXAROTOR", 14:"OCTOROTOR", 15:"TRICOPTER"
+        13:"HEXAROTOR", 14:"OCTOROTOR", 15:"TRICOPTER",
+        19:"EVTOL", 20:"EVTOL", 21:"EVTOL",
+        27:"GROUND_ROVER", 40:"LEGGED"
     }
     vt = vtypes.get(mav.messages['HEARTBEAT'].type, "UNKNOWN")
     state.vehicle_type = vt
     state.domain = (
-        "AVIATION"  if vt in ("FIXED_WING","QUADROTOR","COAXIAL","HELICOPTER","HEXAROTOR","OCTOROTOR","TRICOPTER","FLAPPING_WING")
+        "AVIATION"  if vt in ("FIXED_WING","QUADROTOR","COAXIAL","HELICOPTER","HEXAROTOR","OCTOROTOR","TRICOPTER","FLAPPING_WING","EVTOL")
         else "ROCKETS"  if vt == "ROCKET"
         else "ROBOTICS"
     )
