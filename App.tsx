@@ -1,4 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { SimMode, StateVector, ControlInput, PhysicalParams, SimState, TelemetryPoint, MetaAnalysisResponse } from './src/types';
+import { stepDynamicsRK4 } from './src/services/physicsLogic';
+import { computeMPCAction } from './src/services/optimizer';
+import { updateSystemID } from './src/services/systemID';
+import { ensembleDynamics } from './src/services/learnedDynamics';
+import { performMetaAnalysis } from './src/services/geminiService';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './src/firebase';
@@ -8,6 +14,7 @@ import {
   collection, query, where, getDocs, onSnapshot 
 } from 'firebase/firestore';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
+import SimulationCanvas from './src/components/SimulationCanvas';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -27,11 +34,6 @@ import {
   LineChart, Line, ComposedChart, Scatter, Legend, Tooltip
 } from 'recharts';
 import { GoogleGenAI } from "@google/genai";
-
-import { stepDynamicsRK4 }    from './src/services/physicsLogic';
-import { updateSystemID }      from './src/services/systemID';
-import { ensembleDynamics }    from './src/services/learnedDynamics';
-import { computeMPCAction }    from './src/services/optimizer';
 
 // --- ROCKET CONSTANTS ---
 const RKT_G = 9.80665;
@@ -2962,20 +2964,105 @@ function AppContent() {
   const [manualSection, setManualSection] = useState('intro');
   const [isControlActive, setIsControlActive] = useState(false);
 
+  // --- MPC & SystemID State ---
+  const [simMode, setSimMode] = useState<SimMode>(SimMode.MPC_STABILIZATION);
+  const [simState, setSimState] = useState<SimState>({
+    current: [400, 300, 0, 0, 0, 0], // Center of canvas
+    target: [400, 300],
+    estimatedParams: { mass: 1.0, friction: 0.1, gravity: 9.81, textile_k: 0, damping: 0.1 },
+    predictionError: 0,
+    controlEffort: 0,
+    stability: 100,
+    time: 0,
+    controlAction: [0, 0],
+    uncertainty: 0,
+    isBenchmarking: false
+  });
+  const [mpcWeights, setMpcWeights] = useState({ q: 1.0, r: 0.1 });
+  const [metaAnalysis, setMetaAnalysis] = useState<MetaAnalysisResponse | null>(null);
+  const [isMetaAnalyzing, setIsMetaAnalyzing] = useState(false);
+
+  // --- MPC Simulation Loop ---
   useEffect(() => {
-    if (user && user.email === 'ashwanth123creations@gmail.com') {
-      const resetHasTested = async () => {
-        try {
-          await updateDoc(doc(db, 'allowed_users', user.uid), {
-            hasTested: false
+    if (!isControlActive || view !== 'dashboard') return;
+
+    const interval = setInterval(() => {
+      setSimState(prev => {
+        // 1. Compute MPC Action
+        const { action, ensembleUncertainty } = computeMPCAction(
+          prev.current,
+          prev.target,
+          prev.estimatedParams,
+          mpcWeights
+        );
+
+        // 2. Step Ground Truth Dynamics (Simulation Mode)
+        // In a real system, this would come from telemetry
+        const nextState = stepDynamicsRK4(prev.current, action, {
+          mass: 5.2, // Ground truth mass (unknown to SysID)
+          friction: 0.65, // Ground truth friction
+          gravity: 9.81,
+          textile_k: 0,
+          damping: 0.1
+        });
+
+        // 3. Update System Identification (SysID)
+        const updatedParams = updateSystemID(
+          prev.current,
+          action,
+          nextState,
+          prev.estimatedParams
+        );
+
+        // 4. Train Learned Dynamics (Residual Model)
+        const physicsPrediction = stepDynamicsRK4(prev.current, action, updatedParams);
+        ensembleDynamics.train(prev.current, action, nextState, physicsPrediction);
+
+        // 5. Compute Metrics
+        const predictionError = nextState.reduce((s, v, i) => s + Math.pow(v - physicsPrediction[i], 2), 0);
+        const stability = 100 - Math.min(100, predictionError * 1000);
+
+        return {
+          ...prev,
+          current: nextState,
+          estimatedParams: updatedParams,
+          predictionError,
+          controlAction: action,
+          uncertainty: ensembleUncertainty,
+          stability,
+          time: prev.time + 0.01
+        };
+      });
+    }, 10); // 100Hz loop
+
+    return () => clearInterval(interval);
+  }, [isControlActive, view, mpcWeights]);
+
+  // --- Meta-Analyst Loop ---
+  useEffect(() => {
+    if (!isControlActive || view !== 'dashboard') return;
+
+    const interval = setInterval(async () => {
+      setIsMetaAnalyzing(true);
+      try {
+        const result = await performMetaAnalysis(simState, []);
+        setMetaAnalysis(result);
+        // Apply suggested tweaks if they are reasonable
+        if (result.suggestedCostTweaks) {
+          setMpcWeights({
+            q: result.suggestedCostTweaks.q_weight,
+            r: result.suggestedCostTweaks.r_weight
           });
-        } catch (err) {
-          console.error("Failed to reset hasTested:", err);
         }
-      };
-      resetHasTested();
-    }
-  }, [user]);
+      } catch (e) {
+        console.error("Meta-analysis failed", e);
+      } finally {
+        setIsMetaAnalyzing(false);
+      }
+    }, 15000); // Every 15 seconds
+
+    return () => clearInterval(interval);
+  }, [isControlActive, view, simState]);
 
   const handleLogin = async () => {
     if (isLoggingIn) return;
@@ -3351,7 +3438,7 @@ function AppContent() {
     satellites: 0
   });
 
-  const performMetaAnalysis = async () => {
+  const performTelemetryAnalysis = async () => {
     try {
       const prompt = `
         PHYSICORE META-ANALYST: REAL-TIME TELEMETRY DIAGNOSTICS
@@ -3393,9 +3480,9 @@ function AppContent() {
     let interval: any;
     if (isSystemConnected && view === 'dashboard') {
       // Initial analysis
-      performMetaAnalysis();
+      performTelemetryAnalysis();
       // Periodic analysis every 30 seconds to avoid hitting rate limits too hard
-      interval = setInterval(performMetaAnalysis, 30000);
+      interval = setInterval(performTelemetryAnalysis, 30000);
     }
     return () => clearInterval(interval);
   }, [isSystemConnected, view]);
@@ -3474,6 +3561,15 @@ function AppContent() {
       setHandshakeConfirmed(true);
       setIsSystemConnected(true);
       setView('dashboard');
+
+      // Initialize MPC state
+      setSimState(prev => ({
+        ...prev,
+        current: [400, 300, 0, 0, 0, 0],
+        target: [400, 300],
+        estimatedParams: { mass: 1.0, friction: 0.1, gravity: 9.81, textile_k: 0, damping: 0.1 }
+      }));
+      setMpcWeights({ q: 1.0, r: 0.1 });
 
       const vtype  = result.vehicle_type || '';
       const domain = result.domain || '';
@@ -5556,13 +5652,12 @@ end`}
                 handshakeConfirmed={handshakeConfirmed}
               />
             ) : (
-              <DashboardCanvas 
-                isConnected={isSystemConnected} 
-                handshakeConfirmed={handshakeConfirmed}
-                onTelemetryUpdate={setTelemetry} 
-                telemetry={telemetry} 
-                connectionMode={connectionMode} 
-                simulationConfig={simulationConfig}
+              <SimulationCanvas 
+                mode={simMode}
+                onStateUpdate={setSimState}
+                target={simState.target}
+                controlAction={simState.controlAction}
+                physicsPriors={simState.estimatedParams}
               />
             )}
 
@@ -5701,11 +5796,11 @@ end`}
             <div className="flex-1 p-6 space-y-4 overflow-hidden">
               <div className="flex justify-between items-center">
                 <span className="micro-label text-green">Control Effort (N)</span>
-                <span className="font-mono text-[10px] text-textDim">PEAK: {Math.max(...telemetry.effortHistory.map(d => d.y), 0).toFixed(1)}N</span>
+                <span className="font-mono text-[10px] text-textDim">PEAK: {simState.controlAction.reduce((s, v) => s + Math.abs(v), 0).toFixed(1)}N</span>
               </div>
               <div className="h-[180px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={telemetry.effortHistory}>
+                  <BarChart data={[{ y: simState.controlAction[0] }, { y: simState.controlAction[1] }]}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1A1A1A" vertical={false} />
                     <Bar dataKey="y" fill={COLORS.green} isAnimationActive={false} />
                   </BarChart>
@@ -5715,16 +5810,24 @@ end`}
             <div className="w-[400px] p-6 space-y-4 bg-bgRaised/30 overflow-hidden flex flex-col">
               <div className="flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-pulse" />
                   <span className="micro-label text-white">Meta-Analyst Intelligence</span>
                 </div>
-                <span className="font-mono text-[9px] text-textDim uppercase">Neural Link: ACTIVE</span>
+                {isMetaAnalyzing && <div className="w-2 h-2 rounded-full bg-amber animate-pulse" />}
               </div>
               <div className="flex-1 overflow-y-auto custom-scroll pr-2">
-                {metaAnalysisResult ? (
+                {metaAnalysis ? (
                   <div className="space-y-4">
-                    <div className="font-mono text-[11px] text-cyan leading-relaxed">
-                      {metaAnalysisResult.replace('> META-ANALYST:', '').trim()}
+                    <div className="p-3 border border-amber/20 bg-amber/5 rounded-sm">
+                      <p className="font-body text-xs text-amber leading-relaxed">{metaAnalysis.insight}</p>
+                    </div>
+                    <div className="space-y-2">
+                      {metaAnalysis.diagnostics.map((d, i) => (
+                        <div key={i} className="flex items-start gap-2">
+                          <div className="w-1 h-1 rounded-full bg-amber mt-1.5 shrink-0" />
+                          <span className="font-mono text-[10px] text-textSecondary uppercase">{d}</span>
+                        </div>
+                      ))}
                     </div>
                     <div className="pt-4 border-t border-borderDim space-y-3">
                       <div className="flex items-center gap-2">
@@ -5732,7 +5835,7 @@ end`}
                         <span className="font-display text-[9px] font-bold text-amber uppercase tracking-widest">Tuning Recommendation</span>
                       </div>
                       <div className="p-3 bg-amberDim/10 border border-amber/20 font-mono text-[10px] text-amber/80">
-                        {metaAnalysisResult.includes('MPC') ? 'ADJUST_MPC_COST_WEIGHTS: Q_POS += 1.5' : 'ADJUST_SYSID_LR: ALPHA = 0.012'}
+                        Q: {metaAnalysis.suggestedCostTweaks.q_weight} | R: {metaAnalysis.suggestedCostTweaks.r_weight}
                       </div>
                     </div>
                   </div>
