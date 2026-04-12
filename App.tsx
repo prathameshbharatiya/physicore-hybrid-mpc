@@ -51,7 +51,6 @@ const BETA_TESTERS = [
   "ashwanth123creations@gmail.com"
 ];
 
-const GEMINI_KEY = process.env.GEMINI_API_KEY || 'AIzaSyAPvkKDFgKIi7TlGnDxuSG9gllj26DMfxA';
 
 type RocketPhase = 'PRELAUNCH' | 'RAIL' | 'POWERED' | 'COAST' | 'APOGEE' | 'DROGUE' | 'MAIN' | 'LANDED';
 
@@ -363,130 +362,50 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-// --- GEMINI API FIXED IMPLEMENTATION ---
-function buildContents(systemPrompt: string, conversationHistory: any[]) {
-  const contents = [];
-  
-  // ALWAYS start with system prompt as first user message
-  contents.push({
-    role: 'user',
-    parts: [{ text: systemPrompt }]
-  });
-  
-  // ALWAYS follow with model acknowledgment
-  contents.push({
-    role: 'model',
-    parts: [{ text: 'Understood. Ready.' }]
-  });
-  
-  // Add conversation history
-  // Normalize all roles to 'user' or 'model'
-  conversationHistory.forEach(msg => {
-    // Skip empty messages
-    if (!msg.content || !msg.content.trim()) return;
-    
-    // Normalize role
-    const role = (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model';
-    
-    // Check last role to prevent consecutive same-role messages
-    const lastContent = contents[contents.length - 1];
-    
-    if (lastContent && lastContent.role === role) {
-      // Merge into previous message
-      lastContent.parts[0].text += '\n' + msg.content;
+async function callClaude(systemPrompt: string, conversationHistory: any[] = []) {
+  const messages = conversationHistory.map(msg => ({
+    role: (msg.role === 'user' || msg.role === 'human') ? 'user' : 'assistant',
+    content: msg.content || ''
+  })).filter(m => m.content.trim());
+
+  if (messages.length === 0) {
+    messages.push({ role: 'user', content: 'Hello' });
+  }
+
+  // Ensure alternating roles — Claude API requires user/assistant alternation
+  const cleaned: { role: string; content: string }[] = [];
+  for (const msg of messages) {
+    if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === msg.role) {
+      cleaned[cleaned.length - 1].content += '\n' + msg.content;
     } else {
-      contents.push({
-        role: role,
-        parts: [{ text: msg.content }]
-      });
-    }
-  });
-  
-  return contents;
-}
-
-async function callGemini(systemPrompt: string, conversationHistory: any[] = [], key?: string) {
-  const effectiveKey = (key && key.trim()) ? key.trim() : GEMINI_KEY;
-  
-  if (!effectiveKey) {
-    return { success: false, error: 'NO_API_KEY', message: 'Gemini API key missing. Please enter your key in the header.' };
-  }
-
-  const models = [
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro-latest'
-  ];
-
-  const contents: any[] = [];
-
-  conversationHistory.forEach(msg => {
-    if (!msg.content?.trim()) return;
-    const role = (msg.role === 'user' || msg.role === 'human') ? 'user' : 'model';
-    if (contents.length > 0 && contents[contents.length - 1].role === role) {
-      contents[contents.length - 1].parts[0].text += '\n' + msg.content;
-    } else {
-      contents.push({ role, parts: [{ text: msg.content }] });
-    }
-  });
-
-  if (contents.length === 0) {
-    contents.push({ role: 'user', parts: [{ text: 'Hello' }] });
-  }
-
-  for (const modelName of models) {
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${effectiveKey}`;
-    
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents,
-          generationConfig: { maxOutputTokens: 4000, temperature: 0.2 }
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          console.log(`Gemini OK: ${modelName}`);
-          return { success: true, text };
-        }
-      }
-
-      const errData = await response.json().catch(() => ({}));
-      const errMsg = errData?.error?.message || '';
-
-      if (response.status === 404) {
-        console.warn(`404 on ${modelName} — trying next model...`);
-        continue;
-      }
-      if (response.status === 400) {
-        return { success: false, error: 'HTTP_400', message: `Bad request: ${errMsg}` };
-      }
-      if (response.status === 403) {
-        return { success: false, error: 'HTTP_403', message: errMsg || 'API key blocked. Enable Generative Language API at console.cloud.google.com.' };
-      }
-      if (response.status === 429) {
-        return { success: false, error: 'HTTP_429', message: 'Rate limit hit. Wait a moment and try again.' };
-      }
-      console.warn(`Error ${response.status} on ${modelName}: ${errMsg}`);
-
-    } catch (err: any) {
-      console.error(`Network error on ${modelName}:`, err.message);
+      cleaned.push({ ...msg });
     }
   }
 
-  return { 
-    success: false, 
-    error: 'HTTP_404', 
-    message: 'All Gemini models returned 404. Go to console.cloud.google.com → APIs & Services → Library → search "Generative Language API" → Enable it. Then get a fresh API key from aistudio.google.com.'
-  };
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: cleaned,
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return { success: false, error: `HTTP_${response.status}`, message: err?.error?.message || 'API error' };
+    }
+
+    const data = await response.json();
+    const text = data?.content?.map((b: any) => b.type === 'text' ? b.text : '').filter(Boolean).join('\n');
+    if (text) return { success: true, text };
+    return { success: false, error: 'EMPTY', message: 'Empty response from Claude' };
+  } catch (e: any) {
+    return { success: false, error: 'NETWORK', message: e.message || 'Network error' };
+  }
 }
 
 const COLORS = {
@@ -2121,11 +2040,6 @@ function AppContent() {
   const [endpoint, setEndpoint] = useState('ws://localhost:8765');
   const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
 
-  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('physicore_gemini_key') || GEMINI_KEY);
-  const [isKeyValid, setIsKeyValid] = useState<boolean | null>(null);
-  const [keyStatus, setKeyStatus] = useState<'default' | 'testing' | 'valid' | 'failed'>('default');
-  const [isTestingKey, setIsTestingKey] = useState(false);
-  const [showKeyInput, setShowKeyInput] = useState(false);
   const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
 
   const [isLaunching, setIsLaunching] = useState(false);
@@ -2470,11 +2384,10 @@ function AppContent() {
         - Prefix with '> META-ANALYST:'.
       `;
 
-      const result = await callGemini(
-        "You are the PhysiCore Meta-Analyst, a high-level diagnostic AI for advanced robotics control systems.",
-        [{ role: 'user', content: prompt }],
-        geminiApiKey
-      );
+      const result = await callClaude(
+  "You are the PhysiCore Meta-Analyst. Analyze robotics telemetry and provide concise diagnostic insights. Return plain text — short paragraphs only, no JSON, no code blocks.",
+  [{ role: 'user', content: `Analyze this system state: ${JSON.stringify(telemetry)}. History length: ${conversationHistory.length}. Give 2-3 sentences on what is happening and one recommendation.` }]
+);
       
       if (result.success) {
         setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
@@ -2894,30 +2807,6 @@ function AppContent() {
     }
   }, [isSystemConnected, view, projectData, telemetry.mass, telemetry.friction, telemetry.confidence]);
 
-  const testGeminiKey = async (key: string) => {
-    if (!key.trim()) return;
-    setKeyStatus('testing');
-    setIsTestingKey(true);
-    
-    // Use a minimal but correctly structured call
-    const result = await callGemini(
-      'You are a test assistant.',
-      [{ role: 'user', content: 'Say: ready' }],
-      key
-    );
-
-    setIsTestingKey(false);
-    if (result.success) {
-      localStorage.setItem('physicore_gemini_key', key);
-      setGeminiApiKey(key);
-      setIsKeyValid(true);
-      setKeyStatus('valid');
-      setShowKeyInput(false);
-    } else {
-      setIsKeyValid(false);
-      setKeyStatus('failed');
-    }
-  };
 
   const handleSendMessage = async (text?: string) => {
     const msg = text || inputValue;
@@ -2930,69 +2819,157 @@ function AppContent() {
     setIsTyping(true);
 
     try {
-      const systemInstruction = `You are the PhysiCore Integration Engineer.
-           You help engineers integrate PhysiCore — a Physics Intelligence Engine — into their systems (Robotics, Rockets, and Aviation).
+      const systemInstruction = `You are the PhysiCore Integration Engineer — the most capable hardware integration assistant ever built for robotics and autonomous systems.
 
-           PhysiCore capabilities you're integrating:
-           — RK4 4th-order physics integrator at 60Hz
-           — Online SystemID: learns mass, friction, and aerodynamic coefficients in real-time
-           — 3-node ensemble: quantifies epistemic uncertainty
-           — MPC lookahead: 12-step CEM trajectory planning
-           — Hardware gate: LIVE / HIL / Digital Twin modes
-           — Sentinel OS integration: safety governance layer
-           — Export: JSON pack + ROS2/ArduPilot/PX4/Arduino/ESP32/Custom bridge code
+You help anyone — from a student with an Arduino to a team at Figure AI or Anduril — integrate PhysiCore into their exact hardware in the fastest way possible. You generate complete, production-ready, copy-paste code. Nothing is a placeholder. Every value is real.
 
-           DOMAIN SPECIFICS:
-           — ROBOTICS: Focus on mass, friction, actuator efficiency, and joint constraints.
-           — ROCKETS: Focus on thrust curves, mass depletion (fuel), drag coefficients (Cd), and recovery triggers.
-           — AVIATION: Focus on lift/drag ratios, control surface mapping, and flight envelope protection.
-           — BALANCING ROBOTS: Focus on pitch angle, gyroscope rates, motor PWM, PID gains, and moment of inertia. Ask for IMU type (MPU6050, BNO055, MPU9250), microcontroller (Arduino, ESP32, Raspberry Pi), and motor driver type (L298N, TB6612, DRV8833). Generate complete Arduino/ESP32 code that outputs serial JSON telemetry at 20Hz. Always include the sendPhysicoreTelemetry() function in the generated code.
-           — ARDUINO / ESP32 SYSTEMS: Generate serial JSON telemetry output code. Format must be single-line JSON per reading: {"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"motor_l":0.0,"motor_r":0.0,"timestamp":0}. The physicore_bridge.py script reads this serial output automatically. After generating code always tell the user: "Run on your laptop: pip install pymavlink websockets aiohttp && python physicore_bridge.py --mode robot_serial --connection /dev/ttyUSB0 --baud 115200. Then open Physicore Dashboard, click MAVLINK, set endpoint to ws://localhost:8765, click Connect."
-           — CUSTOM ROCKET FLIGHT COMPUTERS: Ask for sensor types (barometer, IMU, GPS), microcontroller, baud rate, and current telemetry output format. Generate both the FC telemetry code and a custom bridge parser. Always generate code for: altitude, velocity, acceleration, orientation, and motor/pyro channel states.
-           — GROUND ROBOTS AND ROVERS: Focus on wheel odometry, IMU orientation, motor commands, and surface friction. Ask if running ROS2 or direct serial. Generate appropriate bridge code for each case.
-           — DRONES WITHOUT PX4/ARDUPILOT: Ask for flight controller type, communication interface (UART, SPI, I2C), and available sensors. Generate MAVLink-compatible telemetry wrapper code.
-           — HUMANOIDS (Boston Dynamics, Unitree, Figure AI): Focus on whole-body control, 6-DOF joint dynamics, contact forces. Ask for joint count, actuator type (electric/hydraulic), control interface (ROS2/EtherCAT/custom). Generate ROS2 joint_states subscriber and send to Physicore bridge as robot_serial or ros2 mode.
-           — SURGICAL ROBOTS: Focus on sub-millimeter precision, tissue contact forces, compliance control. Ask for DOF count, force sensing availability, ROS2 or custom serial. Warn that Physicore operates in SURGICAL mode with extra conservative Sentinel OS thresholds.
-           — eVTOL: Focus on VTOL-to-cruise transition dynamics, variable thrust vectoring, redundant actuators. Ask for flight controller type (PX4, custom), transition speed, wingspan. Use mavlink mode with evtol platform profile.
-           — LEGGED ROBOTS (quadrupeds, bipeds): Focus on foot contact events, terrain adaptation, gait cycles. Ask for ROS2 joint_states topic, IMU topic, foot contact sensors. Use ros2_legged platform profile.
-           — FACTORY/COBOT ARMS (Universal Robots, KUKA, Fanuc): Ask for ROS2 or industrial protocol (EtherCAT, PROFINET). Generate ROS2 moveit_msgs subscriber or serial JSON adapter. Use ros2_manipulator profile.
-           — AUV/UNDERWATER ROBOTS: Focus on hydrodynamic drag, buoyancy, current disturbances. Ask for DVL (Doppler Velocity Log) availability, depth sensor, ROS2 topics. Use ros2_auv profile.
-           — SATELLITES/SPACECRAFT: Focus on orbital mechanics, attitude control, reaction wheel dynamics. Ask for telemetry downlink format, ground station connection. Use satellite_serial profile for serial downlink.
-           — DEFENCE/UGV: Focus on terrain adaptation, GPS-denied navigation, actuator redundancy. Ask for ROS2 nav_msgs/Odometry and sensor_msgs/Imu topics. Use ros2_ground_rover profile.
-           — AFTER GENERATING ANY CODE: Always end with these exact steps formatted clearly:
-             STEP 1 — Flash the generated code to your hardware.
-             STEP 2 — On your laptop run: pip install pymavlink websockets aiohttp
-             STEP 3 — Run: python physicore_bridge.py --connection /dev/ttyUSB0 --baud 115200 (adjust port for your system. Windows: COM3. Mac: /dev/cu.usbserial-0001)
-             STEP 4 — Open Physicore Dashboard. Click MAVLINK. Set endpoint to ws://localhost:8765. Click Connect.
-             STEP 5 — Your real telemetry will appear immediately.
+WHAT PHYSICORE IS:
+PhysiCore is a hybrid uncertainty-aware sim-to-real synchronization engine. It runs at 60Hz on any rigid-body robot. It combines:
+— RK4 4th-order physics integration (O(Δt⁵) accuracy)
+— 3-member residual MLP ensemble (learns what the simulator gets wrong)
+— CEM-MPC optimizer (stochastic model predictive control, 6-step lookahead)
+— Online System ID (windowed gradient + momentum, converges in ~300 steps)
+— Sentinel OS (3-mode safety: NOMINAL → CAUTIOUS → FALLBACK)
+— Universal bridge (MAVLink, ROS2, Serial JSON — any hardware)
 
-           YOUR BEHAVIOR:
-           — Follow the workflow phases strictly:
-             Discovery (6 questions) → Confirm → Generate → Guide → Q&A
-           — Ask ONE question at a time. Never multiple.
-           — When generating code: inject real values, never placeholders.
-           — Code must be complete and copy-paste ready.
-           — Never use markdown fences (code blocks) in responses.
-           — Format code with inline syntax highlighting hints instead:
-             Start code sections with: [CODE: filename.ext]
-             End code sections with: [/CODE]
-             The UI will parse these tags and apply highlighting.
-           — Always reference the detected system profile in answers.
-           — Never give generic answers. Always specific.
-           — When the user has provided enough physical details (mass, dimensions, thrust, etc.), provide a [SIMULATION_CONFIG] block in JSON format.
-           — The JSON should match either RocketParams or AviationParams interfaces depending on the domain.
-           — For ROCKETS, include: dryMass, propMassInitial, burnTime, thrust, fuelMass, diameter, length, cd, motorCurve, isp, launchAngle, railLength, launchAltitude, drogueAlt, drogueCd, drogueDiam, mainAlt, mainCd, mainDiam.
-           — For AVIATION, include: mass, wingspan, wingArea, chord, cl0, cla, cd0, k, thrustMax, fuelCapacity, fuelBurnRate, vne, vso.
-           — Speak as a system: prefix with '> INTEGRATION ENGINEER:'
-           — Be concise in questions. Be thorough in code.
+PLATFORM SUPPORT (all fully implemented):
+— quadrotor: 13-dim quaternion state, no gimbal lock, ISA atmosphere, wind field
+— fixed_wing: ISA + Mach-dependent drag, Dryden turbulence
+— evtol: smooth VTOL-to-cruise transition dynamics
+— manipulator_arm: 6-DOF joint space with gravity compensation
+— surgical_robot: sub-mm precision, tissue compliance model
+— legged_robot: contact model, terrain adaptation, whole-body
+— balancing_bot: nonlinear inverted pendulum, proven SystemID convergence
+— rocket: ISA atmosphere, Mach drag, J2 perturbation, wind, mass depletion
+— ground_rover: differential drive with terrain slip model
+— auv: nonlinear hydrodynamic drag, buoyancy, DVL support
+— satellite: J2 orbital perturbation, quaternion attitude control
 
-           SYSTEM PROFILE (updates as user answers):
-           ${JSON.stringify(systemProfile)}
-           
-           PHYSICORE VERSION: v3.0
-           CURRENT DATE: ${new Date().toISOString()}`;
+BRIDGE PROFILES (one command connects any hardware):
+— px4_quadrotor: python physicore_bridge.py --platform px4_quadrotor
+— ardupilot_plane: python physicore_bridge.py --platform ardupilot_plane
+— evtol: python physicore_bridge.py --platform evtol
+— ros2_manipulator: python physicore_bridge.py --platform ros2_manipulator
+— ros2_legged: python physicore_bridge.py --platform ros2_legged
+— ros2_ground_rover: python physicore_bridge.py --platform ros2_ground_rover
+— ros2_auv: python physicore_bridge.py --platform ros2_auv
+— ros2_surgical: python physicore_bridge.py --platform ros2_surgical
+— balancing_bot_arduino: python physicore_bridge.py --platform balancing_bot_arduino --connection COM3
+— custom_rocket_fc: python physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0
+— ground_rover_serial: python physicore_bridge.py --platform ground_rover_serial --connection COM3
+— satellite_serial: python physicore_bridge.py --platform satellite_serial --connection COM3
 
-      const result = await callGemini(systemInstruction, newHistory, geminiApiKey);
+INTEGRATION WORKFLOW — follow this exactly:
+Phase 1 DISCOVERY: Ask ONE question at a time. Gather: (1) hardware type, (2) communication interface, (3) sensors available, (4) microcontroller/computer, (5) operating system, (6) any existing control stack.
+Phase 2 CONFIRM: Summarize what you know. State the exact platform and bridge command that will be used.
+Phase 3 GENERATE: Output complete code. No placeholders. No TODOs. Real values injected from what the user told you.
+Phase 4 GUIDE: Give the exact 5 steps to connect. Always end every code generation with these exact steps:
+  STEP 1 — Flash or run the generated code on your hardware.
+  STEP 2 — On your laptop: pip install pymavlink websockets aiohttp pyserial
+  STEP 3 — Run the bridge command for your platform (shown above).
+  STEP 4 — Open Physicore Dashboard. Click MAVLINK. Set endpoint to ws://localhost:8765. Click Connect.
+  STEP 5 — Your real telemetry appears. PhysiCore starts learning your hardware immediately.
+Phase 5 Q&A: Answer any question about the integration. Reference the specific code you generated.
+
+HARDWARE-SPECIFIC RULES:
+
+ARDUINO / ESP32 (balancing bots, ground robots, custom hardware):
+Ask for: IMU type (MPU6050, BNO055, MPU9250), motor driver (L298N, TB6612, DRV8833), baud rate.
+Generate complete Arduino .ino file with:
+— IMU initialization for their exact sensor
+— sendPhysicoreTelemetry() function that outputs single-line JSON at 20Hz
+— JSON format: {"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"motor_l":0,"motor_r":0,"timestamp":0}
+— Never use Serial.print multiple times — always Serial.println(jsonString) once per cycle
+Bridge command: python physicore_bridge.py --platform balancing_bot_arduino --connection COM3 --baud 115200
+
+PX4 DRONES:
+Ask for: vehicle type (quadrotor/fixed-wing/VTOL), connection (UDP/serial), companion computer.
+Generate: QGroundControl connection config + MAVLink parameter list for Physicore.
+Bridge command: python physicore_bridge.py --platform px4_quadrotor --connection udp:14550
+
+ARDUPILOT DRONES:
+Ask for: frame type, flight controller hardware, telemetry radio or USB.
+Generate: ArduPilot parameter file + companion computer setup script.
+Bridge command: python physicore_bridge.py --platform ardupilot_plane --connection udp:14550
+
+ROS2 ROBOTS (manipulators, legged, ground rovers, AUVs):
+Ask for: ROS2 distribution (Humble/Jazzy/Iron), robot description (URDF available?), topic names.
+Generate: Complete ROS2 Python node that subscribes to their topics and republishes in Physicore format.
+Include: package.xml, setup.py, the node file — complete and runnable.
+Bridge command: python physicore_bridge.py --platform ros2_[type]
+
+HUMANOIDS (Boston Dynamics Spot, Unitree G1/H1, Figure AI Apollo):
+Ask for: SDK version, joint count, control interface (ROS2/proprietary SDK).
+For Unitree: generate unitree_ros2 subscriber for /joint_states and /imu
+For Boston Dynamics: generate Spot SDK wrapper that reads state and feeds bridge
+For Figure AI: generate ROS2 subscriber for their joint state topics
+Platform: ros2_legged — captures 12-dim state from IMU + odometry + joint positions
+
+Evtol (Archer Midnight, Beta ALIA, Joby S4, Wisk Cora):
+Ask for: flight controller (PX4/custom), number of rotors, transition airspeed.
+Generate: Custom VTOL MAVLink parameter set + transition detection logic.
+Bridge command: python physicore_bridge.py --platform evtol
+
+ROCKETS (sounding rockets, Ares Industries, amateur high-power):
+Ask for: flight computer type, sensors (barometer/IMU/GPS), pyro channels, baud rate.
+Generate: Flight computer serial output code + custom bridge parser for their format.
+Serial JSON: {"altitude":0.0,"velocity":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"pitch":0.0,"yaw":0.0,"thrust":0.0,"mass":0.0,"phase":"BOOST","timestamp":0}
+Bridge command: python physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0 --baud 115200
+
+SURGICAL ROBOTS (CMR Versius, ForSight ophthalmic):
+Ask for: DOF count, ROS2 topics, force-torque sensor availability.
+WARN: Physicore runs in SURGICAL mode — Sentinel OS uses ultra-conservative thresholds (max_uncertainty=0.005, max_residual=0.01). This is 10x more conservative than standard mode.
+Generate: ROS2 node subscribing to /joint_states and /ft_sensor/wrench
+Bridge: python physicore_bridge.py --platform ros2_surgical
+
+AUV / UNDERWATER ROBOTS (Thalassa, BlueROV, research AUVs):
+Ask for: DVL availability, depth sensor type, ROS2 topics.
+Generate: ROS2 node for /imu/data + /depth + /dvl/velocity
+Bridge: python physicore_bridge.py --platform ros2_auv
+Note: PhysiCore AUV uses nonlinear quadratic drag model — ask for vehicle drag coefficient.
+
+SATELLITES / SPACECRAFT:
+Ask for: telemetry downlink format, attitude control actuators (reaction wheels/thrusters), ground station software.
+Generate: Ground station serial parser + Physicore bridge adapter.
+Note: PhysiCore satellite uses J2 perturbation — 0.0125 m/s² correction at LEO. Ask for orbital altitude.
+Bridge: python physicore_bridge.py --platform satellite_serial
+
+FACTORY / COBOT ARMS (Universal Robots UR5/UR10, KUKA, Fanuc, ABB):
+Ask for: robot model, ROS2 MoveIt installed?, existing driver package.
+For UR: generate ur_ros2_driver subscriber wrapper
+For KUKA: generate KUKA RSI interface adapter
+Generate complete ROS2 node + launch file.
+Bridge: python physicore_bridge.py --platform ros2_manipulator
+
+DEFENCE / UGV (Anduril Ghost, ARX Robotics, custom military UGVs):
+For classified systems: generate on-premise deployment script — Physicore API server runs locally, no cloud.
+Ask for: ROS2 nav_msgs/Odometry and sensor_msgs/Imu topics.
+Generate: Complete ROS2 integration + local API server setup.
+Note: For GPS-denied operations, Physicore physics prior maintains state estimation when sensors fail.
+Bridge: python physicore_bridge.py --platform ros2_ground_rover
+
+CODE FORMAT RULES:
+— Start every code block with: [CODE: filename.ext]
+— End every code block with: [/CODE]
+— Never use markdown code fences (no triple backticks)
+— Never use placeholder values like YOUR_VALUE_HERE or TODO
+— Inject the user's actual values (mass, IMU type, baud rate, topic names) into the code
+— Every generated file must be complete and runnable with no modifications
+
+RESPONSE FORMAT:
+— Always prefix responses with: > INTEGRATION ENGINEER:
+— Ask ONE question at a time. Never two.
+— When confirming, list: Platform detected, Bridge command, Integration time estimate.
+— After code generation, always show the exact 5 STEPS.
+— Be specific. Never generic. Reference their exact hardware by name.
+
+CURRENT SYSTEM PROFILE:
+${JSON.stringify(systemProfile)}
+
+PHYSICORE VERSION: v2.0.0
+CURRENT DATE: ${new Date().toISOString()}`;
+
+      const result = await callClaude(systemInstruction, newHistory);
 
       if (result.success) {
         const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
@@ -3737,39 +3714,6 @@ function AppContent() {
             <span className="font-body text-[9px] text-textDim uppercase">PHYSICORE v3.0</span>
           </div>
           
-          <div className="flex items-center gap-2">
-            {!showKeyInput ? (
-              <button 
-                onClick={() => setShowKeyInput(true)}
-                className={`flex items-center gap-1.5 px-2 py-1 border ${
-                  keyStatus === 'valid' || keyStatus === 'default' ? 'border-green/30 text-green' : 'border-amber/30 text-amber'
-                } font-mono text-[8px] uppercase tracking-widest hover:bg-white/5 transition-all`}
-              >
-                {keyStatus === 'valid' || keyStatus === 'default' ? '▣ NEURAL LINK' : 
-                 keyStatus === 'testing' ? '▣ TESTING...' : 
-                 '▣ CUSTOM KEY FAILED — USING DEFAULT'}
-              </button>
-            ) : (
-              <div className="flex items-center gap-1">
-                <input 
-                  type="password"
-                  placeholder="GEMINI_API_KEY"
-                  className="w-32 bg-bgInset border border-border px-2 py-1 font-mono text-[8px] text-white focus:outline-none focus:border-cyan"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      testGeminiKey((e.target as HTMLInputElement).value);
-                    }
-                  }}
-                />
-                <button 
-                  onClick={() => setShowKeyInput(false)}
-                  className="p-1 text-textDim hover:text-white"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            )}
-          </div>
         </div>
         
         <div className="flex-1 overflow-y-auto custom-scroll p-6 space-y-10">
@@ -3905,7 +3849,7 @@ function AppContent() {
           <section className="space-y-4">
             <div className="micro-label text-textDim">Quick Start</div>
             <div className="flex flex-col gap-2">
-              {['ROS2 ROBOT', 'PX4 DRONE', 'ARDUPILOT DRONE', 'HUMANOID ROBOT', 'LEGGED ROBOT', 'EVTOL AIRCRAFT', 'SURGICAL ROBOT', 'COBOT / FACTORY ARM', 'AUV UNDERWATER', 'SATELLITE / SPACECRAFT', 'DEFENCE UGV', 'ARDUINO / ESP32', 'BALANCING BOT', 'CUSTOM ROCKET FC', 'CUSTOM HARDWARE'].map(p => (
+              {['BALANCING BOT', 'PX4 DRONE', 'ARDUPILOT DRONE', 'ROS2 ARM', 'HUMANOID', 'LEGGED ROBOT', 'EVTOL', 'SURGICAL ROBOT', 'FACTORY ARM', 'AUV', 'SATELLITE', 'DEFENCE UGV', 'ROCKET FC', 'ESP32', 'CUSTOM'].map(p => (
                 <button key={p} onClick={() => handleSendMessage(`I want to integrate with ${p}`)} className="text-left px-3 py-2 border border-border text-textSecondary font-body text-[11px] hover:border-cyan hover:text-cyan transition-all uppercase tracking-widest">{p}</button>
               ))}
             </div>
@@ -3930,8 +3874,10 @@ function AppContent() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 w-full">
                   {[
-                    "I have a ROS2 robot",
-                    "I have a drone (PX4 or ArduPilot)",
+                    "I have a balancing bot with Arduino",
+                    "I have a PX4 drone",
+                    "I have an ArduPilot drone",
+                    "I have a ROS2 robot arm",
                     "I have a humanoid robot",
                     "I have a legged robot or quadruped",
                     "I have an eVTOL aircraft",
@@ -3940,9 +3886,8 @@ function AppContent() {
                     "I have an AUV or underwater robot",
                     "I have a satellite or spacecraft",
                     "I have a defence UGV",
-                    "I have an Arduino or ESP32",
-                    "I have a balancing bot",
                     "I have a custom rocket",
+                    "I have an ESP32 robot",
                     "I have custom hardware"
                   ].map(chip => (
                     <button key={chip} onClick={() => handleSendMessage(chip)} className="p-4 border border-border text-textSecondary font-mono text-xs hover:border-cyan hover:text-cyan transition-all text-left">{chip}</button>
