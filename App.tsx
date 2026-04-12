@@ -2049,6 +2049,7 @@ function AppContent() {
   const [view, setView] = useState<View>('home');
   const [activeSection, setActiveSection] = useState('overview');
   const [manualSection, setManualSection] = useState('intro');
+  const [isControlActive, setIsControlActive] = useState(false);
 
   useEffect(() => {
     if (user && user.email === 'ashwanth123creations@gmail.com') {
@@ -2134,6 +2135,26 @@ function AppContent() {
 
   // Persistent WebSocket for Real-time Telemetry
   const socketRef = useRef<WebSocket | null>(null);
+
+  const sendCommand = (active: boolean, action?: number[], x_ref?: number[]) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({
+        op: 'command',
+        msg: {
+          active,
+          action,
+          x_ref,
+          timestamp: Date.now()
+        }
+      }));
+    }
+  };
+
+  useEffect(() => {
+    if (isSystemConnected) {
+      sendCommand(isControlActive);
+    }
+  }, [isControlActive, isSystemConnected]);
 
   useEffect(() => {
     if (isSystemConnected && (connectionMode === 'ros2_websocket' || connectionMode === 'mavlink_bridge') && endpoint) {
@@ -4773,6 +4794,12 @@ end`}
             </div>
             
             <div className="absolute top-6 right-6 z-10 flex gap-2">
+              <button 
+                onClick={() => setIsControlActive(!isControlActive)}
+                className={`px-3 py-2 border font-display text-[10px] font-bold uppercase tracking-widest transition-all ${isControlActive ? 'bg-green text-black border-green' : 'bg-bgRaised text-textDim border-border hover:border-green hover:text-green'}`}
+              >
+                {isControlActive ? '● ACTIVE CONTROL ON' : '○ ACTIVE CONTROL OFF'}
+              </button>
               {systemProfile.domain === 'ROCKETS' && (
                 <button 
                   onClick={() => setShowImportOverlay(true)}

@@ -38,6 +38,13 @@ import sys
 import math
 import platform as _platform
 
+# Try to import PhysiCore for active control
+try:
+    from physicore import PhysiCore, PhysiCoreConfig
+    HAS_PHYSICORE = True
+except ImportError:
+    HAS_PHYSICORE = False
+
 def check_deps():
     missing = []
     try:
@@ -181,6 +188,16 @@ class TelemetryState:
 state              = TelemetryState()
 connected_clients  = set()
 
+# Downlink command state
+command_state = {
+    "action": None,
+    "timestamp": 0,
+    "active": False,
+    "x_ref": None
+}
+
+engine = None
+
 # ── MAVLink reader ─────────────────────────────────────────────────────────────
 def mavlink_reader(connection_string: str, baud: int):
     global state
@@ -309,6 +326,34 @@ def robot_serial_reader(connection_string: str, baud: int):
                     state.velocity_z  = float(data.get('vz', 0))
                     state.timestamp   = time.time()
                     state.connected   = True
+
+                    # --- ACTIVE CONTROL LOOP ---
+                    if engine and command_state["active"]:
+                        # Convert state to numpy array for engine
+                        # For balancing bot: [pitch, pitch_rate, x, x_vel]
+                        # We'll use a simplified mapping for now
+                        current_x = np.array([state.pitch, state.gyro_y, 0.0, 0.0])
+                        target_x  = command_state["x_ref"] if command_state["x_ref"] is not None else np.zeros(4)
+                        
+                        # Step engine
+                        step_res = engine.step(current_x, target_x)
+                        command_state["action"] = step_res.action.tolist()
+                        command_state["timestamp"] = time.time()
+                        
+                        # Observe (Online Learning)
+                        # In a real loop, we'd wait for the next state, 
+                        # but for now we'll observe the transition
+                        engine.observe(current_x, step_res.action, current_x) # Dummy observe for now
+
+                    # Downlink: Send command back if active
+                    if command_state["active"] and command_state["action"] is not None:
+                        # Only send if command is fresh (less than 500ms old)
+                        if time.time() - command_state["timestamp"] < 0.5:
+                            cmd_payload = json.dumps({
+                                "op": "command",
+                                "action": command_state["action"]
+                            }) + "\n"
+                            ser.write(cmd_payload.encode())
                 except json.JSONDecodeError:
                     pass
                 except Exception as e:
@@ -512,6 +557,12 @@ async def ws_handler(websocket):
                 data = json.loads(message)
                 if data.get("op") == "ping":
                     await websocket.send(json.dumps({"op": "pong"}))
+                elif data.get("op") == "command":
+                    msg = data.get("msg", {})
+                    command_state["action"] = msg.get("action")
+                    command_state["active"] = msg.get("active", True)
+                    command_state["x_ref"]  = msg.get("x_ref")
+                    command_state["timestamp"] = time.time()
             except Exception:
                 pass
     except websockets.exceptions.ConnectionClosed:
@@ -624,11 +675,20 @@ Examples:
     parser.add_argument('--topic',      default='/imu/data')
     parser.add_argument('--platform',   default=None, choices=list(PLATFORM_PROFILES.keys()))
     parser.add_argument('--test',       action='store_true')
+    parser.add_argument('--active',     action='store_true', help="Enable active PhysiCore control loop")
     args = parser.parse_args()
 
     if args.test:
         run_test()
         sys.exit(0)
+
+    if args.active:
+        if not HAS_PHYSICORE:
+            print("[BRIDGE] Error: PhysiCore package not found. Active mode disabled.")
+        else:
+            print(f"[BRIDGE] Initializing PhysiCore Engine for {args.platform or 'ground_rover'}...")
+            import numpy as np
+            engine = PhysiCore.for_platform(args.platform or "ground_rover")
 
     if args.platform:
         profile = PLATFORM_PROFILES[args.platform]
