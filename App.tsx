@@ -1869,6 +1869,425 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
 
 // --- MAIN APP ---
 
+function detectHardwareType(msg: string): string {
+  const m = msg.toLowerCase();
+  if (m.match(/balanc|self.?balanc|inverted.?pendulum|segway/)) return 'balancing_bot';
+  if (m.match(/px4|pixhawk/)) return 'px4_drone';
+  if (m.match(/ardupilot|apm|cube.?pilot/)) return 'ardupilot_drone';
+  if (m.match(/ros2|ros 2|moveit|ur5|ur10|kuka|fanuc|abb|cobot|robot.?arm|manipulator/)) return 'ros2_arm';
+  if (m.match(/humanoid|unitree|figure.ai|boston.?dynamic|g1\b|h1\b|apollo/)) return 'humanoid';
+  if (m.match(/legged|quadruped|anymal|cheetah|go1|go2/)) return 'legged';
+  if (m.match(/evtol|e.?vtol|air.?taxi|tilt.?rotor/)) return 'evtol';
+  if (m.match(/surgical|medical.?robot|endoscop|ophthalm/)) return 'surgical';
+  if (m.match(/auv|underwater|subsea|bluerov|dvl/)) return 'auv';
+  if (m.match(/satellite|spacecraft|orbital|cubesat|reaction.?wheel/)) return 'satellite';
+  if (m.match(/ugv|military.?robot|defence|defense|anduril/)) return 'ugv';
+  if (m.match(/rocket|sounding.?rocket|flight.?computer/)) return 'rocket';
+  if (m.match(/esp32|esp8266/)) return 'esp32';
+  if (m.match(/drone|quadrotor|fpv|multirotor/)) return 'drone';
+  if (m.match(/rover|ground.?robot|amr|warehouse.?robot|agv|logistics/)) return 'rover';
+  if (m.match(/arduino/)) return 'arduino';
+  return '';
+}
+
+function runIntegrationEngineer(userMsg: string, history: any[]): string {
+  const userTurns = history.filter((m: any) => m.role === 'user');
+  const step = userTurns.length;
+  const hw = detectHardwareType(userMsg);
+
+  // Step 0 or unknown hardware — show menu
+  if (step === 0 || (!hw && step <= 1)) {
+    return `> INTEGRATION ENGINEER:
+I generate complete, production-ready PhysiCore integration code for any hardware.
+No API keys. No placeholders. Real code that works.
+
+What are you integrating?
+
+  • Balancing bot (Arduino/ESP32 + MPU6050)
+  • PX4 drone (Pixhawk, PX4-based)
+  • ArduPilot drone
+  • ROS2 robot arm (UR, KUKA, Fanuc, custom)
+  • Humanoid robot (Unitree, Figure AI, Boston Dynamics)
+  • Legged robot (ANYmal, Spot, Go1/Go2)
+  • eVTOL aircraft
+  • Surgical robot
+  • AUV / underwater robot
+  • Satellite / spacecraft
+  • Rocket / sounding rocket
+  • Ground rover / AMR
+  • Custom hardware
+
+Just tell me what you have — I'll ask a few questions then generate your exact code.`;
+  }
+
+  // Detect from first user message if not detected yet
+  const firstMsg = userTurns[0]?.content || userMsg;
+  const detectedHw = hw || detectHardwareType(firstMsg) || 'custom';
+
+  // Route to hardware-specific flows
+  const flows: Record<string, string[]> = {
+    balancing_bot: [
+      `> INTEGRATION ENGINEER:
+Balancing bot detected.
+
+What IMU sensor are you using?
+  • MPU6050 (most common, cheap)
+  • BNO055 (absolute orientation)
+  • MPU9250
+  • Other`,
+      `> INTEGRATION ENGINEER:
+Got it. What motor driver?
+  • L298N
+  • TB6612FNG
+  • DRV8833
+  • Other`,
+      `> INTEGRATION ENGINEER:
+Approximate robot mass in kg? (e.g. 1.2)
+And what microcontroller — Arduino Uno/Nano, Arduino Mega, or ESP32?`,
+      `> INTEGRATION ENGINEER:
+Here is your complete PhysiCore balancing bot integration.
+
+FIRMWARE — Flash this to your Arduino:
+Use the file: firmware/balancing_bot/physicore_active.ino
+It reads your REAL IMU and applies PhysiCore motor commands.
+
+STEP 1 — Install Arduino libraries:
+  Sketch → Include Library → Manage Libraries
+  Install: "MPU6050_light" by rfetick
+  Install: "ArduinoJson" by Benoit Blanchon (v6.x)
+
+STEP 2 — Set your motor pins at the top of the .ino file:
+  const int L_EN=5, L_IN1=4, L_IN2=3;  ← change to your wiring
+  const int R_EN=6, R_IN1=7, R_IN2=8;
+
+STEP 3 — Flash and verify:
+  Open Serial Monitor at 115200 baud
+  Tilt the robot → you must see pitch values changing in real time
+  {"pitch":8.4,"gyro_y":-2.1,...} ← this confirms real IMU data
+
+STEP 4 — Run the bridge:
+  pip install pymavlink websockets aiohttp pyserial
+  python physicore_bridge.py --platform balancing_bot_arduino --connection COM3 --baud 115200
+  (Windows: COM3 | Mac: /dev/cu.usbserial-XXXX | Linux: /dev/ttyUSB0)
+
+STEP 5 — Connect dashboard:
+  Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+STEP 6 — Activate PhysiCore control:
+  Click "ACTIVE CONTROL ON" in the dashboard
+  PhysiCore computes optimal motor torque using CEM-MPC
+  Watch the mass estimate update in the sidebar — that is SystemID converging on your real hardware
+
+Ask me anything: wiring, troubleshooting, tuning the balance point.`,
+    ],
+
+    px4_drone: [
+      `> INTEGRATION ENGINEER:
+PX4 drone detected.
+
+How is your laptop/companion computer connected to the flight controller?
+  • USB directly to Pixhawk
+  • UDP via WiFi (QGroundControl default — port 14550)
+  • UART telemetry radio`,
+      `> INTEGRATION ENGINEER:
+Drone total mass with battery in kg? (e.g. 1.5)`,
+      `> INTEGRATION ENGINEER:
+Complete PX4 integration:
+
+STEP 1 — Install dependencies:
+  pip install pymavlink websockets aiohttp
+
+STEP 2 — Enable MAVLink in QGroundControl:
+  Vehicle Setup → Telemetry → enable UDP on port 14550
+
+STEP 3 — Run the bridge:
+  python physicore_bridge.py --platform px4_quadrotor --connection udp:14550
+
+STEP 4 — Connect dashboard:
+  Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+STEP 5 — Fly and activate:
+  Arm your drone. Click "ACTIVE CONTROL ON" in dashboard.
+  PhysiCore reads real MAVLink telemetry at 60Hz.
+  Mass estimate adapts from real flight data — SystemID convergence in ~300 steps.
+
+PhysiCore uses 13-dimensional quaternion state for your drone — no gimbal lock at any attitude.`,
+    ],
+
+    ardupilot_drone: [
+      `> INTEGRATION ENGINEER:
+ArduPilot detected.
+
+Frame type?
+  • Quadrotor
+  • Hexarotor
+  • Fixed-wing plane
+  • VTOL`,
+      `> INTEGRATION ENGINEER:
+Connection method?
+  • USB to laptop
+  • UDP telemetry (Mission Planner)
+  • Telemetry radio`,
+      `> INTEGRATION ENGINEER:
+Complete ArduPilot integration:
+
+STEP 1 — pip install pymavlink websockets aiohttp
+
+STEP 2 — Enable telemetry in Mission Planner:
+  Config → Planner → ensure mavlink UDP enabled on port 14550
+
+STEP 3 — Run bridge:
+  python physicore_bridge.py --platform ardupilot_quadrotor --connection udp:14550
+
+STEP 4 — Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+STEP 5 — Click "ACTIVE CONTROL ON" to start PhysiCore adaptive control.`,
+    ],
+
+    ros2_arm: [
+      `> INTEGRATION ENGINEER:
+ROS2 arm detected.
+
+Which ROS2 distribution?
+  • Humble (recommended)
+  • Jazzy
+  • Iron`,
+      `> INTEGRATION ENGINEER:
+What is your joint states topic?
+  Run: ros2 topic list
+  Usually: /joint_states
+
+Also — how many joints (DOF)?`,
+      `> INTEGRATION ENGINEER:
+Complete ROS2 arm integration:
+
+STEP 1 — Run the bridge:
+  python physicore_bridge.py --platform ros2_manipulator
+
+STEP 2 — The bridge auto-subscribes to:
+  /joint_states (joint positions and velocities)
+  /ft_sensor/wrench (force-torque if available)
+  /imu/data
+
+STEP 3 — Connect dashboard:
+  Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+STEP 4 — Move your arm and watch:
+  Joint positions appear in real time
+  PhysiCore computes adaptive joint torques
+  Gravity compensation active — mass estimate updates from force data
+
+STEP 5 — Click "ACTIVE CONTROL ON" for PhysiCore to take control.`,
+    ],
+
+    humanoid: [
+      `> INTEGRATION ENGINEER:
+Humanoid robot detected.
+
+Which platform?
+  • Unitree G1
+  • Unitree H1
+  • Boston Dynamics Spot
+  • Figure AI Apollo
+  • Custom / other`,
+      `> INTEGRATION ENGINEER:
+Control interface?
+  • ROS2 (publish /joint_states)
+  • Unitree SDK
+  • Boston Dynamics SDK
+  • Custom`,
+      `> INTEGRATION ENGINEER:
+Complete humanoid integration:
+
+STEP 1 — Ensure your robot publishes /joint_states in ROS2:
+  For Unitree: source unitree_ros2 workspace, run ros2 topic list
+  For Spot: ensure spot_ros2 driver is running
+  Verify: ros2 topic echo /joint_states --once
+
+STEP 2 — Run the bridge:
+  python physicore_bridge.py --platform ros2_legged
+
+STEP 3 — Connect dashboard:
+  Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+STEP 4 — Click "ACTIVE CONTROL ON"
+  PhysiCore uses legged_robot dynamics (12-dim)
+  Terrain adaptation and contact model active
+  Mass and friction parameters adapt from real motion data
+
+PhysiCore Sentinel OS runs in NOMINAL mode for humanoids.
+If uncertainty exceeds threshold, it automatically switches to CAUTIOUS mode.`,
+    ],
+
+    rocket: [
+      `> INTEGRATION ENGINEER:
+Rocket detected.
+
+What flight computer are you using?
+  • Arduino Mega
+  • Teensy 4.1
+  • ESP32
+  • Custom FC`,
+      `> INTEGRATION ENGINEER:
+What barometer?
+  • BMP280
+  • MS5611
+  • BMP388
+  • Other`,
+      `> INTEGRATION ENGINEER:
+Complete rocket integration:
+
+Your flight computer must output this JSON once per line at 20-50Hz via serial:
+{"altitude":0.0,"velocity":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":9.81,"pitch":0.0,"mass":1.0,"phase":"IDLE","timestamp":0}
+
+STEP 1 — Implement the serial output above on your FC
+  Read altitude from your barometer
+  Read acceleration from your IMU
+  Compute velocity from altitude differencing
+  Output phase: IDLE / BOOST / COAST / RECOVERY
+
+STEP 2 — Run bridge:
+  pip install pymavlink websockets aiohttp pyserial
+  python physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0 --baud 115200
+
+STEP 3 — Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+PhysiCore rocket engine features:
+  ISA atmosphere (real density vs altitude)
+  Mach-dependent drag (transonic spike at M=0.9)
+  Mass depletion tracking (Tsiolkovsky equation)
+  Wind field via Dryden turbulence model`,
+    ],
+
+    auv: [
+      `> INTEGRATION ENGINEER:
+AUV / underwater robot detected.
+
+Do you have a DVL (Doppler Velocity Log)?
+  • Yes
+  • No — IMU and depth only`,
+      `> INTEGRATION ENGINEER:
+ROS2 distribution?
+  • Humble
+  • Iron
+  • Jazzy`,
+      `> INTEGRATION ENGINEER:
+Complete AUV integration:
+
+STEP 1 — Run bridge:
+  python physicore_bridge.py --platform ros2_auv
+
+STEP 2 — Bridge subscribes to:
+  /imu/data — orientation and angular velocity
+  /depth — from pressure sensor (fluid_pressure message)
+  /dvl/velocity — bottom-track velocity (if DVL available)
+
+STEP 3 — Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+
+PhysiCore AUV dynamics:
+  Nonlinear quadratic drag model (more accurate than linear)
+  Buoyancy correction
+  Depth from fluid pressure: altitude = -(P - 101325) / (1025 × 9.81)`,
+    ],
+  };
+
+  const genericFlow = [
+    `> INTEGRATION ENGINEER:
+What type of system are you integrating?
+  • Ground robot / rover
+  • Aerial vehicle (drone)
+  • Manipulator arm
+  • Legged / humanoid
+  • Underwater vehicle
+  • Rocket / spacecraft
+  • Other`,
+    `> INTEGRATION ENGINEER:
+What is your communication interface?
+  • ROS2
+  • Arduino / ESP32 serial
+  • MAVLink (PX4 / ArduPilot)
+  • Custom protocol`,
+    `> INTEGRATION ENGINEER:
+For custom hardware, your device must send this JSON format once per line at 20-50Hz:
+
+{"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":9.81,"motor_l":0,"motor_r":0,"timestamp":0}
+
+Then run:
+  pip install pymavlink websockets aiohttp pyserial
+  python physicore_bridge.py --mode robot_serial --connection COM3 --baud 115200
+
+Open PhysiCore → MAVLINK → ws://localhost:8765 → Connect
+Click "ACTIVE CONTROL ON" to start adaptive control.`,
+  ];
+
+  // Common troubleshooting
+  const m = userMsg.toLowerCase();
+  if (m.match(/not work|error|fail|can.t connect|doesn.t|won.t|issue|problem/)) {
+    return `> INTEGRATION ENGINEER:
+Troubleshooting checklist:
+
+1. PORT CHECK — Find your correct port:
+   Windows: Device Manager → Ports → note COMx number
+   Mac: ls /dev/cu.* → look for usbserial or usbmodem
+   Linux: ls /dev/tty* → look for ttyUSB0 or ttyACM0
+
+2. CLOSE ARDUINO IDE — It holds the serial port. PhysiCore bridge cannot connect while Arduino IDE is open.
+
+3. BAUD RATE — Must be 115200 in both firmware and bridge command.
+
+4. VERIFY IMU DATA FIRST — Before running bridge, open Arduino Serial Monitor at 115200.
+   Tilt the robot. You MUST see pitch values changing: {"pitch":8.4,...}
+   If pitch stays at 0.0 — IMU is not working. Check wiring: SDA→A4, SCL→A5.
+
+5. BRIDGE COMMAND — Run from the physicore directory:
+   python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3
+
+6. DASHBOARD — Endpoint must be exactly: ws://localhost:8765 (not https, not http)
+
+7. ACTIVE CONTROL — After connecting, click "ACTIVE CONTROL ON" button.
+   PhysiCore only sends commands when this is enabled.
+
+Tell me what you see and I will give you the specific fix.`;
+  }
+
+  if (m.match(/port|com\d|ttyusb|ttyacm|usbserial/)) {
+    return `> INTEGRATION ENGINEER:
+Finding your serial port:
+
+Windows:
+  Device Manager → Ports (COM & LPT) → your Arduino appears as "USB Serial Device (COM3)"
+  Use: --connection COM3  (or COM4, COM5 — whatever Device Manager shows)
+
+Mac:
+  Open Terminal: ls /dev/cu.*
+  Look for: /dev/cu.usbserial-XXXX  or  /dev/cu.usbmodem-XXXX
+  Use: --connection /dev/cu.usbserial-XXXX
+
+Linux:
+  Open Terminal: ls /dev/tty*
+  Look for: /dev/ttyUSB0  or  /dev/ttyACM0
+  Use: --connection /dev/ttyUSB0
+  If permission denied: sudo chmod 666 /dev/ttyUSB0`;
+  }
+
+  if (m.match(/library|install.*lib|manage.*lib|mpu6050|arduinojson/)) {
+    return `> INTEGRATION ENGINEER:
+Installing Arduino libraries:
+
+1. Open Arduino IDE
+2. Sketch → Include Library → Manage Libraries
+3. Search: MPU6050_light → click Install (by rfetick)
+4. Search: ArduinoJson → click Install (by Benoit Blanchon, version 6.x — NOT version 7)
+
+That's it. Then flash the firmware and open Serial Monitor at 115200 baud.`;
+  }
+
+  // Follow the flow for detected hardware
+  const flow = flows[detectedHw] || genericFlow;
+  const idx = Math.min(step - 1, flow.length - 1);
+  return flow[idx];
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -2819,240 +3238,16 @@ function AppContent() {
     setIsTyping(true);
 
     try {
-      const systemInstruction = `You are the PhysiCore Integration Engineer — the most capable hardware integration assistant ever built for robotics and autonomous systems.
-
-You help anyone — from a student with an Arduino to a team at Figure AI or Anduril — integrate PhysiCore into their exact hardware in the fastest way possible. You generate complete, production-ready, copy-paste code. Nothing is a placeholder. Every value is real.
-
-WHAT PHYSICORE IS:
-PhysiCore is a hybrid uncertainty-aware sim-to-real synchronization engine. It runs at 60Hz on any rigid-body robot. It combines:
-— RK4 4th-order physics integration (O(Δt⁵) accuracy)
-— 3-member residual MLP ensemble (learns what the simulator gets wrong)
-— CEM-MPC optimizer (stochastic model predictive control, 6-step lookahead)
-— Online System ID (windowed gradient + momentum, converges in ~300 steps)
-— Sentinel OS (3-mode safety: NOMINAL → CAUTIOUS → FALLBACK)
-— Universal bridge (MAVLink, ROS2, Serial JSON — any hardware)
-
-PLATFORM SUPPORT (all fully implemented):
-— quadrotor: 13-dim quaternion state, no gimbal lock, ISA atmosphere, wind field
-— fixed_wing: ISA + Mach-dependent drag, Dryden turbulence
-— evtol: smooth VTOL-to-cruise transition dynamics
-— manipulator_arm: 6-DOF joint space with gravity compensation
-— surgical_robot: sub-mm precision, tissue compliance model
-— legged_robot: contact model, terrain adaptation, whole-body
-— balancing_bot: nonlinear inverted pendulum, proven SystemID convergence
-— rocket: ISA atmosphere, Mach drag, J2 perturbation, wind, mass depletion
-— ground_rover: differential drive with terrain slip model
-— auv: nonlinear hydrodynamic drag, buoyancy, DVL support
-— satellite: J2 orbital perturbation, quaternion attitude control
-
-BRIDGE PROFILES (one command connects any hardware):
-— px4_quadrotor: python physicore_bridge.py --platform px4_quadrotor
-— ardupilot_plane: python physicore_bridge.py --platform ardupilot_plane
-— evtol: python physicore_bridge.py --platform evtol
-— ros2_manipulator: python physicore_bridge.py --platform ros2_manipulator
-— ros2_legged: python physicore_bridge.py --platform ros2_legged
-— ros2_ground_rover: python physicore_bridge.py --platform ros2_ground_rover
-— ros2_auv: python physicore_bridge.py --platform ros2_auv
-— ros2_surgical: python physicore_bridge.py --platform ros2_surgical
-— balancing_bot_arduino: python physicore_bridge.py --platform balancing_bot_arduino --connection COM3
-— custom_rocket_fc: python physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0
-— ground_rover_serial: python physicore_bridge.py --platform ground_rover_serial --connection COM3
-— satellite_serial: python physicore_bridge.py --platform satellite_serial --connection COM3
-
-INTEGRATION WORKFLOW — follow this exactly:
-Phase 1 DISCOVERY: Ask ONE question at a time. Gather: (1) hardware type, (2) communication interface, (3) sensors available, (4) microcontroller/computer, (5) operating system, (6) any existing control stack.
-Phase 2 CONFIRM: Summarize what you know. State the exact platform and bridge command that will be used.
-Phase 3 GENERATE: Output complete code. No placeholders. No TODOs. Real values injected from what the user told you.
-Phase 4 GUIDE: Give the exact 5 steps to connect. Always end every code generation with these exact steps:
-  STEP 1 — Flash or run the generated code on your hardware.
-  STEP 2 — On your laptop: pip install pymavlink websockets aiohttp pyserial
-  STEP 3 — Run the bridge command for your platform (shown above).
-  STEP 4 — Open Physicore Dashboard. Click MAVLINK. Set endpoint to ws://localhost:8765. Click Connect.
-  STEP 5 — Your real telemetry appears. PhysiCore starts learning your hardware immediately.
-Phase 5 Q&A: Answer any question about the integration. Reference the specific code you generated.
-
-HARDWARE-SPECIFIC RULES:
-
-ARDUINO / ESP32 (balancing bots, ground robots, custom hardware):
-Ask for: IMU type (MPU6050, BNO055, MPU9250), motor driver (L298N, TB6612, DRV8833), baud rate.
-Generate complete Arduino .ino file with:
-— IMU initialization for their exact sensor
-— sendPhysicoreTelemetry() function that outputs single-line JSON at 20Hz
-— JSON format: {"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"motor_l":0,"motor_r":0,"timestamp":0}
-— Never use Serial.print multiple times — always Serial.println(jsonString) once per cycle
-Bridge command: python physicore_bridge.py --platform balancing_bot_arduino --connection COM3 --baud 115200
-
-PX4 DRONES:
-Ask for: vehicle type (quadrotor/fixed-wing/VTOL), connection (UDP/serial), companion computer.
-Generate: QGroundControl connection config + MAVLink parameter list for Physicore.
-Bridge command: python physicore_bridge.py --platform px4_quadrotor --connection udp:14550
-
-ARDUPILOT DRONES:
-Ask for: frame type, flight controller hardware, telemetry radio or USB.
-Generate: ArduPilot parameter file + companion computer setup script.
-Bridge command: python physicore_bridge.py --platform ardupilot_plane --connection udp:14550
-
-ROS2 ROBOTS (manipulators, legged, ground rovers, AUVs):
-Ask for: ROS2 distribution (Humble/Jazzy/Iron), robot description (URDF available?), topic names.
-Generate: Complete ROS2 Python node that subscribes to their topics and republishes in Physicore format.
-Include: package.xml, setup.py, the node file — complete and runnable.
-Bridge command: python physicore_bridge.py --platform ros2_[type]
-
-HUMANOIDS (Boston Dynamics Spot, Unitree G1/H1, Figure AI Apollo):
-Ask for: SDK version, joint count, control interface (ROS2/proprietary SDK).
-For Unitree: generate unitree_ros2 subscriber for /joint_states and /imu
-For Boston Dynamics: generate Spot SDK wrapper that reads state and feeds bridge
-For Figure AI: generate ROS2 subscriber for their joint state topics
-Platform: ros2_legged — captures 12-dim state from IMU + odometry + joint positions
-
-Evtol (Archer Midnight, Beta ALIA, Joby S4, Wisk Cora):
-Ask for: flight controller (PX4/custom), number of rotors, transition airspeed.
-Generate: Custom VTOL MAVLink parameter set + transition detection logic.
-Bridge command: python physicore_bridge.py --platform evtol
-
-ROCKETS (sounding rockets, Ares Industries, amateur high-power):
-Ask for: flight computer type, sensors (barometer/IMU/GPS), pyro channels, baud rate.
-Generate: Flight computer serial output code + custom bridge parser for their format.
-Serial JSON: {"altitude":0.0,"velocity":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":0.0,"pitch":0.0,"yaw":0.0,"thrust":0.0,"mass":0.0,"phase":"BOOST","timestamp":0}
-Bridge command: python physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0 --baud 115200
-
-SURGICAL ROBOTS (CMR Versius, ForSight ophthalmic):
-Ask for: DOF count, ROS2 topics, force-torque sensor availability.
-WARN: Physicore runs in SURGICAL mode — Sentinel OS uses ultra-conservative thresholds (max_uncertainty=0.005, max_residual=0.01). This is 10x more conservative than standard mode.
-Generate: ROS2 node subscribing to /joint_states and /ft_sensor/wrench
-Bridge: python physicore_bridge.py --platform ros2_surgical
-
-AUV / UNDERWATER ROBOTS (Thalassa, BlueROV, research AUVs):
-Ask for: DVL availability, depth sensor type, ROS2 topics.
-Generate: ROS2 node for /imu/data + /depth + /dvl/velocity
-Bridge: python physicore_bridge.py --platform ros2_auv
-Note: PhysiCore AUV uses nonlinear quadratic drag model — ask for vehicle drag coefficient.
-
-SATELLITES / SPACECRAFT:
-Ask for: telemetry downlink format, attitude control actuators (reaction wheels/thrusters), ground station software.
-Generate: Ground station serial parser + Physicore bridge adapter.
-Note: PhysiCore satellite uses J2 perturbation — 0.0125 m/s² correction at LEO. Ask for orbital altitude.
-Bridge: python physicore_bridge.py --platform satellite_serial
-
-FACTORY / COBOT ARMS (Universal Robots UR5/UR10, KUKA, Fanuc, ABB):
-Ask for: robot model, ROS2 MoveIt installed?, existing driver package.
-For UR: generate ur_ros2_driver subscriber wrapper
-For KUKA: generate KUKA RSI interface adapter
-Generate complete ROS2 node + launch file.
-Bridge: python physicore_bridge.py --platform ros2_manipulator
-
-DEFENCE / UGV (Anduril Ghost, ARX Robotics, custom military UGVs):
-For classified systems: generate on-premise deployment script — Physicore API server runs locally, no cloud.
-Ask for: ROS2 nav_msgs/Odometry and sensor_msgs/Imu topics.
-Generate: Complete ROS2 integration + local API server setup.
-Note: For GPS-denied operations, Physicore physics prior maintains state estimation when sensors fail.
-Bridge: python physicore_bridge.py --platform ros2_ground_rover
-
-CODE FORMAT RULES:
-— Start every code block with: [CODE: filename.ext]
-— End every code block with: [/CODE]
-— Never use markdown code fences (no triple backticks)
-— Never use placeholder values like YOUR_VALUE_HERE or TODO
-— Inject the user's actual values (mass, IMU type, baud rate, topic names) into the code
-— Every generated file must be complete and runnable with no modifications
-
-RESPONSE FORMAT:
-— Always prefix responses with: > INTEGRATION ENGINEER:
-— Ask ONE question at a time. Never two.
-— When confirming, list: Platform detected, Bridge command, Integration time estimate.
-— After code generation, always show the exact 5 STEPS.
-— Be specific. Never generic. Reference their exact hardware by name.
-
-CURRENT SYSTEM PROFILE:
-${JSON.stringify(systemProfile)}
-
-PHYSICORE VERSION: v2.0.0
-CURRENT DATE: ${new Date().toISOString()}`;
-
-      const result = await callClaude(systemInstruction, newHistory);
-
-      if (result.success) {
-        const aiText = result.text || "> INTEGRATION ENGINEER: NO RESPONSE RECEIVED.";
-        const aiMsg: Message = { role: 'ai', content: aiText, timestamp: formatTime(new Date()) };
-        setConversationHistory(prev => [...prev, aiMsg]);
-        
-        // Extraction logic
-        const updatedProfile = { ...systemProfile };
-        if (aiText.includes('PLATFORM:')) updatedProfile.platform = aiText.split('PLATFORM:')[1].split('\n')[0].trim();
-        if (aiText.includes('FIRMWARE:')) updatedProfile.firmware = aiText.split('FIRMWARE:')[1].split('\n')[0].trim();
-        if (aiText.includes('DOMAIN:')) updatedProfile.domain = aiText.split('DOMAIN:')[1].split('\n')[0].trim();
-        if (aiText.includes('MASS CLASS:')) updatedProfile.massClass = aiText.split('MASS CLASS:')[1].split('\n')[0].trim();
-        if (aiText.includes('CONNECTION:')) updatedProfile.connectionMode = aiText.split('CONNECTION:')[1].split('\n')[0].trim();
-        if (aiText.includes('PROTOCOLS:')) updatedProfile.protocols = aiText.split('PROTOCOLS:')[1].split('\n')[0].trim();
-        
-        setSystemProfile(updatedProfile);
-
-        // Simulation Config extraction
-        const simConfigMatch = aiText.match(/\[SIMULATION_CONFIG\]([\s\S]*?)\[\/SIMULATION_CONFIG\]/);
-        if (simConfigMatch) {
-          try {
-            const config = JSON.parse(simConfigMatch[1].trim());
-            // Sanitize numeric fields to avoid NaN
-            const sanitizedConfig: any = {};
-            Object.keys(config).forEach(key => {
-              const val = config[key];
-              if (typeof val === 'number') {
-                sanitizedConfig[key] = isNaN(val) ? 0 : val;
-              } else if (typeof val === 'string' && !isNaN(parseFloat(val))) {
-                sanitizedConfig[key] = parseFloat(val);
-              } else {
-                sanitizedConfig[key] = val;
-              }
-            });
-            setSimulationConfig(sanitizedConfig);
-          } catch (e) {
-            console.error("Failed to parse simulation config:", e);
-          }
-        }
-
-        // Code parsing
-        const codeMatches = aiText.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/g);
-        if (codeMatches) {
-          const newFiles = codeMatches.map(match => {
-            const parts = match.match(/\[CODE: (.*?)\]([\s\S]*?)\[\/CODE\]/);
-            return { filename: parts![1], content: parts![2].trim(), extension: parts![1].split('.').pop() || '' };
-          });
-          setGeneratedFiles(prev => [...prev, ...newFiles]);
-          setIntegrationPhase(3); // Transition to wizard steps phase
-        }
-      } else {
-        let errorMsg = '> SYSTEM ERROR: ';
-        switch(result.error) {
-          case 'NO_API_KEY': errorMsg += 'Gemini API key missing. Please provide one in the header.'; break;
-          case 'HTTP_401': errorMsg += 'Invalid API key. Check your credentials.'; break;
-          case 'HTTP_403': errorMsg += 'API key does not have permission for this model.'; break;
-          case 'HTTP_429': errorMsg += 'Rate limit exceeded. Please wait.'; break;
-          case 'TIMEOUT': errorMsg += 'Request timed out. Falling back to symbolic mode...'; break;
-          case 'NETWORK_ERROR': errorMsg += 'Network error. Falling back to symbolic mode...'; break;
-          default: errorMsg += `API call failed (${result.error}).`;
-        }
-
-        const aiMsg: Message = { 
-          role: 'ai', 
-          content: errorMsg, 
-          timestamp: formatTime(new Date()) 
-        };
-        setConversationHistory(prev => [...prev, aiMsg]);
-        
-        // If it's a timeout or network error, we can try symbolic mode
-        if (result.error === 'TIMEOUT' || result.error === 'NETWORK_ERROR') {
-          setTimeout(() => {
-            const symbolicMsg: Message = {
-              role: 'ai',
-              content: '> INTEGRATION ENGINEER (SYMBOLIC_MODE): I am currently operating in low-power symbolic mode due to network latency. I can still assist with basic system profile questions.',
-              timestamp: formatTime(new Date())
-            };
-            setConversationHistory(prev => [...prev, symbolicMsg]);
-          }, 1000);
-        }
-      }
+      // Zero-API Integration Engineer — pure local logic, never fails, no network
+      const response = runIntegrationEngineer(msg, conversationHistory);
+      const aiMsg: Message = {
+        role: 'ai',
+        content: response,
+        timestamp: formatTime(new Date())
+      };
+      setConversationHistory(prev => [...prev, aiMsg]);
     } catch (error) {
-      console.error("AI Error:", error);
+      console.error('Integration error:', error);
     } finally {
       setIsTyping(false);
     }

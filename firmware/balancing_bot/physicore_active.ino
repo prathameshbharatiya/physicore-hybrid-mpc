@@ -1,119 +1,123 @@
 /*
- * PhysiCore Active Control Firmware: Balancing Bot
- * ===============================================
- * This firmware allows a self-balancing robot to be controlled 
- * by the PhysiCore Engine via the Universal Bridge.
- * 
- * Features:
- *  - Real-time JSON telemetry (50Hz)
- *  - Command listener for "op: command"
- *  - Seamless handover from internal PID to PhysiCore
- * 
- * Dependencies:
- *  - ArduinoJson (Install via Library Manager)
- *  - MPU6050 (or your preferred IMU library)
+ * PhysiCore Balancing Bot Firmware v2.0
+ * Reads REAL MPU6050 data. Applies PhysiCore commands to real motors.
+ *
+ * INSTALL LIBRARIES FIRST (Sketch → Include Library → Manage Libraries):
+ *   1. "MPU6050_light" by rfetick
+ *   2. "ArduinoJson" by Benoit Blanchon (version 6.x)
+ *
+ * WIRING:
+ *   MPU6050: SDA→A4, SCL→A5, VCC→3.3V, GND→GND
+ *   L298N:   ENA→5, IN1→4, IN2→3, ENB→6, IN3→7, IN4→8
  */
 
-#include <ArduinoJson.h>
 #include <Wire.h>
+#include <MPU6050_light.h>
+#include <ArduinoJson.h>
 
-// --- CONFIGURATION ---
-const int BAUD_RATE = 115200;
-const int LOOP_MS   = 20; // 50Hz
+// ── CONFIGURE FOR YOUR HARDWARE ───────────────────────────────────────────
+const int L_EN=5, L_IN1=4, L_IN2=3;   // Left motor (L298N)
+const int R_EN=6, R_IN1=7, R_IN2=8;   // Right motor (L298N)
+const float BALANCE_POINT = 0.0;        // Tune: degrees when robot stands upright
+const float MAX_TORQUE    = 100.0;      // Scale factor for PhysiCore torque
 
-// Motor Pins (Example for L298N or similar)
-const int L_PWM = 5;
-const int L_IN1 = 4;
-const int L_IN2 = 3;
-const int R_PWM = 6;
-const int R_IN1 = 7;
-const int R_IN2 = 8;
+// Internal PID (safety fallback when PhysiCore not connected)
+const float KP=35.0, KI=0.5, KD=1.2;
+// ─────────────────────────────────────────────────────────────────────────
 
-// --- STATE ---
-float pitch = 0.0;
-float gyro_y = 0.0;
-float motor_cmd = 0.0;
-bool  physicore_active = false;
-unsigned long last_cmd_time = 0;
+const int BAUD_RATE=115200, LOOP_MS=20;
+MPU6050 mpu(Wire);
+
+float pitch=0, pitch_rate=0, motor_l=0, motor_r=0;
+bool  physicore_active=false;
+unsigned long last_cmd=0, last_tx=0;
+float pid_integral=0, prev_error=0;
 
 void setup() {
   Serial.begin(BAUD_RATE);
   Wire.begin();
-  
-  pinMode(L_PWM, OUTPUT);
-  pinMode(L_IN1, OUTPUT);
-  pinMode(L_IN2, OUTPUT);
-  pinMode(R_PWM, OUTPUT);
-  pinMode(R_IN1, OUTPUT);
-  pinMode(R_IN2, OUTPUT);
+  pinMode(L_EN,OUTPUT); pinMode(L_IN1,OUTPUT); pinMode(L_IN2,OUTPUT);
+  pinMode(R_EN,OUTPUT); pinMode(R_IN1,OUTPUT); pinMode(R_IN2,OUTPUT);
+  applyMotors(0);
 
-  // Initialize IMU here...
+  byte status = mpu.begin();
+  while (status != 0) {
+    Serial.println("{\"error\":\"MPU6050 not found — check wiring SDA->A4 SCL->A5\"}");
+    delay(500);
+    status = mpu.begin();
+  }
+  Serial.println("{\"status\":\"calibrating\",\"message\":\"Keep robot STILL for 3 seconds\"}");
+  mpu.calcOffsets(true, true);
+  Serial.println("{\"status\":\"ready\",\"message\":\"PhysiCore firmware ready\"}");
 }
 
 void loop() {
-  unsigned long start_time = millis();
+  unsigned long now = millis();
 
-  // 1. READ SENSORS
-  // Replace with real IMU code (e.g. mpu.getRotation(&gx, &gy, &gz))
-  pitch  += (random(-100, 100) / 1000.0); // Simulated drift
-  gyro_y  = (random(-50, 50) / 10.0);
+  // 1. READ REAL IMU
+  mpu.update();
+  pitch      = mpu.getAngleX() - BALANCE_POINT;
+  pitch_rate = mpu.getGyroX();
 
-  // 2. SEND TELEMETRY TO PHYSICORE
-  StaticJsonDocument<256> telemetry;
-  telemetry["pitch"]   = pitch;
-  telemetry["gyro_y"]  = gyro_y;
-  telemetry["motor_l"] = motor_cmd;
-  telemetry["motor_r"] = motor_cmd;
-  telemetry["active"]  = physicore_active;
-  
-  serializeJson(telemetry, Serial);
-  Serial.println();
-
-  // 3. LISTEN FOR COMMANDS
-  if (Serial.available()) {
+  // 2. RECEIVE PHYSICORE COMMANDS
+  if (Serial.available() > 0) {
     StaticJsonDocument<256> cmd;
-    DeserializationError err = deserializeJson(cmd, Serial);
-    
-    if (err == DeserializationError::Ok) {
-      if (cmd["op"] == "command") {
-        JsonArray action = cmd["action"];
-        motor_cmd = action[0]; // PhysiCore sends torque/PWM
-        physicore_active = true;
-        last_cmd_time = millis();
+    if (deserializeJson(cmd, Serial) == DeserializationError::Ok) {
+      if (strcmp(cmd["op"], "command") == 0) {
+        JsonArray action = cmd["action"].as<JsonArray>();
+        if (action.size() > 0) {
+          float torque = action[0].as<float>();
+          motor_l = constrain(torque / MAX_TORQUE, -1.0f, 1.0f);
+          motor_r = motor_l;
+          physicore_active = true;
+          last_cmd = now;
+        }
       }
     }
   }
 
-  // 4. SAFETY TIMEOUT
-  // If no command from PhysiCore for 500ms, revert to internal safety
-  if (millis() - last_cmd_time > 500) {
-    physicore_active = false;
-  }
+  // 3. SAFETY TIMEOUT
+  if (now - last_cmd > 500) physicore_active = false;
 
-  // 5. APPLY CONTROL
+  // 4. APPLY CONTROL
   if (physicore_active) {
-    apply_motors(motor_cmd);
+    applyMotors(motor_l);
   } else {
-    // INTERNAL SAFETY PID
-    float error = 0.0 - pitch;
-    float safety_torque = error * 20.0; // Simple P-gain
-    apply_motors(safety_torque);
+    float err = -pitch;
+    pid_integral = constrain(pid_integral + err*(LOOP_MS/1000.0f), -50.0f, 50.0f);
+    float deriv  = (err - prev_error) / (LOOP_MS/1000.0f);
+    float v      = constrain((KP*err + KI*pid_integral + KD*deriv)/255.0f, -1.0f, 1.0f);
+    prev_error   = err;
+    motor_l = motor_r = v;
+    applyMotors(v);
   }
 
-  // Maintain loop rate
-  while (millis() - start_time < LOOP_MS);
+  // 5. SEND TELEMETRY AT 50Hz
+  if (now - last_tx >= LOOP_MS) {
+    last_tx = now;
+    StaticJsonDocument<256> doc;
+    doc["pitch"]   = pitch;
+    doc["roll"]    = mpu.getAngleY();
+    doc["gyro_x"]  = pitch_rate;
+    doc["gyro_y"]  = mpu.getGyroY();
+    doc["gyro_z"]  = mpu.getGyroZ();
+    doc["accel_x"] = mpu.getAccX();
+    doc["accel_y"] = mpu.getAccY();
+    doc["accel_z"] = mpu.getAccZ();
+    doc["motor_l"] = motor_l * MAX_TORQUE;
+    doc["motor_r"] = motor_r * MAX_TORQUE;
+    doc["active"]  = physicore_active;
+    doc["timestamp"] = now;
+    serializeJson(doc, Serial);
+    Serial.println();
+  }
+
+  while (millis() - now < LOOP_MS);
 }
 
-void apply_motors(float val) {
-  // Map -1.0...1.0 to PWM 0...255
-  int pwm = constrain(abs(val) * 255, 0, 255);
-  bool dir = val > 0;
-
-  digitalWrite(L_IN1, dir);
-  digitalWrite(L_IN2, !dir);
-  analogWrite(L_PWM, pwm);
-
-  digitalWrite(R_IN1, dir);
-  digitalWrite(R_IN2, !dir);
-  analogWrite(R_PWM, pwm);
+void applyMotors(float v) {
+  int pwm     = constrain((int)(abs(v)*255), 0, 255);
+  bool fwd    = (v >= 0);
+  digitalWrite(L_IN1, fwd); digitalWrite(L_IN2, !fwd); analogWrite(L_EN, pwm);
+  digitalWrite(R_IN1, fwd); digitalWrite(R_IN2, !fwd); analogWrite(R_EN, pwm);
 }
