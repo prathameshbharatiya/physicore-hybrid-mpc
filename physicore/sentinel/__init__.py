@@ -26,6 +26,6 @@ Usage:
             print("Sentinel: unsafe state detected, fallback active")
 """
 
-from .core import SentinelOS, SentinelConfig, SentinelMode, SentinelLog
+from .core import SentinelOS, SentinelConfig, SentinelMode, SentinelLog, SENTINEL_PRESETS, get_sentinel_config
 
-__all__ = ["SentinelOS", "SentinelConfig", "SentinelMode", "SentinelLog"]
+__all__ = ["SentinelOS", "SentinelConfig", "SentinelMode", "SentinelLog", "SENTINEL_PRESETS", "get_sentinel_config"]

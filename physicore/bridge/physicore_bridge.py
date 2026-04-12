@@ -115,6 +115,21 @@ class TelemetryState:
         self.climb_rate   = 0.0
         self.motor_l      = 0.0
         self.motor_r      = 0.0
+        # Joint states (manipulators, humanoids, legged robots)
+        self.joint_positions  = [0.0] * 6
+        self.joint_velocities = [0.0] * 6
+        self.joint_efforts    = [0.0] * 6
+        # Force/torque (surgical, manipulation)
+        self.force_x  = 0.0
+        self.force_y  = 0.0
+        self.force_z  = 0.0
+        self.torque_x = 0.0
+        self.torque_y = 0.0
+        self.torque_z = 0.0
+        # Depth/pressure (AUV)
+        self.depth    = 0.0
+        # Transition ratio (eVTOL)
+        self.transition_ratio = 0.0
         self.vehicle_type = "UNKNOWN"
         self.domain       = "ROBOTICS"
         self.connected    = False
@@ -145,6 +160,13 @@ class TelemetryState:
                 "throttle":     round(self.throttle,    3),
                 "motor_l":      round(self.motor_l,     1),
                 "motor_r":      round(self.motor_r,     1),
+                "joint_positions":  [round(v, 4) for v in self.joint_positions],
+                "joint_velocities": [round(v, 4) for v in self.joint_velocities],
+                "joint_efforts":    [round(v, 4) for v in self.joint_efforts],
+                "force":    {"x": round(self.force_x, 4), "y": round(self.force_y, 4), "z": round(self.force_z, 4)},
+                "torque":   {"x": round(self.torque_x, 4), "y": round(self.torque_y, 4), "z": round(self.torque_z, 4)},
+                "depth":             round(self.depth, 3),
+                "transition_ratio":  round(self.transition_ratio, 3),
                 "battery":      {"voltage": round(self.battery_v, 2), "percentage": round(self.battery_pct, 1)},
                 "armed":        self.armed,
                 "flight_mode":  self.flight_mode,
@@ -301,23 +323,53 @@ def robot_serial_reader(connection_string: str, baud: int):
 
 # ── ROS2 reader ────────────────────────────────────────────────────────────────
 def ros2_reader(topic: str):
+    """
+    Reads from ROS2 topics.
+    Handles: IMU, GPS, Odometry, JointStates, Wrench, NavSatFix, DVL, depth
+    """
     try:
         import rclpy
         from rclpy.node import Node
-        from sensor_msgs.msg import Imu, NavSatFix
+        from sensor_msgs.msg import Imu, NavSatFix, FluidPressure, Temperature
         from nav_msgs.msg import Odometry
+        from geometry_msgs.msg import WrenchStamped, TwistStamped
     except ImportError:
         print("[BRIDGE] ROS2 requires rclpy. Run: source /opt/ros/humble/setup.bash")
         sys.exit(1)
+
     global state
 
     class BridgeNode(Node):
         def __init__(self):
             super().__init__('physicore_bridge')
+
+            # Universal subscriptions — work for all platforms
             self.create_subscription(Imu,      '/imu/data',  self.imu_cb,  10)
             self.create_subscription(NavSatFix, '/gps/fix',   self.gps_cb,  10)
             self.create_subscription(Odometry,  '/odom',      self.odom_cb, 10)
-            print("[BRIDGE] ROS2 subscribed: /imu/data /gps/fix /odom")
+
+            # Manipulator arm / humanoid — joint states
+            try:
+                from sensor_msgs.msg import JointState
+                self.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
+            except Exception:
+                pass
+
+            # Force/torque sensor — surgical robots, manipulation
+            try:
+                self.create_subscription(WrenchStamped, '/wrench', self.wrench_cb, 10)
+                self.create_subscription(WrenchStamped, '/ft_sensor/wrench', self.wrench_cb, 10)
+            except Exception:
+                pass
+
+            # AUV / underwater
+            try:
+                self.create_subscription(FluidPressure, '/depth', self.depth_cb, 10)
+                self.create_subscription(TwistStamped,  '/dvl/velocity', self.dvl_cb, 10)
+            except Exception:
+                pass
+
+            print("[BRIDGE] ROS2 node started. Topics: /imu/data /gps/fix /odom /joint_states /wrench /depth /dvl/velocity")
 
         def imu_cb(self, msg):
             state.accel_x = msg.linear_acceleration.x
@@ -338,7 +390,69 @@ def ros2_reader(topic: str):
             state.velocity_x = msg.twist.twist.linear.x
             state.velocity_y = msg.twist.twist.linear.y
             state.velocity_z = msg.twist.twist.linear.z
-            state.speed = math.sqrt(state.velocity_x**2 + state.velocity_y**2 + state.velocity_z**2)
+            state.speed = math.sqrt(
+                state.velocity_x**2 + state.velocity_y**2 + state.velocity_z**2
+            )
+            # Extract roll/pitch/yaw from quaternion if available
+            try:
+                q = msg.pose.pose.orientation
+                siny = 2.0 * (q.w * q.z + q.x * q.y)
+                cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+                state.yaw = math.degrees(math.atan2(siny, cosy))
+                sinp = 2.0 * (q.w * q.y - q.z * q.x)
+                state.pitch = math.degrees(math.asin(max(-1.0, min(1.0, sinp))))
+                sinr = 2.0 * (q.w * q.x + q.y * q.z)
+                cosr = 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
+                state.roll = math.degrees(math.atan2(sinr, cosr))
+            except Exception:
+                pass
+
+        def joint_cb(self, msg):
+            # Store joint positions as pitch/roll/yaw (first 3 joints) for display
+            if len(msg.position) >= 1:
+                state.pitch = math.degrees(msg.position[0])
+            if len(msg.position) >= 2:
+                state.roll  = math.degrees(msg.position[1])
+            if len(msg.position) >= 3:
+                state.yaw   = math.degrees(msg.position[2])
+            # Store joint velocities in gyro fields
+            if len(msg.velocity) >= 1:
+                state.gyro_x = math.degrees(msg.velocity[0])
+            if len(msg.velocity) >= 2:
+                state.gyro_y = math.degrees(msg.velocity[1])
+            if len(msg.velocity) >= 3:
+                state.gyro_z = math.degrees(msg.velocity[2])
+            # Store joint efforts (torques) in motor fields
+            if len(msg.effort) >= 1:
+                state.motor_l = msg.effort[0]
+            if len(msg.effort) >= 2:
+                state.motor_r = msg.effort[1]
+            state.connected = True
+            state.timestamp = time.time()
+
+        def wrench_cb(self, msg):
+            # Force/torque sensor — map to acceleration fields
+            state.accel_x = msg.wrench.force.x
+            state.accel_y = msg.wrench.force.y
+            state.accel_z = msg.wrench.force.z
+            state.gyro_x  = msg.wrench.torque.x
+            state.gyro_y  = msg.wrench.torque.y
+            state.gyro_z  = msg.wrench.torque.z
+            state.connected = True
+
+        def depth_cb(self, msg):
+            # AUV depth from fluid pressure: P = rho * g * h
+            state.altitude = -(msg.fluid_pressure - 101325.0) / (1025.0 * 9.81)
+            state.connected = True
+
+        def dvl_cb(self, msg):
+            # DVL bottom-track velocity
+            state.velocity_x = msg.twist.linear.x
+            state.velocity_y = msg.twist.linear.y
+            state.velocity_z = msg.twist.linear.z
+            state.speed = math.sqrt(
+                state.velocity_x**2 + state.velocity_y**2 + state.velocity_z**2
+            )
 
     rclpy.init()
     rclpy.spin(BridgeNode())

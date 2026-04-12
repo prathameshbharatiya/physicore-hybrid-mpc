@@ -71,6 +71,64 @@ class SentinelConfig:
     custom_constraints: List[Callable] = field(default_factory=list)
 
 
+# Platform-specific safety presets
+SENTINEL_PRESETS = {
+    "surgical_robot": SentinelConfig(
+        max_uncertainty_nominal=0.005,
+        max_uncertainty_cautious=0.02,
+        max_residual_nominal=0.01,
+        max_residual_cautious=0.05,
+        max_param_drift=0.1,
+        max_lyapunov_energy=0.1,
+        cautious_timeout_steps=20,
+        fallback_recovery_steps=500,
+    ),
+    "quadrotor": SentinelConfig(
+        max_uncertainty_nominal=0.05,
+        max_uncertainty_cautious=0.2,
+        max_residual_nominal=1.0,
+        max_residual_cautious=5.0,
+        max_lyapunov_energy=500.0,
+    ),
+    "legged_robot": SentinelConfig(
+        max_uncertainty_nominal=0.08,
+        max_uncertainty_cautious=0.25,
+        max_residual_nominal=0.3,
+        max_residual_cautious=1.5,
+        max_lyapunov_energy=200.0,
+    ),
+    "auv": SentinelConfig(
+        max_uncertainty_nominal=0.1,
+        max_uncertainty_cautious=0.4,
+        max_residual_nominal=2.0,
+        max_residual_cautious=10.0,
+        max_lyapunov_energy=5000.0,
+        cautious_timeout_steps=200,
+    ),
+    "evtol": SentinelConfig(
+        max_uncertainty_nominal=0.03,
+        max_uncertainty_cautious=0.1,
+        max_residual_nominal=0.5,
+        max_residual_cautious=2.0,
+        max_lyapunov_energy=10000.0,
+        cautious_timeout_steps=50,
+    ),
+    "satellite": SentinelConfig(
+        max_uncertainty_nominal=0.001,
+        max_uncertainty_cautious=0.01,
+        max_residual_nominal=0.1,
+        max_residual_cautious=1.0,
+        max_lyapunov_energy=100000.0,
+        cautious_timeout_steps=1000,
+        fallback_recovery_steps=5000,
+    ),
+}
+
+def get_sentinel_config(platform: str) -> SentinelConfig:
+    """Get safety config for a platform. Falls back to default."""
+    return SENTINEL_PRESETS.get(platform, SentinelConfig())
+
+
 @dataclass
 class SentinelLog:
     """Single forensic log entry."""

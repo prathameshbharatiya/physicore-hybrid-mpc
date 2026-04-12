@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="physicore",
-    version="1.1.0",
+    version="1.2.0",
     author="Prathamesh Shirbhate",
     author_email="prathamesh@physicore.ai",
     description="Hybrid Uncertainty-Aware Sim-to-Real Synchronization Engine",

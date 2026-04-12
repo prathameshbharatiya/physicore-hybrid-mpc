@@ -28,6 +28,11 @@ import {
 } from 'recharts';
 import { GoogleGenAI } from "@google/genai";
 
+import { stepDynamicsRK4 }    from './src/services/physicsLogic';
+import { updateSystemID }      from './src/services/systemID';
+import { ensembleDynamics }    from './src/services/learnedDynamics';
+import { computeMPCAction }    from './src/services/optimizer';
+
 // --- ROCKET CONSTANTS ---
 const RKT_G = 9.80665;
 const RKT_R_AIR = 287.05;
@@ -2207,6 +2212,37 @@ function AppContent() {
                 residualHistory: [...(prev.residualHistory || []), { x: Date.now(), y: d.residual || 0 }].slice(-30),
                 effortHistory:   [...(prev.effortHistory   || []), { x: Date.now(), y: d.effort   || 0 }].slice(-30),
               }));
+
+              // Feed real telemetry into online SystemID and ensemble learning
+              setTelemetry(prev => {
+                if (prev.pitch !== undefined && connectionMode === 'mavlink_bridge') {
+                  const prevState: any = [
+                    prev.vel?.x || 0, prev.vel?.y || 0,
+                    prev.accel?.x || 0, prev.accel?.y || 0,
+                    prev.pitch || 0, prev.gyro?.y || 0
+                  ];
+                  const currState: any = [
+                    d.velocity?.x || 0, d.velocity?.y || 0,
+                    d.acceleration?.x || 0, d.acceleration?.y || 0,
+                    d.pitch || 0, d.gyro?.y || 0
+                  ];
+                  const action: any = [d.motor_l || 0, d.motor_r || 0];
+                  const updatedParams = updateSystemID(prevState, action, currState, {
+                    mass: prev.mass || 1.0,
+                    friction: prev.friction || 0.3,
+                    gravity: -9.81,
+                    textile_k: 0,
+                    damping: 0.1
+                  });
+                  ensembleDynamics.train(prevState, action, currState, stepDynamicsRK4(prevState, action, updatedParams));
+                  return {
+                    ...prev,
+                    mass: updatedParams.mass,
+                    friction: updatedParams.friction,
+                  };
+                }
+                return prev;
+              });
             }
           } catch (e) {
             console.error("Telemetry Parse Error:", e);
@@ -3848,7 +3884,7 @@ function AppContent() {
           <section className="space-y-4">
             <div className="micro-label text-textDim">Quick Start</div>
             <div className="flex flex-col gap-2">
-              {['ROS2 ROBOT', 'ARDUPILOT / AP_DDS', 'PX4 / uXRCE-DDS', 'ARDUINO / ESP32', 'BALANCING BOT', 'CUSTOM ROCKET FC', 'MATLAB / SIMULINK', 'CUSTOM HARDWARE'].map(p => (
+              {['ROS2 ROBOT', 'PX4 DRONE', 'ARDUPILOT DRONE', 'HUMANOID ROBOT', 'LEGGED ROBOT', 'EVTOL AIRCRAFT', 'SURGICAL ROBOT', 'COBOT / FACTORY ARM', 'AUV UNDERWATER', 'SATELLITE / SPACECRAFT', 'DEFENCE UGV', 'ARDUINO / ESP32', 'BALANCING BOT', 'CUSTOM ROCKET FC', 'CUSTOM HARDWARE'].map(p => (
                 <button key={p} onClick={() => handleSendMessage(`I want to integrate with ${p}`)} className="text-left px-3 py-2 border border-border text-textSecondary font-body text-[11px] hover:border-cyan hover:text-cyan transition-all uppercase tracking-widest">{p}</button>
               ))}
             </div>
@@ -3874,12 +3910,18 @@ function AppContent() {
                 <div className="grid grid-cols-2 gap-4 w-full">
                   {[
                     "I have a ROS2 robot",
-                    "I'm using ArduPilot or PX4",
+                    "I have a drone (PX4 or ArduPilot)",
+                    "I have a humanoid robot",
+                    "I have a legged robot or quadruped",
+                    "I have an eVTOL aircraft",
+                    "I have a surgical robot",
+                    "I have a factory or cobot arm",
+                    "I have an AUV or underwater robot",
+                    "I have a satellite or spacecraft",
+                    "I have a defence UGV",
                     "I have an Arduino or ESP32",
                     "I have a balancing bot",
                     "I have a custom rocket",
-                    "I have a drone",
-                    "I have a MATLAB workflow",
                     "I have custom hardware"
                   ].map(chip => (
                     <button key={chip} onClick={() => handleSendMessage(chip)} className="p-4 border border-border text-textSecondary font-mono text-xs hover:border-cyan hover:text-cyan transition-all text-left">{chip}</button>
