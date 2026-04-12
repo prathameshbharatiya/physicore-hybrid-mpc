@@ -1,23 +1,25 @@
 """
-PhysiCore SDK
-=============
-High-level SDK for integrating PhysiCore into any robotics stack.
-
-Usage:
-    from physicore.sdk import PhysicoreClient
-
-    client = PhysicoreClient()
-    client.configure("quadrotor", {"mass": 1.5, "friction": 0.1})
-
-    while True:
-        state  = robot.get_state()
-        action = client.step(state, x_ref)
-        robot.apply(action)
-        client.observe(state, action, robot.get_state())
+PhysiCore — Hybrid Uncertainty-Aware Sim-to-Real Engine
 """
 
-from .client import PhysicoreClient
-from .simulate import PhysicoreSimulator
-from .analyze  import PhysicoreAnalyzer
+from .core.engine import (
+    PhysiCore, PhysiCoreConfig, ControlStep,
+    PhysicsLayer, ResidualEnsemble, CEMOptimizer, OnlineSystemID,
+    quadrotor_dynamics, fixed_wing_dynamics, evtol_dynamics,
+    manipulator_arm_dynamics, surgical_robot_dynamics, legged_robot_dynamics,
+    balancing_bot_dynamics, rocket_dynamics, ground_rover_dynamics,
+    rover_dynamics, auv_dynamics, satellite_dynamics,
+    PLATFORM_DYNAMICS,
+)
 
-__all__ = ["PhysicoreClient", "PhysicoreSimulator", "PhysicoreAnalyzer"]
+__version__ = "1.3.0"
+__author__  = "Prathamesh Shirbhate"
+__all__ = [
+    "PhysiCore", "PhysiCoreConfig", "ControlStep",
+    "PhysicsLayer", "ResidualEnsemble", "CEMOptimizer", "OnlineSystemID",
+    "quadrotor_dynamics", "fixed_wing_dynamics", "evtol_dynamics",
+    "manipulator_arm_dynamics", "surgical_robot_dynamics", "legged_robot_dynamics",
+    "balancing_bot_dynamics", "rocket_dynamics", "ground_rover_dynamics",
+    "rover_dynamics", "auv_dynamics", "satellite_dynamics",
+    "PLATFORM_DYNAMICS",
+]
