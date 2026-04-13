@@ -2333,10 +2333,10 @@ What are you integrating?
   // step=0 means first message just arrived (hardware detected), ask Q0
   // step=1 means user answered Q0, ask Q1
   // step=N means user answered QN-1, ask QN or generate
-  const answeredCount = Math.max(0, step - 1);
+  const answeredCount = step;
   const answers: Record<string,string> = {};
   for (let i = 0; i < answeredCount && i < flow.length; i++) {
-    answers[flow[i].key] = userTurns[i + 1]?.content || '';
+    answers[flow[i].key] = userTurns[i]?.content || '';
   }
 
   if (answeredCount < flow.length) {
@@ -2380,13 +2380,6 @@ What are you integrating?
     }
     if (callbacks.setConnectionMode) callbacks.setConnectionMode('mavlink_bridge');
     if (callbacks.setEndpoint) callbacks.setEndpoint('ws://localhost:8765');
-    if (callbacks.setTelemetry) {
-      callbacks.setTelemetry((prev: any) => ({
-        ...prev,
-        mass: mass,
-        friction: hw === 'auv' ? 2.0 : hw === 'surgical' ? 0.8 : 0.15,
-      }));
-    }
     if (callbacks.setIntegrationPhase) {
       setTimeout(() => callbacks.setIntegrationPhase!(4), 100);
     }
@@ -2549,7 +2542,7 @@ function AppContent() {
 
   // --- MPC Simulation Loop ---
   useEffect(() => {
-    if (!isControlActive || view !== 'dashboard') return;
+    if (!isControlActive || view !== 'dashboard' || isSystemConnected) return;
 
     const interval = setInterval(() => {
       setSimState(prev => {
@@ -2787,41 +2780,11 @@ function AppContent() {
                 variance:           d.variance           ?? prev.variance,
                 isStable:           d.isStable           ?? prev.isStable,
                 isFaulted:          d.isFaulted          ?? prev.isFaulted,
+                step_count:         d.step_count         ?? prev.step_count,
                 // History
-                residualHistory: [...(prev.residualHistory || []), { x: Date.now(), y: d.residual || 0 }].slice(-30),
+                residualHistory: d.residual > 0 ? [...(prev.residualHistory || []), { x: Date.now(), y: d.residual }].slice(-60) : (prev.residualHistory || []),
                 effortHistory:   [...(prev.effortHistory   || []), { x: Date.now(), y: d.effort   || 0 }].slice(-30),
               }));
-
-              // Feed real telemetry into online SystemID and ensemble learning
-              setTelemetry(prev => {
-                if (prev.pitch !== undefined && connectionMode === 'mavlink_bridge') {
-                  const prevState: any = [
-                    prev.vel?.x || 0, prev.vel?.y || 0,
-                    prev.accel?.x || 0, prev.accel?.y || 0,
-                    prev.pitch || 0, prev.gyro?.y || 0
-                  ];
-                  const currState: any = [
-                    d.velocity?.x || 0, d.velocity?.y || 0,
-                    d.acceleration?.x || 0, d.acceleration?.y || 0,
-                    d.pitch || 0, d.gyro?.y || 0
-                  ];
-                  const action: any = [d.motor_l || 0, d.motor_r || 0];
-                  const updatedParams = updateSystemID(prevState, action, currState, {
-                    mass: prev.mass || 1.0,
-                    friction: prev.friction || 0.3,
-                    gravity: -9.81,
-                    textile_k: 0,
-                    damping: 0.1
-                  });
-                  ensembleDynamics.train(prevState, action, currState, stepDynamicsRK4(prevState, action, updatedParams));
-                  return {
-                    ...prev,
-                    mass: updatedParams.mass,
-                    friction: updatedParams.friction,
-                  };
-                }
-                return prev;
-              });
             }
           } catch (e) {
             console.error("Telemetry Parse Error:", e);
@@ -2963,6 +2926,7 @@ function AppContent() {
     variance: 0,
     isStable: true,
     isFaulted: false,
+    step_count: 0,
     cpuLoad: 0,
     latency: 0,
     residualHistory: [] as any[],
@@ -5094,13 +5058,18 @@ end`}
               <>
                 <section className="space-y-4">
                   <div className="border-l-2 border-cyan pl-3">
-                    <span className="micro-label">SystemID Estimates</span>
+                    <span className="micro-label">
+                      {!isSystemConnected ? 'SystemID — NOT CONNECTED' : 
+                       !isControlActive ? 'SystemID — CLICK ACTIVE CONTROL ON' : 
+                       (telemetry.step_count || 0) < 50 ? `SystemID — LEARNING (${telemetry.step_count || 0} steps)` :
+                       'SystemID — CONVERGING'}
+                    </span>
                   </div>
                   <div className="space-y-4">
                     {[
-                      { label: 'ESTIMATED MASS', val: `${(telemetry.mass || 0).toFixed(3)} kg`, delta: (telemetry.mass || 0) > 2.7 ? '+8.5%' : '-2.1%', color: COLORS.green },
-                      { label: 'FRICTION COEFF', val: `${(telemetry.friction || 0).toFixed(3)} μ`, delta: (telemetry.friction || 0) > 0.4 ? '+17.7%' : '-4.2%', color: COLORS.amber },
-                      { label: 'ACTUATOR EFF', val: `${((telemetry.actuatorEfficiency || 0) * 100).toFixed(1)}%`, delta: (telemetry.actuatorEfficiency || 0) > 0.9 ? '-1.2%' : '-5.4%', color: COLORS.cyan },
+                      { label: 'ESTIMATED MASS', val: isSystemConnected ? `${(telemetry.mass || 0).toFixed(3)} kg` : '—', delta: isSystemConnected ? (telemetry.step_count > 100 ? 'CONVERGED' : 'LEARNING') : 'CONNECT HARDWARE', color: isSystemConnected ? COLORS.green : COLORS.textDim },
+                      { label: 'FRICTION COEFF', val: isSystemConnected ? `${(telemetry.friction || 0).toFixed(3)} μ` : '—', delta: isSystemConnected ? 'LIVE' : 'CONNECT HARDWARE', color: isSystemConnected ? COLORS.amber : COLORS.textDim },
+                      { label: 'ACTUATOR EFF', val: isSystemConnected ? `${((telemetry.actuatorEfficiency || 0) * 100).toFixed(1)}%` : '—', delta: isSystemConnected ? 'LIVE' : 'CONNECT HARDWARE', color: isSystemConnected ? COLORS.cyan : COLORS.textDim },
                       ...(telemetry.pitch !== undefined ? [
                         { label: 'PITCH', val: `${(telemetry.pitch || 0).toFixed(2)}°`, delta: Math.abs(telemetry.pitch || 0) < 5 ? 'STABLE' : 'LEANING', color: Math.abs(telemetry.pitch || 0) < 5 ? COLORS.green : COLORS.amber },
                         { label: 'ROLL',  val: `${(telemetry.roll  || 0).toFixed(2)}°`, delta: '', color: COLORS.cyan },
