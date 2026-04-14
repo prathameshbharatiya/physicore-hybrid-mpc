@@ -2557,8 +2557,8 @@ function AppContent() {
         // 2. Step Ground Truth Dynamics (Simulation Mode)
         // In a real system, this would come from telemetry
         const nextState = stepDynamicsRK4(prev.current, action, {
-          mass: 5.2, // Ground truth mass (unknown to SysID)
-          friction: 0.65, // Ground truth friction
+          mass: prev.estimatedParams.mass * 1.3,    // Simulated true mass (30% offset to give SysID signal)
+          friction: prev.estimatedParams.friction * 1.4,
           gravity: 9.81,
           textile_k: 0,
           damping: 0.1

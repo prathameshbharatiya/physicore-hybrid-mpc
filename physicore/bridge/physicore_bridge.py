@@ -328,6 +328,13 @@ def robot_serial_reader(connection_string: str, baud: int):
                     state.motor_r     = float(data.get('motor_r', 0))
                     state.altitude    = float(data.get('altitude', 0))
                     state.velocity_x  = float(data.get('vx', 0))
+                    state.flight_mode = str(data.get('phase', state.flight_mode))
+                    # Rocket-specific: update mass from telemetry (tracks propellant depletion)
+                    if data.get('mass') is not None:
+                        # Only update if it's decreasing (propellant burning) or initialized
+                        reported_mass = float(data.get('mass', 0))
+                        if reported_mass > 0:
+                            state.estimated_mass = reported_mass
                     state.timestamp   = time.time()
                     state.connected   = True
 
@@ -405,7 +412,12 @@ def ros2_reader(topic: str):
                 self.create_subscription(JointState, '/joint_states', self.joint_cb, 10)
             except Exception:
                 pass
-            print("[BRIDGE] ROS2 subscribed to /imu/data /gps/fix /odom /joint_states")
+            try:
+                from geometry_msgs.msg import TwistStamped
+                self.create_subscription(TwistStamped, '/dvl/velocity', self.dvl_cb, 10)
+            except Exception:
+                pass
+            print("[BRIDGE] ROS2 subscribed to /imu/data /gps/fix /odom /joint_states /dvl/velocity")
 
         def imu_cb(self, msg):
             state.accel_x = msg.linear_acceleration.x
@@ -424,6 +436,15 @@ def ros2_reader(topic: str):
             state.velocity_y = msg.twist.twist.linear.y
             state.velocity_z = msg.twist.twist.linear.z
             state.speed = math.sqrt(state.velocity_x**2 + state.velocity_y**2 + state.velocity_z**2)
+
+        def dvl_cb(self, msg):
+            # DVL provides bottom-track velocity for AUVs
+            state.velocity_x = msg.twist.linear.x
+            state.velocity_y = msg.twist.linear.y
+            state.velocity_z = msg.twist.linear.z
+            state.speed = math.sqrt(state.velocity_x**2 + state.velocity_y**2 + state.velocity_z**2)
+            state.connected = True
+            state.timestamp = time.time()
 
         def joint_cb(self, msg):
             if len(msg.position) >= 1: state.pitch = math.degrees(msg.position[0])

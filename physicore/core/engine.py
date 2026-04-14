@@ -854,6 +854,11 @@ class PhysiCore:
             platform=platform, state_dim=state_dim, action_dim=action_dim,
             control_hz=control_hz, initial_params=initial_params or {},
         )
+        # Platform-specific CEM tuning to hit 60Hz budget on all platforms
+        if platform in ('quadrotor', 'satellite'):
+            cfg.cem_samples = 6
+            cfg.horizon     = 5
+            cfg.cem_iters   = 2
         if initial_params is None:
             initial_params = {"mass":1.0,"friction":0.3,"inertia":0.1}
         if Q is None:
