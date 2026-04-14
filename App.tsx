@@ -2335,8 +2335,15 @@ What are you integrating?
   // step=N means user answered QN-1, ask QN or generate
   const answeredCount = step;
   const answers: Record<string,string> = {};
+  // userTurns[0] is the hardware detection trigger.
+  // userTurns[1...step-1] are previous answers.
+  // userMsg is the current answer.
   for (let i = 0; i < answeredCount && i < flow.length; i++) {
-    answers[flow[i].key] = userTurns[i]?.content || '';
+    if (i < step - 1) {
+      answers[flow[i].key] = userTurns[i + 1]?.content || '';
+    } else {
+      answers[flow[i].key] = userMsg;
+    }
   }
 
   if (answeredCount < flow.length) {
@@ -2346,7 +2353,7 @@ What are you integrating?
     if (answeredCount === 0) {
       resp += `\n${hw.replace(/_/g,' ').toUpperCase()} detected. I need ${flow.length} quick details to generate your exact code.\n`;
     } else {
-      resp += `\nGot it — ${userTurns[answeredCount]?.content || ''}.\n`;
+      resp += `\nGot it — ${userMsg}.\n`;
     }
     resp += `\n${q.q}`;
     if (q.opts) resp += '\n' + q.opts.map(o => `  • ${o}`).join('\n');
