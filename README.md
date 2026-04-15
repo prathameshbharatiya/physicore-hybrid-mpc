@@ -1,20 +1,43 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# PhysiCore
 
-# Run and deploy your AI Studio app
+**Physics Intelligence Engine — real-time sim-to-real synchronization for autonomous systems.**
 
-This contains everything you need to run your app locally.
+Robots trained in simulation fail on real hardware. PhysiCore closes that gap automatically at 60Hz. Connects to any hardware in 30 minutes. Learns your real physics from sensor data. No retraining.
 
-View your app in AI Studio: https://ai.studio/apps/43ca046c-b369-457f-ab19-e34c45d76090
+## Supported platforms
 
-## Run Locally
+`quadrotor` · `fixed_wing` · `evtol` · `manipulator_arm` · `surgical_robot` · `legged_robot` · `balancing_bot` · `rocket` · `ground_rover` · `auv` · `satellite`
 
-**Prerequisites:**  Node.js
+## Quick start
 
+```bash
+pip install pymavlink websockets aiohttp pyserial
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# Balancing bot (Arduino + MPU6050)
+python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3
+
+# PX4 drone
+python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550
+
+# Custom rocket flight computer
+python physicore/bridge/physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0 --baud 115200
+```
+
+## How it works
+
+1. Connect your hardware to the bridge in one command
+2. Open the dashboard, click MAVLINK, connect to `ws://localhost:8765`
+3. Click **ACTIVE CONTROL ON**
+4. PhysiCore learns your real hardware mass, friction, and dynamics from sensor data in real time
+
+## Architecture
+
+- **RK4 Physics Core** — 4th-order integration, accurate to machine precision
+- **Residual Ensemble** — 3 neural networks learn what your simulator got wrong
+- **CEM-MPC Optimizer** — optimal control action every 16.7ms
+- **Online SystemID** — learns your real hardware parameters from sensor data, converges in seconds
+- **Sentinel OS** — mathematical safety layer, Lyapunov enforcement, SHA-256 forensic log
+
+## Built by
+
+Prathamesh Shirbhate — Founders Inc '26 · Momentum by DevLabs '26
