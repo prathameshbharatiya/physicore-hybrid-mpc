@@ -564,14 +564,24 @@ const initiateHandshake = async (endpoint: string, mode: 'ros2_websocket' | 'hil
         ws.onopen = () => {
           ws.send(JSON.stringify({ op: 'ping' }));
         };
-        ws.onmessage = () => {
+        ws.onmessage = (event) => {
           clearTimeout(timeout);
           ws.close();
-          resolve({ success: true });
+          try {
+            const status = JSON.parse(event.data);
+            resolve({
+              success: true,
+              vehicle_type: status.msg?.vehicle_type || '',
+              domain: status.msg?.domain || '',
+              platform: status.msg?.platform || '',
+            });
+          } catch {
+            resolve({ success: true });
+          }
         };
         ws.onerror = () => {
           clearTimeout(timeout);
-          resolve({ success: false, reason: 'BRIDGE_OFFLINE. Run: python physicore_bridge.py --connection udp:14550' });
+          resolve({ success: false, reason: 'BRIDGE_OFFLINE. Run: python physicore_bridge.py --platform balancing_bot_arduino --connection COM3' });
         };
       } catch (e) {
         resolve({ success: false, reason: 'WEBSOCKET_ERROR' });
@@ -2799,9 +2809,14 @@ function AppContent() {
         };
 
         ws.onclose = () => {
-          console.log("Telemetry Stream: DISCONNECTED");
-          setIsSystemConnected(false);
+          console.log("Telemetry Stream: DISCONNECTED — auto-reconnecting in 2s...");
           socketRef.current = null;
+          setTimeout(() => {
+            if (socketRef.current === null) {
+              setIsSystemConnected(false);
+              setTimeout(() => setIsSystemConnected(true), 200);
+            }
+          }, 2000);
         };
 
         return () => {

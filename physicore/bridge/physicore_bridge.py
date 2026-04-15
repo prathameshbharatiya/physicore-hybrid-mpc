@@ -172,7 +172,7 @@ def state_to_vector(platform: str) -> np.ndarray:
     if platform == 'balancing_bot':
         return np.array([
             math.radians(state.pitch),  # pitch in radians
-            math.radians(state.gyro_y), # pitch rate in rad/s
+            math.radians(state.gyro_x), # pitch rate in rad/s — gyro_x is pitch axis on MPU6050
             0.0,                         # x position (not available from IMU)
             state.velocity_x,            # x velocity
         ])
@@ -327,7 +327,12 @@ def robot_serial_reader(connection_string: str, baud: int):
                     state.motor_l     = float(data.get('motor_l', 0))
                     state.motor_r     = float(data.get('motor_r', 0))
                     state.altitude    = float(data.get('altitude', 0))
-                    state.velocity_x  = float(data.get('vx', 0))
+                    # Estimate forward velocity from accel_x integration (no wheel encoders on basic bots)
+                    raw_vx = float(data.get('vx', 0))
+                    if raw_vx != 0:
+                        state.velocity_x = raw_vx
+                    else:
+                        state.velocity_x = state.velocity_x * 0.95 + state.accel_x * (1.0 / 50.0)
                     state.flight_mode = str(data.get('phase', state.flight_mode))
                     # Rocket-specific: update mass from telemetry (tracks propellant depletion)
                     if data.get('mass') is not None:
