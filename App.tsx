@@ -1997,877 +1997,277 @@ function ie_port(os: string): string {
 }
 
 function ie_generateCode(hw: string, answers: Record<string,string>): {filename:string; content:string}[] {
-  const mass    = answers.mass || '1.0';
-  const os      = answers.os || 'Windows';
-  const isWin   = os.toLowerCase().includes('win');
-  const isMac   = os.toLowerCase().includes('mac');
-  const port    = isWin ? 'COM3' : isMac ? '/dev/cu.usbserial-0001' : '/dev/ttyUSB0';
-  const portNote= isWin
-    ? 'Windows: Device Manager → Ports (COM & LPT) → note COMx'
-    : isMac
-    ? 'Mac: open Terminal → type: ls /dev/cu.* → look for usbserial or usbmodem'
-    : 'Linux: open Terminal → type: ls /dev/ttyUSB* or ls /dev/ttyACM*';
-  const pythonCmd = isWin ? 'python' : 'python3';
-  const pipCmd    = isWin ? 'pip' : 'pip3';
-  const distro  = (answers.distro || 'humble').toLowerCase().replace('not using ros2','humble');
-  const topic   = answers.topic || '/joint_states';
-  const dof     = parseInt(answers.dof || '6');
-  const imu     = answers.imu || 'MPU6050';
-  const driver  = answers.motor_driver || 'L298N';
-  const mcu     = answers.mcu || 'Arduino Uno';
+  const mass = answers.mass || '1.0';
+  const os = answers.os || 'Linux';
+  const port = ie_port(os);
+  const distro = (answers.distro || 'humble').toLowerCase().replace('not using ros2','humble');
+  const topic = answers.topic || '/joint_states';
+  const dof = parseInt(answers.dof || '6');
+  const imu = answers.imu || 'MPU6050';
+  const driver = answers.motor_driver || 'L298N';
 
-  // ── BALANCING BOT ──────────────────────────────────────────────────────────
   if (hw === 'balancing_bot') {
-    const guide = `# PhysiCore Balancing Bot — Complete Integration Guide
-## Hardware: ${imu} + ${driver} + ${mcu} | Mass: ${mass}kg | OS: ${os}
-
----
-
-## PHASE 1 — Flash the firmware
-
-**Step 1.** Open Arduino IDE on your laptop.
-
-**Step 2.** Go to Sketch → Include Library → Manage Libraries.
-Search for \`MPU6050_light\` by rfetick. Click Install.
-Then search for \`ArduinoJson\` by Benoit Blanchon. Make sure version 6.x. Click Install.
-
-**Step 3.** Open the file \`physicore_balancing_bot.ino\` you just downloaded.
-
-**Step 4.** At the top of the file, find this line:
-\`\`\`
-const float BALANCE_POINT = 0.0;
-\`\`\`
-Leave it at 0.0 for now. You will calibrate this in Phase 2.
-
-**Step 5.** Plug your ${mcu} into your laptop with the USB cable.
-
-**Step 6.** Find your serial port:
-${portNote}
-Write down the port name — you will need it in Phase 3.
-
-**Step 7.** In Arduino IDE:
-- Tools → Board → ${mcu.includes('Mega') ? 'Arduino Mega' : mcu.includes('Nano') ? 'Arduino Nano' : mcu.includes('ESP32') ? 'ESP32 Dev Module' : 'Arduino Uno'}
-- Tools → Port → select your port from Step 6
-
-**Step 8.** Click the Upload button (→ arrow). Wait for "Done uploading." at the bottom.
-
----
-
-## PHASE 2 — Calibrate BALANCE_POINT
-
-This is the most important step. Skip it and nothing will work right.
-
-**Step 9.** In Arduino IDE — Tools → Serial Monitor.
-Bottom right dropdown — set to **115200 baud**.
-
-**Step 10.** You will see JSON printing every 20ms like this:
-\`\`\`
-{"pitch":2.3,"roll":0.1,"gyro_x":0.2,...}
-\`\`\`
-If you see nothing — check your baud rate is 115200.
-If you see garbage characters — baud rate is wrong.
-
-**Step 11.** Hold your robot perfectly upright. The exact angle where it would balance if it could.
-Look at the \`pitch\` value. Write it down. Example: \`2.3\`
-
-**Step 12.** Close Serial Monitor. Back in the firmware find:
-\`\`\`
-const float BALANCE_POINT = 0.0;
-\`\`\`
-Change it to your reading:
-\`\`\`
-const float BALANCE_POINT = 2.3;
-\`\`\`
-Use your actual number, not 2.3.
-
-**Step 13.** Click Upload again. Wait for "Done uploading."
-
-**Step 14.** Open Serial Monitor again at 115200 baud.
-Hold the bot perfectly upright.
-The pitch value should now read approximately **0.0**.
-If yes — BALANCE_POINT is correct. Move to Phase 3.
-If not — repeat Steps 11-13 with the new reading.
-
----
-
-## PHASE 3 — Run the bridge
-
-**Step 15.** Close Arduino IDE completely.
-Do NOT leave it open. Arduino IDE blocks the serial port.
-If Arduino IDE is open, the bridge cannot connect. No exceptions.
-
-**Step 16.** ${isWin
-  ? 'Open your PhysiCore project folder in File Explorer. Click in the address bar at the top. Type cmd. Press Enter. A black terminal window opens in that folder.'
-  : 'Open Terminal. Navigate to your PhysiCore project folder:\n```\ncd path/to/your/physicore-folder\n```'}
-
-**Step 17.** Install dependencies. Type this and press Enter:
-\`\`\`
-${pipCmd} install pymavlink websockets aiohttp pyserial
-\`\`\`
-Wait for it to finish. You will see "Successfully installed" at the end.
-
-**Step 18.** Start the bridge. Replace the port with your actual port from Step 6:
-\`\`\`
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection ${port} --baud 115200
-\`\`\`
-
-**Step 19.** You should see this in the terminal:
-\`\`\`
-[BRIDGE] Serial connected: ${port}
-[ENGINE] Initialized for 'balancing_bot' — SystemID will adapt mass/friction from real data
-[TELEM] P:0.1° R:0.0° | mass=1.000 res=0.0000 steps=0 | clients=0
-\`\`\`
-If you see \`[BRIDGE] Serial failed — retrying in 3s\` — go to Troubleshooting below.
-Leave this terminal open. Do not close it.
-
----
-
-## PHASE 4 — Connect the dashboard
-
-**Step 20.** Open your PhysiCore dashboard in Chrome (your Vercel URL).
-
-**Step 21.** Click the **MAVLINK** button in the connection panel.
-
-**Step 22.** In the endpoint box, type exactly:
-\`\`\`
-ws://localhost:8765
-\`\`\`
-
-**Step 23.** Click **Connect**.
-
-**Step 24.** Check the dashboard now:
-- Pitch should show a live number and change when you tilt the bot ✓
-- Roll should also move when you tilt ✓
-- ESTIMATED MASS shows — (correct, PhysiCore hasn't started yet) ✓
-- SystemID panel says "CLICK ACTIVE CONTROL ON" ✓
-
-If pitch shows 0.0 and never changes — go to Troubleshooting.
-
----
-
-## PHASE 5 — Activate PhysiCore
-
-**Step 25.** Hold your bot upright with your hand.
-
-**Step 26.** Click **ACTIVE CONTROL ON** in the dashboard.
-
-**Step 27.** Watch the terminal. You should now see steps counting up:
-\`\`\`
-[TELEM] P:0.2° | mass=1.000 res=0.0240 steps=12 | clients=1
-\`\`\`
-Steps counting up = PhysiCore is sending commands to your motors.
-res value moving = PhysiCore is learning your hardware.
-
-**Step 28.** Slowly loosen your grip. PhysiCore is now controlling the motors.
-Hold it loosely for the first 30 seconds — let it move but catch it if it falls.
-After 30 seconds, the mass estimate starts converging and control gets tighter.
-
----
-
-## What good looks like
-
-- **steps** counting up every second — PhysiCore is running ✓
-- **mass** estimate slowly moving away from 1.000 toward ${mass} — SystemID learning ✓
-- **residual** value dropping over time — model getting more accurate ✓
-- Motors responding smoothly and differently from the PID fallback ✓
-- Bot stays upright longer than before PhysiCore ✓
-
-## What PhysiCore cannot do
-
-- It cannot balance a bot with a BALANCE_POINT that is calibrated wrong
-- It cannot work if Arduino IDE is open (serial port conflict)
-- It needs about 30 seconds of real motion data before SystemID converges
-- It cannot compensate for broken motors or loose wiring
-- It does not know your bot's wheel diameter or gear ratio — it learns from sensor data
-
-## What to expect over time
-
-- First 10 seconds: control is roughly the same as PID
-- After 30 seconds: mass estimate converging, control getting smoother
-- After 2-3 minutes: residual drops significantly, SystemID has learned your bot's real physics
-- After restart: learning starts fresh (no memory between sessions yet)
-
----
-
-## Troubleshooting
-
-**Serial Monitor shows \`MPU6050 not found\`**
-Your IMU wiring is wrong. Check:
-- SDA wire goes to pin A4 on the Arduino
-- SCL wire goes to pin A5 on the Arduino
-- VCC wire goes to 3.3V (NOT 5V — this will damage the MPU6050)
-- GND wire goes to GND
-
-**Bridge says \`Serial failed — retrying in 3s\`**
-Two possible causes:
-1. Arduino IDE is still open — close it completely and try again
-2. Wrong port — recheck your port number and update the --connection value
-
-**Dashboard connects but pitch shows 0.0 and never changes**
-The Arduino is not sending data. Try:
-1. Unplug the Arduino USB cable
-2. Plug it back in
-3. Wait 5 seconds for the calibration message in the bridge terminal
-4. Check the terminal says \`[BRIDGE] Serial connected\`
-
-**Motors spin full speed in one direction and will not stop**
-BALANCE_POINT is wrong. The bot thinks it is always falling.
-Redo Phase 2 carefully. Hold it at a different angle if needed.
-
-**Motors barely move even when the bot is tilting a lot**
-Open the firmware file and check:
-\`\`\`
-const float MAX_TORQUE = 2.5;
-\`\`\`
-If it says 100, change it to 2.5 and re-flash. At 100, motors get less than 1% power.
-
-**\`python\` is not recognized**
-${isWin
-  ? 'Python is not installed or not in your PATH.\n1. Go to python.org\n2. Download Python 3\n3. Run the installer\n4. Tick the box that says "Add Python to PATH"\n5. Restart your terminal and try again'
-  : 'Try python3 instead of python. If that fails, install Python 3 from python.org'}
-
-**\`pip install\` fails with a permission error**
-Type this instead:
-\`\`\`
-${pythonCmd} -m pip install pymavlink websockets aiohttp pyserial
-\`\`\`
-
-**Bot falls immediately when you let go**
-This is normal in the first few seconds. PhysiCore needs real motion data to learn.
-Hold the bot loosely for 30 seconds — let it move and correct, but catch it if it falls hard.
-After 30 seconds, let go slowly.
-
----
-
-## The one thing that will make or break everything
-
-**BALANCE_POINT.** If it is wrong, PhysiCore permanently fights a lean that does not exist.
-The bot will fall immediately or spin motors in one direction non-stop.
-5 minutes in Phase 2 makes everything else work.`;
-
-    const ino = `/*
- * PhysiCore Balancing Bot Firmware v2.0
- * Hardware: ${imu} + ${driver} + ${mcu}
- * Mass: ${mass}kg
- *
- * INSTALL LIBRARIES FIRST (Sketch → Include Library → Manage Libraries):
- *   1. "MPU6050_light" by rfetick
- *   2. "ArduinoJson" by Benoit Blanchon (version 6.x)
- *
- * WIRING:
- *   ${imu}: SDA→A4, SCL→A5, VCC→3.3V, GND→GND
- *   ${driver}: ENA→5, IN1→4, IN2→3, ENB→6, IN3→7, IN4→8
+    return [
+      { filename: 'physicore_balancing_bot.ino', content:
+`/*
+ * PhysiCore Balancing Bot — ${imu} + ${driver}
+ * Mass: ${mass}kg | MCU: ${answers.mcu||'Arduino'}
+ * INSTALL (Sketch → Include Library → Manage Libraries):
+ *   "MPU6050_light" by rfetick
+ *   "ArduinoJson" by Benoit Blanchon v6.x
  */
-
 #include <Wire.h>
 #include <MPU6050_light.h>
 #include <ArduinoJson.h>
 
-const int L_EN=5, L_IN1=4, L_IN2=3;
-const int R_EN=6, R_IN1=7, R_IN2=8;
+const int L_EN=5,L_IN1=4,L_IN2=3,R_EN=6,R_IN1=7,R_IN2=8;
+const float BALANCE_POINT=0.0, MAX_TORQUE=2.5;  // N·m — matches PhysiCore engine output range
+const float KP=35.0, KI=0.5, KD=1.2;
 
-// ── CRITICAL: CALIBRATE THIS BEFORE RUNNING ─────────────────────
-// Hold robot perfectly upright. Open Serial Monitor at 115200 baud.
-// Read the "pitch" value. Set BALANCE_POINT to that exact value.
-// Wrong BALANCE_POINT = PhysiCore fights a constant offset forever.
-const float BALANCE_POINT = 0.0;  // SET THIS to your upright pitch reading
-const float MAX_TORQUE    = 2.5;  // DO NOT change — PhysiCore outputs ±2.5 N·m
-
-const float KP=35.0, KI=0.5, KD=1.2; // PID fallback (safety net)
-
-const int BAUD_RATE=115200, LOOP_MS=20;
 MPU6050 mpu(Wire);
+float pitch=0,pitch_rate=0,motor_l=0,motor_r=0;
+bool physicore_active=false;
+unsigned long last_cmd=0,last_tx=0;
+float pid_i=0,prev_err=0;
 
-float pitch=0, pitch_rate=0, motor_l=0, motor_r=0;
-bool  physicore_active=false;
-unsigned long last_cmd=0, last_tx=0;
-float pid_integral=0, prev_error=0;
-
-void setup() {
-  Serial.begin(BAUD_RATE);
-  Wire.begin();
-  pinMode(L_EN,OUTPUT); pinMode(L_IN1,OUTPUT); pinMode(L_IN2,OUTPUT);
-  pinMode(R_EN,OUTPUT); pinMode(R_IN1,OUTPUT); pinMode(R_IN2,OUTPUT);
+void setup(){
+  Serial.begin(115200); Wire.begin();
+  pinMode(L_EN,OUTPUT);pinMode(L_IN1,OUTPUT);pinMode(L_IN2,OUTPUT);
+  pinMode(R_EN,OUTPUT);pinMode(R_IN1,OUTPUT);pinMode(R_IN2,OUTPUT);
   applyMotors(0);
-
-  byte status = mpu.begin();
-  while (status != 0) {
-    Serial.println("{\\"error\\":\\"${imu} not found — check SDA→A4 SCL→A5 VCC→3.3V\\"}");
-    delay(500);
-    status = mpu.begin();
-  }
-  Serial.println("{\\"status\\":\\"calibrating\\",\\"message\\":\\"Keep robot STILL for 3 seconds\\"}");
-  mpu.calcOffsets(true, true);
-  Serial.println("{\\"status\\":\\"ready\\",\\"mass\\":${mass},\\"message\\":\\"PhysiCore firmware ready\\"}");
+  byte s=mpu.begin();
+  while(s!=0){Serial.println("{\\"error\\":\\"MPU6050 not found\\"}");delay(500);s=mpu.begin();}
+  Serial.println("{\\"status\\":\\"calibrating\\",\\"message\\":\\"Keep STILL 3 seconds\\"}");
+  mpu.calcOffsets(true,true);
+  Serial.println("{\\"status\\":\\"ready\\",\\"mass\\":${mass}}");
 }
 
-void loop() {
-  unsigned long now = millis();
-
-  // 1. READ REAL IMU
+void loop(){
+  unsigned long now=millis();
   mpu.update();
-  pitch      = mpu.getAngleX() - BALANCE_POINT;
-  pitch_rate = mpu.getGyroX();
+  pitch=mpu.getAngleX()-BALANCE_POINT;
+  pitch_rate=mpu.getGyroX();
 
-  // 2. RECEIVE PHYSICORE COMMANDS
-  if (Serial.available() > 0) {
+  if(Serial.available()>0){
     StaticJsonDocument<256> cmd;
-    if (deserializeJson(cmd, Serial) == DeserializationError::Ok) {
-      if (strcmp(cmd["op"], "command") == 0) {
-        JsonArray action = cmd["action"].as<JsonArray>();
-        if (action.size() > 0) {
-          float torque = action[0].as<float>();
-          motor_l = constrain(torque / MAX_TORQUE, -1.0f, 1.0f);
-          motor_r = motor_l;
-          physicore_active = true;
-          last_cmd = now;
-        }
+    if(deserializeJson(cmd,Serial)==DeserializationError::Ok){
+      if(strcmp(cmd["op"],"command")==0){
+        float t=cmd["action"][0].as<float>();
+        motor_l=constrain(t/MAX_TORQUE,-1.0f,1.0f);
+        motor_r=motor_l; physicore_active=true; last_cmd=now;
       }
     }
   }
 
-  // 3. SAFETY TIMEOUT — fallback to PID if PhysiCore stops sending
-  if (now - last_cmd > 500) physicore_active = false;
+  if(now-last_cmd>500) physicore_active=false;
 
-  // 4. APPLY CONTROL
-  if (physicore_active) {
-    applyMotors(motor_l);
-  } else {
-    float err = -pitch;
-    pid_integral = constrain(pid_integral + err*(LOOP_MS/1000.0f), -50.0f, 50.0f);
-    float deriv  = (err - prev_error) / (LOOP_MS/1000.0f);
-    float v      = constrain((KP*err + KI*pid_integral + KD*deriv)/255.0f, -1.0f, 1.0f);
-    prev_error   = err;
-    motor_l = motor_r = v;
-    applyMotors(v);
+  if(physicore_active){ applyMotors(motor_l); }
+  else{
+    float e=-pitch;
+    pid_i=constrain(pid_i+e*0.02f,-50,50);
+    float d=(e-prev_err)/0.02f;
+    float v=constrain((KP*e+KI*pid_i+KD*d)/255.0f,-1,1);
+    prev_err=e; motor_l=motor_r=v; applyMotors(v);
   }
 
-  // 5. SEND TELEMETRY AT 50Hz
-  if (now - last_tx >= LOOP_MS) {
-    last_tx = now;
+  if(now-last_tx>=20){
+    last_tx=now;
     StaticJsonDocument<256> doc;
-    doc["pitch"]   = pitch;
-    doc["roll"]    = mpu.getAngleY();
-    doc["gyro_x"]  = pitch_rate;
-    doc["gyro_y"]  = mpu.getGyroY();
-    doc["gyro_z"]  = mpu.getGyroZ();
-    doc["accel_x"] = mpu.getAccX();
-    doc["accel_y"] = mpu.getAccY();
-    doc["accel_z"] = mpu.getAccZ();
-    doc["motor_l"] = motor_l * MAX_TORQUE;
-    doc["motor_r"] = motor_r * MAX_TORQUE;
-    doc["active"]  = physicore_active;
-    doc["timestamp"] = now;
-    serializeJson(doc, Serial);
-    Serial.println();
+    doc["pitch"]=pitch; doc["roll"]=mpu.getAngleY();
+    doc["gyro_x"]=pitch_rate; doc["gyro_y"]=mpu.getGyroY();
+    doc["gyro_z"]=mpu.getGyroZ();
+    doc["accel_x"]=mpu.getAccX();doc["accel_y"]=mpu.getAccY();doc["accel_z"]=mpu.getAccZ();
+    doc["motor_l"]=motor_l*MAX_TORQUE;doc["motor_r"]=motor_r*MAX_TORQUE;
+    doc["active"]=physicore_active;doc["timestamp"]=now;
+    serializeJson(doc,Serial);Serial.println();
   }
-
-  while (millis() - now < LOOP_MS);
+  while(millis()-now<20);
 }
 
-void applyMotors(float v) {
-  int pwm  = constrain((int)(abs(v)*255), 0, 255);
-  bool fwd = (v >= 0);
-  digitalWrite(L_IN1, fwd); digitalWrite(L_IN2, !fwd); analogWrite(L_EN, pwm);
-  digitalWrite(R_IN1, fwd); digitalWrite(R_IN2, !fwd); analogWrite(R_EN, pwm);
-}`;
-
-    const bridge_script = isWin
-      ? `@echo off
-REM PhysiCore Bridge — ${imu} + ${driver} + ${mcu}
-REM Replace COM3 with your actual port from Device Manager
+void applyMotors(float v){
+  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);
+  digitalWrite(L_IN1,f);digitalWrite(L_IN2,!f);analogWrite(L_EN,p);
+  digitalWrite(R_IN1,f);digitalWrite(R_IN2,!f);analogWrite(R_EN,p);
+}` },
+      { filename: 'run_bridge.sh', content:
+`#!/bin/bash
+# PhysiCore Bridge — Balancing Bot
+# ${os} | Port: ${port} | Mass: ${mass}kg
 pip install pymavlink websockets aiohttp pyserial
-python physicore\\bridge\\physicore_bridge.py --platform balancing_bot_arduino --connection ${port} --baud 115200`
-      : `#!/bin/bash
-# PhysiCore Bridge — ${imu} + ${driver} + ${mcu}
-# Replace ${port} with your actual port
-${pipCmd} install pymavlink websockets aiohttp pyserial
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection ${port} --baud 115200`;
+python physicore/bridge/physicore_bridge.py \\
+  --platform balancing_bot_arduino \\
+  --connection ${port} \\
+  --baud 115200` },
+      { filename: 'INTEGRATION_GUIDE.md', content:
+`# PhysiCore Balancing Bot Integration
+## ${imu} + ${driver} | ${answers.mcu||'Arduino'} | Mass: ${mass}kg
 
-    return [
-      { filename: 'physicore_balancing_bot.ino', content: ino },
-      { filename: isWin ? 'run_bridge.bat' : 'run_bridge.sh', content: bridge_script },
-      { filename: 'INTEGRATION_GUIDE.md', content: guide },
+### Step 1 — Install Arduino libraries
+Sketch → Include Library → Manage Libraries
+- MPU6050_light by rfetick
+- ArduinoJson v6.x by Benoit Blanchon
+
+### Step 2 — Flash firmware
+Open physicore_balancing_bot.ino in Arduino IDE.
+Set motor pins at top to match your wiring.
+Upload to your board.
+
+### Step 3 — Verify IMU
+Serial Monitor at 115200 baud → tilt robot → confirm pitch changes.
+{"pitch":8.4,"gyro_y":-2.1,...} means it is working.
+
+### Step 4 — Run bridge
+Close Arduino IDE first (it blocks the serial port).
+Run: bash run_bridge.sh
+
+### Step 5 — Connect dashboard
+MAVLINK → ws://localhost:8765 → Connect
+
+### Step 6 — Activate
+Click ACTIVE CONTROL ON.
+Watch mass estimate update in sidebar — that is SystemID learning your hardware.` }
     ];
   }
 
-  // ── PX4 / ARDUPILOT / EVTOL ────────────────────────────────────────────────
   if (hw === 'px4' || hw === 'ardupilot' || hw === 'evtol') {
-    const conn = (answers.connection||'').toLowerCase().includes('usb') ? (isWin ? 'COM3' : '/dev/ttyACM0') : 'udp:14550';
-    const platform = hw === 'evtol' ? 'evtol'
-      : hw === 'ardupilot' ? `ardupilot_${(answers.frame||'quadrotor').toLowerCase().includes('wing') ? 'plane' : 'quadrotor'}`
-      : 'px4_quadrotor';
-
-    const guide = `# PhysiCore ${hw.toUpperCase()} Integration Guide
-## ${answers.frame||'Quadrotor'} | Mass: ${mass}kg | OS: ${os}
-
----
-
-## PHASE 1 — Enable MAVLink telemetry
-
-**Step 1.** Open QGroundControl (PX4) or Mission Planner (ArduPilot).
-
-**Step 2.** Connect your flight controller to your laptop.
-
-**Step 3.** ${conn === 'udp:14550'
-  ? 'MAVLink UDP is enabled by default on port 14550. If it is not working, go to:\nQGroundControl → Application Settings → MAVLink → enable UDP on port 14550'
-  : 'Make sure your USB connection is showing the vehicle connected in QGC/Mission Planner.'}
-
----
-
-## PHASE 2 — Run the bridge
-
-**Step 4.** ${isWin
-  ? 'Open your PhysiCore project folder. Click the address bar, type cmd, press Enter.'
-  : 'Open Terminal and navigate to your PhysiCore project folder.'}
-
-**Step 5.** Install dependencies:
-\`\`\`
-${pipCmd} install pymavlink websockets aiohttp pyserial
-\`\`\`
-
-**Step 6.** Start the bridge:
-\`\`\`
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform ${platform} --connection ${conn}
-\`\`\`
-
-**Step 7.** You should see:
-\`\`\`
-[BRIDGE] MAVLink connecting: ${conn}
-[BRIDGE] Waiting for heartbeat...
-[BRIDGE] MAVLink connected. Vehicle: ${(answers.frame||'QUADROTOR').toUpperCase()}
-[TELEM] P:0.1° R:0.0° | mass=1.000 res=0.0000 steps=0
-\`\`\`
-If you see "No heartbeat" — check your connection and make sure the vehicle is powered.
-
----
-
-## PHASE 3 — Connect dashboard and activate
-
-**Step 8.** Open your PhysiCore dashboard in Chrome.
-
-**Step 9.** Click MAVLINK → endpoint \`ws://localhost:8765\` → Connect.
-
-**Step 10.** Check pitch and roll are showing live values from the vehicle.
-
-**Step 11.** Arm your vehicle normally using QGC or your transmitter.
-
-**Step 12.** Click **ACTIVE CONTROL ON** in the dashboard.
-
-**Step 13.** Watch the terminal — steps should count up. PhysiCore is now augmenting your flight controller.
-
----
-
-## What PhysiCore does on a drone
-
-PhysiCore adds a real-time physics adaptation layer on top of your existing flight controller.
-It learns your vehicle's real mass, inertia, and aerodynamic coefficients from sensor data.
-It does NOT replace your flight controller — it works alongside it.
-
-## What good looks like
-
-- steps counting up — PhysiCore running ✓
-- mass estimate moving toward ${mass}kg — SystemID learning ✓
-- residual dropping — model accuracy improving ✓
-- Smoother attitude response in gusty conditions ✓
-
-## What PhysiCore cannot do on a drone
-
-- It cannot fly the vehicle without a working flight controller underneath
-- It cannot compensate for a motor that is completely dead
-- It cannot work without telemetry streaming to the laptop
-
-## Troubleshooting
-
-**No heartbeat / timeout**
-- Check USB or UDP connection
-- Make sure vehicle is fully powered, not just USB-powered
-- Try a different UDP port: \`--connection udp:14560\`
-
-**Steps not counting up after ACTIVE CONTROL ON**
-- Make sure you clicked Connect first and the dashboard shows live telemetry
-- Check the terminal for any [ENGINE] errors
-
-**Telemetry frozen**
-- MAVLink data stream may be throttled
-- The bridge automatically requests 20Hz from the FC — if it does not respond, restart the bridge`;
-
+    const conn = (answers.connection||'').toLowerCase().includes('usb') ? '/dev/ttyACM0' : 'udp:14550';
+    const platform = hw === 'evtol' ? 'evtol' : hw === 'ardupilot' ? `ardupilot_${(answers.frame||'quadrotor').toLowerCase().includes('wing')?'plane':'quadrotor'}` : 'px4_quadrotor';
     return [
-      { filename: 'run_bridge' + (isWin ? '.bat' : '.sh'), content: isWin
-        ? `@echo off\nREM PhysiCore Bridge — ${hw.toUpperCase()} ${answers.frame||'Quadrotor'}\npip install pymavlink websockets aiohttp pyserial\npython physicore\\bridge\\physicore_bridge.py --platform ${platform} --connection ${conn}`
-        : `#!/bin/bash\n# PhysiCore Bridge — ${hw.toUpperCase()} ${answers.frame||'Quadrotor'}\n${pipCmd} install pymavlink websockets aiohttp pyserial\n${pythonCmd} physicore/bridge/physicore_bridge.py --platform ${platform} --connection ${conn}` },
-      { filename: 'INTEGRATION_GUIDE.md', content: guide },
+      { filename: 'run_bridge.sh', content:
+`#!/bin/bash
+# PhysiCore Bridge — ${hw.toUpperCase()} | ${answers.frame||'Quadrotor'} | Mass: ${mass}kg
+pip install pymavlink websockets aiohttp
+python physicore/bridge/physicore_bridge.py \\
+  --platform ${platform} \\
+  --connection ${conn}` },
+      { filename: 'INTEGRATION_GUIDE.md', content:
+`# PhysiCore ${hw.toUpperCase()} Integration
+## ${answers.frame||'Quadrotor'} | Mass: ${mass}kg | Connection: ${conn}
+
+### Step 1 — Enable MAVLink telemetry
+In QGroundControl/Mission Planner:
+Enable UDP telemetry on port 14550.
+
+### Step 2 — Run bridge
+bash run_bridge.sh
+
+### Step 3 — Connect dashboard
+MAVLINK → ws://localhost:8765 → Connect
+
+### Step 4 — Fly and activate
+Arm vehicle → Click ACTIVE CONTROL ON.
+PhysiCore reads telemetry at 60Hz.
+Mass estimate starts at ${mass}kg, adapts to real flight.` }
     ];
   }
 
-  // ── ROS2 ARM ────────────────────────────────────────────────────────────────
   if (hw === 'ros2_arm') {
     const hasFT = answers.ft_sensor === 'Yes';
-    const guide = `# PhysiCore ROS2 Arm Integration Guide
-## ${answers.brand||'Custom'} ${dof}-DOF | Topic: ${topic} | OS: ${os}
+    return [
+      { filename: 'physicore_arm_bridge.py', content:
+`#!/usr/bin/env python3
+"""PhysiCore ROS2 Arm Bridge
+${answers.brand||'Custom'} ${dof}-DOF | ROS2 ${distro} | Topic: ${topic}
+Run: python3 physicore_arm_bridge.py
+"""
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+${hasFT ? 'from geometry_msgs.msg import WrenchStamped' : ''}
+import json, socket, math
 
----
+class Bridge(Node):
+    def __init__(self):
+        super().__init__('physicore_arm_bridge')
+        self.j=[0.0]*${dof}; self.v=[0.0]*${dof}; self.e=[0.0]*${dof}
+        self.f=[0.0,0.0,0.0]
+        self.create_subscription(JointState,'${topic}',self.jcb,10)
+        ${hasFT ? "self.create_subscription(WrenchStamped,'/ft_sensor/wrench',self.fcb,10)" : ''}
+        self.get_logger().info('PhysiCore arm bridge ready')
 
-## PHASE 1 — Verify your ROS2 setup
+    def jcb(self,msg):
+        n=min(len(msg.position),${dof})
+        self.j[:n]=list(msg.position[:n])
+        self.v[:n]=list(msg.velocity[:n]) if msg.velocity else [0.0]*n
+        self.e[:n]=list(msg.effort[:n]) if msg.effort else [0.0]*n
+        self.send()
 
-**Step 1.** Source your ROS2 installation:
-\`\`\`
+    ${hasFT ? `def fcb(self,msg):
+        f=msg.wrench.force; self.f=[f.x,f.y,f.z]` : ''}
+
+    def send(self):
+        p=json.dumps({"op":"publish","topic":"/telemetry","msg":{
+            "pitch":math.degrees(self.j[0]),
+            "roll":math.degrees(self.j[1]) if ${dof}>1 else 0,
+            "yaw":math.degrees(self.j[2]) if ${dof}>2 else 0,
+            "gyro_x":self.v[0],"gyro_y":self.v[1] if ${dof}>1 else 0,"gyro_z":self.v[2] if ${dof}>2 else 0,
+            "accel_x":self.f[0],"accel_y":self.f[1],"accel_z":self.f[2],
+            "motor_l":self.e[0],"motor_r":self.e[1] if ${dof}>1 else 0,
+            "vehicle_type":"MANIPULATOR","domain":"ROBOTICS","connected":True,
+            "joint_positions":self.j,"joint_velocities":self.v
+        }})+'\\n'
+        try:
+            s=socket.socket(); s.connect(('localhost',8765))
+            s.sendall(p.encode()); s.close()
+        except: pass
+
+def main():
+    rclpy.init(); rclpy.spin(Bridge())
+
+if __name__=='__main__': main()` },
+      { filename: 'run_bridge.sh', content:
+`#!/bin/bash
+# PhysiCore ROS2 Arm Bridge — ${answers.brand||'Custom'} ${dof}-DOF
 source /opt/ros/${distro}/setup.bash
-\`\`\`
+pip install pymavlink websockets aiohttp
+python physicore/bridge/physicore_bridge.py --platform ros2_manipulator &
+sleep 2
+python3 physicore_arm_bridge.py` },
+      { filename: 'INTEGRATION_GUIDE.md', content:
+`# PhysiCore ROS2 Arm Integration
+## ${answers.brand||'Custom'} | ${dof} DOF | Topic: ${topic}
 
-**Step 2.** Verify your arm is publishing joint states:
-\`\`\`
+### Step 1 — Verify topics
+source /opt/ros/${distro}/setup.bash
 ros2 topic echo ${topic} --once
-\`\`\`
-You should see position, velocity, and effort values for all ${dof} joints.
-If you see nothing — your arm driver is not running. Start it first.
 
-**Step 3.** Check your topic name is correct. List all topics:
-\`\`\`
-ros2 topic list
-\`\`\`
-Look for your joint states topic. If it is different from ${topic}, update the bridge script.
+### Step 2 — Run bridge
+bash run_bridge.sh
 
----
-
-## PHASE 2 — Run the bridge
-
-**Step 4.** Open a new terminal. Navigate to your PhysiCore folder.
-
-**Step 5.** Install dependencies:
-\`\`\`
-${pipCmd} install pymavlink websockets aiohttp pyserial
-\`\`\`
-
-**Step 6.** Start the bridge:
-\`\`\`
-source /opt/ros/${distro}/setup.bash
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform ros2_manipulator
-\`\`\`
-
-**Step 7.** You should see:
-\`\`\`
-[BRIDGE] ROS2 subscribed to /imu/data /gps/fix /odom /joint_states
-[ENGINE] Initialized for 'manipulator_arm'
-[TELEM] P:0.0° | mass=1.000 res=0.0000 steps=0
-\`\`\`
-
----
-
-## PHASE 3 — Connect and activate
-
-**Step 8.** Open PhysiCore dashboard in Chrome.
-
-**Step 9.** Click MAVLINK → \`ws://localhost:8765\` → Connect.
-
-**Step 10.** Verify joint angles appear in the pitch/roll/yaw fields.
-
-**Step 11.** Click **ACTIVE CONTROL ON**.
-
-**Step 12.** Move your arm. Watch the mass and friction estimates update in real time.
-PhysiCore is now learning your arm's real dynamics.
-
----
-
-## What PhysiCore does on a robot arm
-
-- Learns real joint friction and inertia from actual motion data
-- Detects payload mass changes automatically (no manual re-tuning needed)
-- Provides uncertainty-aware control — backs off when unsure, precise when confident
-- ${hasFT ? 'Uses your F/T sensor for direct contact force feedback' : 'Estimates contact forces from joint torque data'}
-
-## What to expect
-
-- First 10 seconds: baseline SystemID running
-- After 1 minute: mass and friction estimates converged
-- When you change payload: estimates adapt within 10-15 seconds
-- Residual value drops as the model learns your specific arm
-
-## Troubleshooting
-
-**No joint data in dashboard**
-- Is your arm driver running? Check: \`ros2 topic echo ${topic} --once\`
-- Is the topic name correct? Update the bridge if needed
-
-**Mass estimate not moving**
-- Make sure ACTIVE CONTROL ON is clicked
-- Move the arm — SystemID needs real motion data, not a static arm
-
-**Bridge crashes with import error**
-- Source ROS2 before running: \`source /opt/ros/${distro}/setup.bash\``;
-
-    return [
-      { filename: 'run_bridge.sh', content: `#!/bin/bash\n# PhysiCore ROS2 Arm Bridge — ${answers.brand||'Custom'} ${dof}-DOF\nsource /opt/ros/${distro}/setup.bash\n${pipCmd} install pymavlink websockets aiohttp pyserial\n${pythonCmd} physicore/bridge/physicore_bridge.py --platform ros2_manipulator` },
-      { filename: 'INTEGRATION_GUIDE.md', content: guide },
+### Step 3 — Connect dashboard
+MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON` }
     ];
   }
 
-  // ── ROCKET ─────────────────────────────────────────────────────────────────
-  if (hw === 'rocket') {
-    const fc = answers.fc || 'Arduino Mega';
-    const baud = answers.baud || '115200';
-    const guide = `# PhysiCore Rocket Integration Guide
-## Flight Computer: ${fc} | Dry Mass: ${mass}kg | OS: ${os}
-
----
-
-## PHASE 1 — Flash the firmware
-
-**Step 1.** Open Arduino IDE.
-
-**Step 2.** Install ArduinoJson library: Sketch → Manage Libraries → search ArduinoJson v6.x by Benoit Blanchon.
-
-**Step 3.** Open \`physicore_rocket_fc.ino\`.
-
-**Step 4.** At the top, set your dry mass:
-\`\`\`
-const float DRY_MASS = ${mass};
-\`\`\`
-
-**Step 5.** Flash to your ${fc}.
-
----
-
-## PHASE 2 — Run the bridge
-
-**Step 6.** Close Arduino IDE. Find your port:
-${portNote}
-
-**Step 7.** Install and run:
-\`\`\`
-${pipCmd} install pymavlink websockets aiohttp pyserial
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform custom_rocket_fc --connection ${port} --baud ${baud}
-\`\`\`
-
-**Step 8.** You should see:
-\`\`\`
-[BRIDGE] Serial connected: ${port}
-[ENGINE] Initialized for 'rocket'
-[TELEM] altitude=0.0 velocity=0.0 phase=PRELAUNCH
-\`\`\`
-
----
-
-## PHASE 3 — Connect and monitor
-
-**Step 9.** Dashboard → MAVLINK → \`ws://localhost:8765\` → Connect.
-
-**Step 10.** Click ACTIVE CONTROL ON before launch.
-
-**Step 11.** PhysiCore monitors all phases: PRELAUNCH → BOOST → COAST → APOGEE → DESCENT.
-
-## What PhysiCore does on a rocket
-
-- Tracks real propellant consumption (mass depletion in real time)
-- Adapts guidance to actual motor burn curve vs nominal simulation
-- Sentinel OS watches for unsafe flight envelopes and flags anomalies
-- Forensic log records every command with SHA-256 hash for post-flight analysis
-
-## What good looks like
-
-- Mass estimate dropping during BOOST phase — tracking real propellant consumption ✓
-- Residual low during coast — model has learned your vehicle ✓
-- Phase transitions appearing in dashboard ✓
-
-## Troubleshooting
-
-**Serial not connecting**
-Close Arduino IDE. Check port in Device Manager (Windows) or \`ls /dev/tty*\` (Mac/Linux).
-
-**Mass not updating during burn**
-Make sure firmware sends \`"mass"\` field in telemetry JSON.
-PhysiCore uses this to track real propellant depletion.
-
-**Steps not counting**
-Click ACTIVE CONTROL ON — PhysiCore only runs when explicitly activated.`;
-
-    return [
-      { filename: 'run_bridge' + (isWin ? '.bat' : '.sh'), content: isWin
-        ? `@echo off\npip install pymavlink websockets aiohttp pyserial\npython physicore\\bridge\\physicore_bridge.py --platform custom_rocket_fc --connection ${port} --baud ${baud}`
-        : `#!/bin/bash\n${pipCmd} install pymavlink websockets aiohttp pyserial\n${pythonCmd} physicore/bridge/physicore_bridge.py --platform custom_rocket_fc --connection ${port} --baud ${baud}` },
-      { filename: 'INTEGRATION_GUIDE.md', content: guide },
-    ];
-  }
-
-  // ── AUV ────────────────────────────────────────────────────────────────────
-  if (hw === 'auv') {
-    const guide = `# PhysiCore AUV Integration Guide
-## Platform: ${answers.platform||'Custom AUV'} | Mass: ${mass}kg | DVL: ${answers.dvl||'No'}
-
----
-
-## PHASE 1 — Verify ROS2 topics
-
-**Step 1.** Source ROS2:
-\`\`\`
-source /opt/ros/${distro}/setup.bash
-\`\`\`
-
-**Step 2.** Check your IMU is publishing:
-\`\`\`
-ros2 topic echo /imu/data --once
-\`\`\`
-
-${answers.dvl === 'Yes' ? `**Step 3.** Check DVL is publishing:
-\`\`\`
-ros2 topic echo /dvl/velocity --once
-\`\`\`
-PhysiCore uses DVL velocity for accurate underwater state estimation.` : `**Step 3.** No DVL — PhysiCore will estimate velocity from IMU integration.
-This is less accurate but works for pool and shallow water testing.`}
-
----
-
-## PHASE 2 — Run the bridge
-
-**Step 4.** Navigate to PhysiCore folder. Run:
-\`\`\`
-source /opt/ros/${distro}/setup.bash
-${pipCmd} install pymavlink websockets aiohttp pyserial
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform ros2_auv
-\`\`\`
-
-**Step 5.** You should see:
-\`\`\`
-[BRIDGE] ROS2 subscribed to /imu/data /dvl/velocity /odom
-[ENGINE] Initialized for 'auv'
-\`\`\`
-
----
-
-## PHASE 3 — Connect and dive
-
-**Step 6.** Dashboard → MAVLINK → \`ws://localhost:8765\` → Connect.
-
-**Step 7.** Verify attitude values updating in dashboard.
-
-**Step 8.** Click **ACTIVE CONTROL ON** before submerging.
-
-## What PhysiCore does underwater
-
-- Learns real drag coefficients from actual motion — no simulation can match real water
-- Adapts to buoyancy changes as depth changes
-- Handles thruster thrust degradation as they warm up
-- ${answers.dvl === 'Yes' ? 'Uses DVL for bottom-track velocity — most accurate state estimation' : 'Integrates IMU for velocity estimation — works but less accurate than DVL'}
-
-## What good looks like
-
-- Friction estimate adapting as vehicle moves — drag being learned ✓
-- Mass estimate stable — buoyancy correctly estimated ✓
-- Residual dropping after first few maneuvers ✓
-
-## Troubleshooting
-
-**No data in dashboard**
-Check ROS2 topics are publishing. AUV driver must be running.
-
-**Attitude wrong underwater**
-Magnetometer may be disturbed. Check IMU orientation and calibration before dive.`;
-
-    return [
-      { filename: 'run_bridge.sh', content: `#!/bin/bash\nsource /opt/ros/${distro}/setup.bash\n${pipCmd} install pymavlink websockets aiohttp pyserial\n${pythonCmd} physicore/bridge/physicore_bridge.py --platform ros2_auv` },
-      { filename: 'INTEGRATION_GUIDE.md', content: guide },
-    ];
-  }
-
-  // ── GENERIC FALLBACK (humanoid, legged, ugv, rover, satellite, surgical) ────
-  const platform = hw==='humanoid'||hw==='legged' ? 'ros2_legged'
-    : hw==='ugv' ? 'ros2_ground_rover'
-    : hw==='surgical' ? 'ros2_surgical'
-    : hw==='satellite' ? 'satellite_serial'
-    : 'ros2_ground_rover';
-  const isSerial = ['satellite'].includes(hw);
-
-  const guide = `# PhysiCore ${hw.replace(/_/g,' ').toUpperCase()} Integration Guide
-## Mass: ${mass}kg | OS: ${os}
-
----
-
-## PHASE 1 — Verify your setup
-
-${!isSerial ? `**Step 1.** Source ROS2:
-\`\`\`
-source /opt/ros/${distro}/setup.bash
-\`\`\`
-
-**Step 2.** Verify your hardware is publishing topics:
-\`\`\`
-ros2 topic list
-\`\`\`
-Look for IMU, odometry, or joint state topics. Make sure your hardware driver is running.` : `**Step 1.** Find your serial port:
-${portNote}`}
-
----
-
-## PHASE 2 — Run the bridge
-
-**Step ${!isSerial ? '3' : '2'}.** Navigate to your PhysiCore folder. Run:
-\`\`\`
-${!isSerial ? `source /opt/ros/${distro}/setup.bash\n` : ''}${pipCmd} install pymavlink websockets aiohttp pyserial
-${pythonCmd} physicore/bridge/physicore_bridge.py --platform ${platform}${isSerial ? ` --connection ${port}` : ''}
-\`\`\`
-
-**Step ${!isSerial ? '4' : '3'}.** You should see:
-\`\`\`
-[BRIDGE] ${!isSerial ? 'ROS2 subscribed' : 'Serial connected'}
-[ENGINE] Initialized for '${platform}'
-[TELEM] P:0.0° | mass=1.000 res=0.0000 steps=0
-\`\`\`
-
----
-
-## PHASE 3 — Connect and activate
-
-**Step ${!isSerial ? '5' : '4'}.** Open PhysiCore dashboard in Chrome.
-
-**Step ${!isSerial ? '6' : '5'}.** Click MAVLINK → \`ws://localhost:8765\` → Connect.
-
-**Step ${!isSerial ? '7' : '6'}.** Verify live sensor data appears in the dashboard.
-
-**Step ${!isSerial ? '8' : '7'}.** Click **ACTIVE CONTROL ON**.
-
-**Step ${!isSerial ? '9' : '8'}.** Watch the terminal — steps should count up. PhysiCore is now running.
-
----
-
-## What PhysiCore does
-
-PhysiCore learns your hardware's real physics from sensor data in real time.
-It adapts mass, friction, and inertia estimates continuously.
-It does not replace your existing controller — it adds a physics adaptation layer on top.
-
-## What good looks like
-
-- steps counting up — PhysiCore running ✓
-- mass estimate adapting from ${mass}kg — SystemID learning ✓
-- residual dropping over time — model getting more accurate ✓
-
-## What PhysiCore cannot do
-
-- It cannot work without sensor data streaming in real time
-- It needs real motion to learn — it cannot learn from a stationary vehicle
-- It cannot compensate for broken hardware or sensor failures
-
-## Troubleshooting
-
-**Steps not counting after ACTIVE CONTROL ON**
-Make sure the dashboard shows live data first. If data is frozen, the bridge is not receiving sensor data.
-
-**Mass estimate not moving**
-Move your hardware — PhysiCore needs real motion data, not a static reading.
-
-**Bridge crashes**
-${!isSerial ? `Make sure you sourced ROS2 before running the bridge:\nsource /opt/ros/${distro}/setup.bash` : `Check your serial port. Make sure no other program is using it.`}
-
-Ask the integration engineer any follow-up question — it knows your exact hardware setup.`;
-
+  // Generic for all other hardware
+  const platform = hw==='humanoid'||hw==='legged' ? 'ros2_legged' :
+                   hw==='auv' ? 'ros2_auv' :
+                   hw==='surgical' ? 'ros2_surgical' :
+                   hw==='ugv'||hw==='rover' ? 'ros2_ground_rover' :
+                   hw==='rocket' ? 'custom_rocket_fc' :
+                   hw==='satellite' ? 'satellite_serial' : 'ros2_ground_rover';
+  const isSerial = ['rocket','satellite'].includes(hw);
   return [
-    { filename: 'run_bridge' + (isWin ? '.bat' : '.sh'), content: isWin
-      ? `@echo off\npip install pymavlink websockets aiohttp pyserial\npython physicore\\bridge\\physicore_bridge.py --platform ${platform}${isSerial ? ` --connection ${port}` : ''}`
-      : `#!/bin/bash\n${!isSerial ? `source /opt/ros/${distro}/setup.bash\n` : ''}${pipCmd} install pymavlink websockets aiohttp pyserial\n${pythonCmd} physicore/bridge/physicore_bridge.py --platform ${platform}${isSerial ? ` --connection ${port}` : ''}` },
-    { filename: 'INTEGRATION_GUIDE.md', content: guide },
+    { filename: 'run_bridge.sh', content:
+`#!/bin/bash
+# PhysiCore Bridge — ${hw} | Mass: ${mass}kg
+${!isSerial ? `source /opt/ros/${distro}/setup.bash\n` : ''}pip install pymavlink websockets aiohttp pyserial
+python physicore/bridge/physicore_bridge.py \\
+  --platform ${platform} \\
+  ${isSerial ? `--connection ${port} --baud ${answers.baud||'115200'}` : ''}` },
+    { filename: 'INTEGRATION_GUIDE.md', content:
+`# PhysiCore ${hw.replace(/_/g,' ').toUpperCase()} Integration
+## Mass: ${mass}kg | Platform: ${platform}
+
+### Run bridge
+bash run_bridge.sh
+
+### Connect dashboard
+MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON
+
+PhysiCore adapts mass, friction, and dynamics from real sensor data automatically.` }
   ];
 }
-
 
 function physi_integrate(
   userMsg: string,
@@ -2885,286 +2285,95 @@ function physi_integrate(
   const userTurns = history.filter((x: any) => x.role === 'user');
   const step = userTurns.length;
 
-  // ── TROUBLESHOOTING — intercept any question at any time ──────────────────
-  if (step > 0) {
-    // Port finding
-    if (m.match(/port|com\d|\btty\b|which.*port|what.*port|find.*port|device manager/)) {
+  // Troubleshooting — intercept any time
+  if (step > 0 && m.match(/not work|error|fail|can.t connect|doesn.t|issue|problem|port.*wrong/)) {
+    if (m.match(/port|com\d|\btty\b|which.*port|what.*port/)) {
       return `> INTEGRATION ENGINEER:
+Finding your serial port:
 
-Finding your serial port — exact steps:
+Windows
+     Open Device Manager → Ports (COM & LPT)
+     Note the COMx number (e.g. COM3)
+     Use: --connection COM3
 
-**Windows:**
-1. Press Windows key + X
-2. Click Device Manager
-3. Click the arrow next to Ports (COM & LPT)
-4. Look for USB-SERIAL CH340 (COM3) or Arduino Uno (COM4)
-5. That number — COM3, COM4, etc — is your port
+Mac
+     Open a terminal and run: ls /dev/cu.*
+     Look for something like: /dev/cu.usbserial-0001
+     Use: --connection /dev/cu.usbserial-0001
 
-**Mac:**
-Open Terminal and type: \`ls /dev/cu.*\`
-Look for something like \`/dev/cu.usbserial-0001\` or \`/dev/cu.usbmodem14101\`
+Linux
+     Run: ls /dev/ttyUSB*  or  ls /dev/ttyACM*
+     Use: --connection /dev/ttyUSB0
 
-**Linux:**
-Open Terminal and type: \`ls /dev/ttyUSB*\` or \`ls /dev/ttyACM*\`
-You will see something like \`/dev/ttyUSB0\`
-
-Use that in your bridge command: \`--connection COM3\` (Windows) or \`--connection /dev/ttyUSB0\` (Linux/Mac)
-
-If nothing shows up — unplug your Arduino and plug it back in, then check again.`;
+Then rerun the bridge with the correct port.`;
     }
+    return `> INTEGRATION ENGINEER:
+Troubleshooting — work through these one at a time:
 
-    // Serial failed / cannot connect
-    if (m.match(/serial fail|cannot connect|not connect|connection fail|bridge.*fail|retrying/)) {
-      return `> INTEGRATION ENGINEER:
+STEP 1 — Close Arduino IDE
+     It locks the serial port exclusively. The bridge cannot connect while it is open.
 
-"Serial failed — retrying" has exactly two causes. Check them in order:
+STEP 2 — Find your serial port
+     Windows: Device Manager → Ports (COM & LPT) → note the COMx number
+     Mac: run in terminal: ls /dev/cu.*  — look for usbserial or usbmodem
+     Linux: run: ls /dev/ttyUSB*  or  ls /dev/ttyACM*
 
-**Cause 1 — Arduino IDE is still open (most common)**
-Arduino IDE holds the serial port exclusively. Nothing else can use it while IDE is open.
-Close Arduino IDE completely. Not minimized — fully closed. Then run the bridge again.
+STEP 3 — Verify your IMU is sending real data
+     Open Serial Monitor at 115200 baud
+     Tilt the robot — pitch must change
+     If pitch stays at 0.0 the IMU is not wired correctly
 
-**Cause 2 — Wrong port number**
-The port you typed does not match your Arduino's actual port.
-Windows: Open Device Manager → Ports (COM & LPT) → find your Arduino's COM number
-Mac: Run \`ls /dev/cu.*\` in Terminal
-Linux: Run \`ls /dev/ttyUSB*\` in Terminal
-Update your bridge command with the correct port.
+STEP 4 — Check baud rate
+     Must be 115200 in both the firmware and the bridge command --baud 115200
 
-If you close Arduino IDE and use the right port and it still fails — unplug the Arduino USB, plug it back in, and try again.`;
-    }
+STEP 5 — Check dashboard endpoint
+     Must be exactly: ws://localhost:8765
+     Not https — use ws://
 
-    // MPU6050 not found
-    if (m.match(/mpu.*not found|imu.*not found|sensor.*not found|wiring/)) {
-      return `> INTEGRATION ENGINEER:
+STEP 6 — Activate control
+     PhysiCore only sends commands when ACTIVE CONTROL ON is clicked
 
-"MPU6050 not found" means your IMU wiring is wrong. Check every wire:
-
-**Correct wiring for MPU6050 → Arduino Uno:**
-- SDA → Pin A4 on Arduino (NOT A5, NOT SDA label on some boards)
-- SCL → Pin A5 on Arduino
-- VCC → 3.3V on Arduino (NOT 5V — 5V will damage the MPU6050)
-- GND → GND on Arduino
-
-**Check each wire individually:**
-1. Pull each wire out and push it back in firmly
-2. Make sure the jumper wire is going into the right hole — A4 and A5 are easy to mix up
-3. VCC must go to 3.3V — if it is in the 5V pin the MPU6050 may be damaged already
-
-If you have checked everything and it still says not found — try a different MPU6050 module. They can be damaged by 5V or loose connections.`;
-    }
-
-    // Balance point / motors full speed / spinning
-    if (m.match(/full speed|one direction|spin.*stop|balance.?point|calibrat/)) {
-      return `> INTEGRATION ENGINEER:
-
-Motors spinning full speed in one direction = BALANCE_POINT is wrong. Here is exactly how to fix it:
-
-**Step 1.** Close the bridge terminal.
-
-**Step 2.** Open Arduino IDE. Open your firmware file.
-
-**Step 3.** Open Serial Monitor (Tools → Serial Monitor) at 115200 baud.
-
-**Step 4.** Hold your robot perfectly upright — the exact angle where it should balance. Look at the "pitch" value in the JSON. It might show something like 2.3 or -1.5.
-
-**Step 5.** Write that number down. Close Serial Monitor.
-
-**Step 6.** Find this line in the firmware:
-\`\`\`
-const float BALANCE_POINT = 0.0;
-\`\`\`
-Change 0.0 to the number you just read.
-
-**Step 7.** Upload the firmware. Close Arduino IDE. Run the bridge again.
-
-The pitch value in the dashboard should now show approximately 0.0 when you hold the bot upright. If it does, BALANCE_POINT is correct and the motors will stop fighting.`;
-    }
-
-    // Motors barely moving / weak
-    if (m.match(/barely move|too weak|no effect|nothing happen|not respond|max.?torque/)) {
-      return `> INTEGRATION ENGINEER:
-
-Motors barely moving = MAX_TORQUE is wrong. Here is the fix:
-
-**Open your firmware file and find this line:**
-\`\`\`
-const float MAX_TORQUE = 2.5;
-\`\`\`
-
-If it says 100.0 instead of 2.5, that is the bug. PhysiCore outputs torques in the range of ±2.5 N·m. Dividing by 100 means the motors get less than 1% power — invisible to the eye.
-
-**Fix:** Change it to 2.5 and re-flash.
-
-If it already says 2.5 and motors are still weak — check:
-1. Is ACTIVE CONTROL ON clicked in the dashboard? PhysiCore only sends commands when it is enabled.
-2. Does the terminal show steps counting up? If steps is stuck at 0, PhysiCore is not running.
-3. Is the dashboard connected? Check that it says "Connected" not "Disconnected".`;
-    }
-
-    // Pitch frozen / no data / dashboard not updating
-    if (m.match(/pitch.*zero|pitch.*frozen|no data|not updat|frozen|0\.0.*never/)) {
-      return `> INTEGRATION ENGINEER:
-
-Pitch showing 0.0 and not changing means the Arduino is not sending data to the bridge. Fix it this way:
-
-**Step 1.** Check the bridge terminal. Does it say \`[BRIDGE] Serial connected\`?
-If no — your serial connection failed. See the "serial failed" troubleshooting.
-
-**Step 2.** If it says connected but pitch is frozen:
-1. Unplug the Arduino USB cable
-2. Wait 3 seconds
-3. Plug it back in
-4. Watch the bridge terminal — you should see the calibration message appear
-5. Wait for \`[ENGINE] Initialized\` to appear
-
-**Step 3.** If you still see nothing — the firmware is not running.
-Open Arduino IDE, open Serial Monitor at 115200 baud. Tilt the robot. Do you see JSON appearing?
-If yes: the bridge port might be wrong. Compare the port in Serial Monitor title vs your bridge command.
-If no: the firmware is not flashed correctly. Re-flash.`;
-    }
-
-    // Python not recognized
-    if (m.match(/python.*recogni|python.*found|not.*python|install.*python/)) {
-      return `> INTEGRATION ENGINEER:
-
-"python is not recognized" means Python is not installed or not in your PATH.
-
-**Windows — fix in 5 minutes:**
-1. Go to python.org/downloads
-2. Click "Download Python 3.x"
-3. Run the installer
-4. On the FIRST screen of the installer — tick the checkbox that says **"Add Python to PATH"**. This is critical. Do not skip it.
-5. Click Install Now
-6. Close and reopen your terminal (Command Prompt)
-7. Type \`python --version\` — you should see something like Python 3.12.0
-
-**If Python is installed but still not recognized:**
-You probably did not tick "Add to PATH" during install.
-Search Windows for "Environment Variables" → System Properties → Environment Variables → Path → Add the Python folder path (usually C:\\Users\\YourName\\AppData\\Local\\Programs\\Python\\Python312)
-
-**Mac/Linux:**
-Try \`python3\` instead of \`python\`. Mac and Linux use \`python3\` by default.`;
-    }
-
-    // What can PhysiCore do / what does it do / how does it work
-    if (m.match(/what.*physicore|how.*work|what.*do|can.*physicore|explain/)) {
-      return `> INTEGRATION ENGINEER:
-
-Here is exactly what PhysiCore does and does not do:
-
-**What it does:**
-PhysiCore is a real-time physics adaptation engine. It sits between your hardware and your controller. Every 16.7ms it:
-1. Reads your sensor data (IMU, encoders, whatever you have)
-2. Computes the optimal control action using CEM-MPC (a stochastic optimizer)
-3. Learns your hardware's real mass, friction, and inertia from sensor data (SystemID)
-4. Sends the command to your hardware
-5. Observes what actually happened vs what it predicted, and updates its model
-
-**What it learns automatically:**
-- Your robot's real mass (within about 30 seconds of real motion)
-- Real friction coefficients (floor, joints, wheels)
-- Real inertia from how the robot actually responds to commands
-
-**What it cannot do:**
-- It cannot work without sensor data — it needs real data to adapt
-- It cannot compensate for broken motors or sensors
-- It cannot learn without motion — a stationary robot teaches it nothing
-- It does not remember between sessions (yet) — learning restarts each time
-
-**What results to expect:**
-- First 10 seconds: similar to PID/your existing controller
-- After 30 seconds: noticeably smoother, more adaptive control
-- After 2-3 minutes: fully converged — your robot behaves the way its real physics says it should, not what the simulation assumed
-
-The key difference from PID: PID uses fixed gains. PhysiCore's gains adapt to your actual hardware in real time.`;
-    }
-
-    // Steps not counting / active control not working
-    if (m.match(/step.*not|steps.*0|active control|not.*count/)) {
-      return `> INTEGRATION ENGINEER:
-
-Steps not counting means PhysiCore is not sending commands. Check in this order:
-
-**1. Is ACTIVE CONTROL ON clicked?**
-PhysiCore only runs when you explicitly enable it. Look for the ACTIVE CONTROL button in the dashboard. It should show a green dot and say ON.
-
-**2. Is the dashboard actually connected?**
-The connection panel should show "Connected" with a green indicator. If it shows "Disconnected" or no status — click MAVLINK, type \`ws://localhost:8765\`, click Connect.
-
-**3. Is the bridge running?**
-Check the terminal where you ran the bridge command. It should be printing telemetry lines every 5 seconds. If it stopped — restart the bridge.
-
-**4. Is sensor data flowing?**
-In the dashboard, check if pitch and roll values are updating. If they are frozen at 0.0, the bridge is not receiving data. Go to the "pitch frozen" troubleshooting.
-
-If all four of the above are correct and steps is still 0 — copy the error message from the bridge terminal and ask me, I will give you the exact fix.`;
-    }
-
-    // General error / not working
-    if (m.match(/not work|error|fail|issue|problem|help|wrong|broken/)) {
-      return `> INTEGRATION ENGINEER:
-
-Tell me exactly what you see and I will give you the exact fix. The most common issues and their fixes:
-
-**"Serial failed — retrying"**
-→ Close Arduino IDE completely. It blocks the serial port.
-
-**"MPU6050 not found"**
-→ SDA must go to A4, SCL to A5, VCC to 3.3V (NOT 5V).
-
-**Pitch shows 0.0 and never changes**
-→ Unplug Arduino, plug back in, wait for calibration message in terminal.
-
-**Motors spin full speed one direction**
-→ BALANCE_POINT is wrong. Calibrate it using Serial Monitor.
-
-**Motors barely respond**
-→ MAX_TORQUE must be 2.5 in firmware. If it says 100, change it.
-
-**Steps not counting after ACTIVE CONTROL ON**
-→ Dashboard must be connected first. Check the connection shows green.
-
-**"python is not recognized"**
-→ Install Python from python.org. Tick "Add Python to PATH" during install.
-
-**"pip install fails"**
-→ Try: \`python -m pip install pymavlink websockets aiohttp pyserial\`
-
-What exactly do you see? I will give you the step-by-step fix for your specific error.`;
-    }
+Tell me which step fails and I will give you the exact fix.`;
   }
 
-  // ── DETECT HARDWARE ───────────────────────────────────────────────────────
-  const hwNow   = ie_detect(userMsg);
+  // Detect hardware
+  const hwNow = ie_detect(userMsg);
   const hwFirst = ie_detect(userTurns[0]?.content || '');
   const hw = hwNow || hwFirst;
 
+  // No hardware detected
   if (!hw) {
     return `> INTEGRATION ENGINEER:
+I generate complete integration code for any hardware — firmware, bridge config, and a step-by-step guide. No placeholders. Real code.
 
-I generate complete integration code and step-by-step guides for any hardware. What are you connecting to PhysiCore?
+What are you integrating? Pick one:
 
-  • Balancing bot (Arduino + MPU6050 + L298N)
-  • PX4 drone (Pixhawk)
-  • ArduPilot drone or rover
-  • ROS2 robot arm (UR, KUKA, Fanuc, custom)
-  • Humanoid robot (Unitree, Figure AI, Boston Dynamics)
-  • Legged robot (ANYmal, Go1/Go2)
+  • Balancing bot (Arduino or ESP32 + MPU6050)
+  • PX4 drone
+  • ArduPilot drone
+  • ROS2 robot arm (UR5, UR10, KUKA, Fanuc, Franka, custom)
+  • Humanoid robot (Unitree G1/H1, Figure AI Apollo, Boston Dynamics)
+  • Legged robot (ANYmal, Go1, Go2, Mini Cheetah)
   • eVTOL aircraft
   • Surgical robot
-  • AUV / underwater robot
-  • Satellite / spacecraft
-  • Rocket / sounding rocket
-  • Ground rover / AMR
-  • Custom hardware
-
-Tell me what you have and I will ask you a few quick questions, then generate your complete integration guide with every step.`;
+  • AUV or underwater robot
+  • Satellite or spacecraft
+  • Rocket or sounding rocket
+  • Ground rover or AMR
+  • Custom hardware`;
   }
 
   const flow = IE_FLOWS[hw] || IE_FLOWS['rover'];
 
+  // Collect answers from history
+  // step=0 means first message just arrived (hardware detected), ask Q0
+  // step=1 means user answered Q0, ask Q1
+  // step=N means user answered QN-1, ask QN or generate
   const answeredCount = step;
   const answers: Record<string,string> = {};
+  // userTurns[0] is the hardware detection trigger.
+  // userTurns[1...step-1] are previous answers.
+  // userMsg is the current answer.
   for (let i = 0; i < answeredCount && i < flow.length; i++) {
     if (i < step - 1) {
       answers[flow[i].key] = userTurns[i + 1]?.content || '';
@@ -3174,12 +2383,13 @@ Tell me what you have and I will ask you a few quick questions, then generate yo
   }
 
   if (answeredCount < flow.length) {
+    // Still need more answers
     const q = flow[answeredCount];
     let resp = `> INTEGRATION ENGINEER:`;
     if (answeredCount === 0) {
-      resp += `\n${hw.replace(/_/g,' ').toUpperCase()} detected. I need ${flow.length} quick details to generate your complete step-by-step integration guide.\n`;
+      resp += `\n${hw.replace(/_/g,' ').toUpperCase()} detected. I need ${flow.length} quick details to generate your exact code.\n`;
     } else {
-      resp += `\nGot it.\n`;
+      resp += `\nGot it — ${userMsg}.\n`;
     }
     resp += `\n${q.q}`;
     if (q.opts) resp += '\n' + q.opts.map(o => `  • ${o}`).join('\n');
@@ -3187,17 +2397,17 @@ Tell me what you have and I will ask you a few quick questions, then generate yo
     return resp;
   }
 
+  // All questions answered — add final answer and generate
   if (flow.length > 0) {
     answers[flow[flow.length - 1].key] = userMsg;
   }
 
   const files = ie_generateCode(hw, answers);
   const mass = parseFloat(answers.mass || '1.0') || 1.0;
-  const isSerial  = ['balancing_bot','rocket','satellite'].includes(hw);
+  const isSerial = ['balancing_bot','rocket','satellite'].includes(hw);
   const isMavlink = ['px4','ardupilot','drone','evtol'].includes(hw);
-  const os = answers.os || 'Windows';
-  const isWin = os.toLowerCase().includes('win');
 
+  // Auto-configure dashboard
   if (callbacks) {
     if (callbacks.setGeneratedFiles) {
       callbacks.setGeneratedFiles(files.map(f => ({ filename: f.filename, content: f.content })));
@@ -3220,39 +2430,45 @@ Tell me what you have and I will ask you a few quick questions, then generate yo
 
   const fileList = files.map(f => `  • ${f.filename}`).join('\n');
 
+  const bbSteps = [
+    `Install Arduino libraries\n     Arduino IDE → Sketch → Include Library → Manage Libraries\n     Search: MPU6050_light → Install\n     Search: ArduinoJson → Install (v6.x by Benoit Blanchon)`,
+    `Flash the firmware\n     Open physicore_balancing_bot.ino in Arduino IDE\n     Tools → Board → select your board\n     Tools → Port → select your port\n     Click Upload`,
+    `Verify the IMU is working\n     Open Serial Monitor at 115200 baud\n     Tilt the robot — the pitch value must change\n     Good: {"pitch":8.4,"gyro_y":-2.1,...} Bad: no output or all zeros`,
+    `Run the bridge\n     Close Arduino IDE first — it locks the serial port exclusively\n     Open a terminal and run: bash run_bridge.sh`,
+    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect — you should see live pitch data immediately`,
+    `Start PhysiCore control\n     Click ACTIVE CONTROL ON\n     Watch mass estimate update in the sidebar — that is SystemID learning your robot`,
+  ];
+
+  const mavSteps = [
+    `Enable MAVLink telemetry\n     In QGroundControl: Application Settings → Telemetry\n     Enable UDP output on port 14550`,
+    `Run the bridge\n     Open a terminal and run: bash run_bridge.sh\n     You should see "MAVLink connected" within a few seconds`,
+    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect`,
+    `Arm and activate\n     Arm your vehicle normally\n     Click ACTIVE CONTROL ON\n     PhysiCore reads your telemetry at 60 Hz and adapts to your hardware live`,
+  ];
+
+  const ros2Steps = [
+    `Source your ROS2 environment\n     Run: source /opt/ros/${(answers.distro||'humble').toLowerCase()}/setup.bash`,
+    `Run the bridge\n     Run: bash run_bridge.sh\n     You should see joint states flowing in the terminal`,
+    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect`,
+    `Activate control\n     Click ACTIVE CONTROL ON\n     PhysiCore adapts your robot's mass and friction from live joint data automatically`,
+  ];
+
+  const steps = hw === 'balancing_bot' ? bbSteps : isMavlink ? mavSteps : ros2Steps;
+  const stepsText = steps.map((s, i) => `STEP ${i+1} — ${s}`).join('\n\n');
+
   return `> INTEGRATION ENGINEER:
+${hw.replace(/_/g,' ').toUpperCase()} integration ready. Your files are in the panel below.
 
-Your complete integration guide is ready. All files generated.
+${stepsText}
 
-**Generated files:**
+---
+Files generated:
 ${fileList}
 
-**Open INTEGRATION_GUIDE.md** — it has every step written out simply, exactly what to check, what good looks like, and the fix for every problem you might hit.
+Dashboard pre-configured → ws://localhost:8765 | Nominal mass: ${mass}kg
+SystemID will adapt mass and friction automatically from your real hardware data.
 
-**Quick start:**
-${hw === 'balancing_bot'
-  ? `1. Flash ${files[0].filename} to your ${answers.mcu||'Arduino'} in Arduino IDE
-2. Calibrate BALANCE_POINT using Serial Monitor at 115200 baud (critical step — read the guide)
-3. Close Arduino IDE completely
-4. Run ${isWin ? 'run_bridge.bat' : 'bash run_bridge.sh'} — replace the port with yours
-5. Dashboard → MAVLINK → ws://localhost:8765 → Connect
-6. Hold bot upright → click ACTIVE CONTROL ON → slowly let go`
-  : isMavlink
-  ? `1. Enable MAVLink telemetry in QGC/Mission Planner
-2. Run ${isWin ? 'run_bridge.bat' : 'bash run_bridge.sh'}
-3. Dashboard → MAVLINK → ws://localhost:8765 → Connect
-4. Arm vehicle → click ACTIVE CONTROL ON`
-  : `1. Source ROS2: source /opt/ros/${answers.distro||'humble'}/setup.bash
-2. bash run_bridge.sh
-3. Dashboard → MAVLINK → ws://localhost:8765 → Connect
-4. Click ACTIVE CONTROL ON`}
-
-**Dashboard pre-configured:**
-  • Connection: ws://localhost:8765
-  • Platform: ${hw.replace(/_/g,' ')}
-  • Starting mass: ${mass}kg (SystemID will adapt this from real sensor data)
-
-Ask me anything — wiring questions, specific errors you see, what a number in the dashboard means, what PhysiCore can and cannot do on your hardware. I know your exact setup.`;
+Stuck on any step? Tell me exactly what you see and I will give you the fix.`;
 }
 
 

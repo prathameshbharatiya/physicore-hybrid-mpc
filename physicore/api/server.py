@@ -116,11 +116,15 @@ class DiagnosticsResponse(BaseModel):
     step_count: int
     params: Dict[str, float]
     residual_norm: float
+    residual_axis: List[float]      # NEW: per-axis residual breakdown
     uncertainty: float
     target_hz: float
     state_dim: int
     action_dim: int
     sysid_loss_hist: List[float]
+    innovation_ema: float           # NEW: adaptive LR signal
+    failure_summary: Dict           # NEW: structured failure log
+    hash_chain_head: str            # NEW: latest forensic certificate
     timestamp: float
 
 
@@ -153,9 +157,10 @@ async def get_status():
     if engine_state.engine is None:
         return DiagnosticsResponse(
             platform="none", running=False, step_count=0,
-            params={}, residual_norm=0.0, uncertainty=0.0,
-            target_hz=0.0, state_dim=0, action_dim=0,
-            sysid_loss_hist=[], timestamp=time.time()
+            params={}, residual_norm=0.0, residual_axis=[],
+            uncertainty=0.0, target_hz=0.0, state_dim=0, action_dim=0,
+            sysid_loss_hist=[], innovation_ema=0.0,
+            failure_summary={}, hash_chain_head="", timestamp=time.time()
         )
     d = engine_state.engine.diagnostics_full
     return DiagnosticsResponse(
@@ -164,11 +169,15 @@ async def get_status():
         step_count=d["step_count"],
         params=d["params"],
         residual_norm=d["residual_norm"],
+        residual_axis=d.get("residual_axis", []),
         uncertainty=d["uncertainty"],
         target_hz=d["target_hz"],
         state_dim=d["state_dim"],
         action_dim=d["action_dim"],
         sysid_loss_hist=d["sysid_loss_hist"],
+        innovation_ema=d.get("innovation_ema", 0.0),
+        failure_summary=d.get("failure_summary", {}),
+        hash_chain_head=d.get("hash_chain_head", ""),
         timestamp=time.time(),
     )
 
@@ -262,6 +271,18 @@ async def get_uncertainty():
     engine = require_engine()
     d = engine.diagnostics_full
     return {"uncertainty": d["uncertainty"], "timestamp": time.time()}
+
+
+@app.get("/api/engine/failures")
+async def get_failures():
+    """Real-time failure log — structured events with severity, type, and params snapshot."""
+    engine = require_engine()
+    return {
+        "failure_summary": engine.failure_log.summary(),
+        "innovation_ema":  engine.sysid.innovation_ema,
+        "hash_chain_head": engine.hash_chain._prev,
+        "timestamp":       time.time(),
+    }
 
 
 @app.post("/api/engine/reset")
