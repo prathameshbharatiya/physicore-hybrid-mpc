@@ -55,6 +55,20 @@ from pymavlink import mavutil
 import websockets
 import serial as pyserial
 
+# ── PhysiCore persistence layer ───────────────────────────────────────────────
+try:
+    from physicore.core.registry    import get_registry
+    from physicore.core.robot_config import RobotConfig, create_template
+    from physicore.core.telemetry   import get_telemetry, CONSENT_TEXT
+    HAS_REGISTRY = True
+except ImportError as e:
+    HAS_REGISTRY = False
+    print(f"[BRIDGE] Registry not available: {e}")
+
+# Global robot config and telemetry
+_robot_config   = None
+_telemetry_mgr  = None
+
 BRIDGE_VERSION = "2.0.0"
 TELEMETRY_HZ   = 20
 
@@ -597,6 +611,8 @@ async def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PhysiCore Universal Hardware Bridge v2.0")
+    parser.add_argument('--config', default=None, help='Path to robot config YAML (e.g. my_robot.yaml)')
+    parser.add_argument('--init-config', default=None, help='Create a template config for a platform (e.g. balancing_bot)')
     parser.add_argument('--mode',       default='mavlink', choices=['mavlink','px4','ardupilot','rocket','ros2','robot_serial'])
     parser.add_argument('--connection', default='udp:14550')
     parser.add_argument('--baud',       type=int, default=57600)
@@ -608,6 +624,37 @@ if __name__ == "__main__":
 
     if args.test:
         run_test(); sys.exit(0)
+
+    # Handle --init-config: create template and exit
+    if hasattr(args, 'init_config') and args.init_config:
+        if HAS_REGISTRY:
+            output = f"{args.init_config}_robot.yaml"
+            create_template(args.init_config, output)
+        else:
+            print("[BRIDGE] Registry not available — cannot create template")
+        import sys; sys.exit(0)
+
+    # Handle --config: load robot config from YAML
+    global _robot_config
+    if hasattr(args, 'config') and args.config and HAS_REGISTRY:
+        try:
+            _robot_config = RobotConfig.from_yaml(args.config)
+            print(f"[CONFIG] Loaded robot config: {args.config}")
+            print(f"  Name: {_robot_config.name}")
+            print(f"  Platform: {_robot_config.bridge_platform}")
+            print(f"  Connection: {_robot_config.resolved_connection}")
+            print(f"  Mass: {_robot_config.mass}kg")
+            print(f"  Registry: {'enabled' if _robot_config.use_registry else 'disabled'}")
+            print(f"  Telemetry: {'opt-in' if _robot_config.opt_in_telemetry else 'off'}")
+            # Override args from config
+            if not args.platform:
+                args.platform = _robot_config.bridge_platform
+            if args.connection in ('udp:14550', 'COM3'):
+                args.connection = _robot_config.resolved_connection
+            args.baud = _robot_config.baud
+        except Exception as e:
+            print(f"[CONFIG] Failed to load config: {e}")
+            _robot_config = None
 
     if args.platform:
         profile = PLATFORM_PROFILES[args.platform]
@@ -624,10 +671,33 @@ if __name__ == "__main__":
         if HAS_PHYSICORE:
             ep = profile.get("engine_platform", "ground_rover")
             if ep in PLATFORM_DYNAMICS:
-                engine = PhysiCore.for_platform(ep, {
-                    "mass": 1.0, "friction": 0.15, "inertia": 0.01
-                })
+                # Use config params if available, otherwise defaults
+                init_params = {"mass": 1.0, "friction": 0.15, "inertia": 0.01}
+                if _robot_config:
+                    init_params = _robot_config.initial_params
+
+                engine = PhysiCore.for_platform(ep, init_params)
+
+                # Load saved model from registry if available
+                registry_key = ep
+                if _robot_config:
+                    registry_key = _robot_config.registry_key
+                if HAS_REGISTRY:
+                    reg = get_registry()
+                    loaded = reg.load(engine, registry_key)
+                    if not loaded:
+                        # Try platform-level prior
+                        reg.load_prior(engine, ep)
+
                 print(f"[ENGINE] Initialized for '{ep}' — SystemID will adapt mass/friction from real data")
+                print(f"[ENGINE] Starting params: {engine.physics.params}")
+
+                # Start telemetry if opted in
+                global _telemetry_mgr
+                if HAS_REGISTRY and _robot_config and _robot_config.opt_in_telemetry:
+                    hw_class = f"{_robot_config.imu}_{_robot_config.motor_driver}_{_robot_config.mcu}".lower()
+                    _telemetry_mgr = get_telemetry(enabled=True)
+                    _telemetry_mgr.start_session(ep, hw_class, engine.cfg.control_hz)
 
     if _platform.system() == 'Windows':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -635,4 +705,31 @@ if __name__ == "__main__":
     try:
         asyncio.run(main(args))
     except KeyboardInterrupt:
-        print("\n[BRIDGE] Stopped.")
+        print("\n[BRIDGE] Stopping — saving model...")
+        # Save learned model to registry on clean exit
+        if engine is not None and HAS_REGISTRY:
+            try:
+                registry_key = engine.cfg.platform
+                if _robot_config:
+                    registry_key = _robot_config.registry_key
+                reg = get_registry()
+                session_meta = {}
+                if _robot_config:
+                    session_meta = {
+                        "name":         _robot_config.name,
+                        "imu":          _robot_config.imu,
+                        "motor_driver": _robot_config.motor_driver,
+                        "mcu":          _robot_config.mcu,
+                    }
+                reg.save(
+                    engine,
+                    platform=registry_key,
+                    session_meta=session_meta,
+                    opt_in_telemetry=_robot_config.opt_in_telemetry if _robot_config else False,
+                )
+                # End telemetry session
+                if _telemetry_mgr:
+                    _telemetry_mgr.end_session(engine)
+            except Exception as e:
+                print(f"[BRIDGE] Could not save model: {e}")
+        print("[BRIDGE] Stopped.")

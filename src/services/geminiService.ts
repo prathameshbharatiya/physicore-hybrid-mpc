@@ -1,12 +1,18 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { SimState, MetaAnalysisResponse } from "../types";
 
 export const performMetaAnalysis = async (
   state: SimState,
   history: SimState[]
 ): Promise<MetaAnalysisResponse> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+  const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    generationConfig: {
+      responseMimeType: "application/json",
+    }
+  });
   
   const prompt = `
     System: You are the "PhysiCore Meta-Analyst".
@@ -23,40 +29,25 @@ export const performMetaAnalysis = async (
     Analyze the trajectory history and parameter drift. Identify if the model is over-damped or if the system ID is diverging.
     
     Return strict JSON with specific suggested Q/R weights for the MPC cost function.
+    
+    Required JSON structure:
+    {
+      "insight": "high-level summary",
+      "diagnostics": ["point 1", "point 2"],
+      "suggestedCostTweaks": {
+        "q_weight": 1.0,
+        "r_weight": 0.1
+      }
+    }
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            insight: { type: Type.STRING },
-            diagnostics: { 
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            suggestedCostTweaks: {
-              type: Type.OBJECT,
-              properties: {
-                q_weight: { type: Type.NUMBER },
-                r_weight: { type: Type.NUMBER }
-              }
-            }
-          },
-          required: ["insight", "diagnostics", "suggestedCostTweaks"]
-        }
-      }
-    });
-
-    const text = response.text;
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
     if (!text) throw new Error("Empty response from meta-analyst");
     return JSON.parse(text.trim()) as MetaAnalysisResponse;
   } catch (e: any) {
-    if (e.message?.includes('429') || e.status === 429) {
+    if (e.message?.includes('429')) {
       console.warn("Meta-analyst rate limit exceeded (429).");
       throw new Error("QUOTA_EXHAUSTED");
     }

@@ -1,0 +1,20 @@
+# PhysiCore — Balancing Bot Config
+# Only change these two values:
+#   connection: your COM port (Windows: check Device Manager, Mac: /dev/cu.usbserial-xxx, Linux: /dev/ttyUSB0)
+#   mass: your robot's weight in kg
+
+name: My Balancing Bot
+platform: balancing_bot
+connection: COM3
+baud: 115200
+mass: 1.0
+friction: 0.15
+inertia: 0.01
+imu: MPU6050
+motor_driver: L298N
+mcu: Arduino Uno
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true
+max_torque: 2.5

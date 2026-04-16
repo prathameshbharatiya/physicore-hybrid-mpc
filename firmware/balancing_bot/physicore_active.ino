@@ -18,13 +18,9 @@
 // ── CONFIGURE FOR YOUR HARDWARE ───────────────────────────────────────────
 const int L_EN=5, L_IN1=4, L_IN2=3;   // Left motor (L298N)
 const int R_EN=6, R_IN1=7, R_IN2=8;   // Right motor (L298N)
-// ── CRITICAL: CALIBRATE THIS BEFORE RUNNING ────────────────────────────────
-// Hold your robot perfectly upright. Open Serial Monitor at 115200 baud.
-// Read the "pitch" value printed. Set BALANCE_POINT to that value.
-// Example: if Serial Monitor shows {"pitch":2.3,...} then set BALANCE_POINT = 2.3
-// Wrong BALANCE_POINT = robot tries to balance at wrong angle = PhysiCore fights offset
+// ── CRITICAL: CALIBRATE THIS BEFORE RUNNING ─────────────────────
 const float BALANCE_POINT = 0.0;  // SET THIS TO YOUR ROBOT'S UPRIGHT PITCH READING
-const float MAX_TORQUE    = 2.5;        // PhysiCore engine outputs ±2.5 N·m max. DO NOT change to 100 — motors will get <1% power.
+const float MAX_TORQUE    = 2.5;  // PhysiCore engine outputs ±2.5 N·m max.
 
 // Internal PID (safety fallback when PhysiCore not connected)
 const float KP=35.0, KI=0.5, KD=1.2;
