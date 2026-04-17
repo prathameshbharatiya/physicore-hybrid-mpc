@@ -482,7 +482,7 @@ class CEMOptimizer:
         x=state.copy(); total=0.0
         for u in actions:
             x_sim=physics.step(x,u,dt); res,s2,_=ensemble.predict(x,u); x=x_sim+res
-            x_ref_p=np.pad(x_ref,(0,max(0,len(x)-len(x_ref))))[:len(x)]; dx=x-x_ref_p; n=min(len(dx),Q.shape[0])
+            dx=x-x_ref; n=min(len(dx),Q.shape[0])
             total+=float(dx[:n]@Q[:n,:n]@dx[:n]+u@R@u)+self.lam*s2
         return total
 

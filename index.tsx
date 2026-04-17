@@ -2,7 +2,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import './index.css';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 
 // Suppress recharts defaultProps warning in React 18/19

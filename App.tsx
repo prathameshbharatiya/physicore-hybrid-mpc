@@ -359,17 +359,10 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-let globalAi: GoogleGenAI | null = null;
-const getGlobalAi = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("GEMINI_API_KEY missing");
-  if (!globalAi) globalAi = new GoogleGenAI({ apiKey: key });
-  return globalAi;
-};
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
-    const ai = getGlobalAi();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: userPrompt,
@@ -3459,6 +3452,216 @@ function AppContent() {
   }, [isSystemConnected, view, projectData, telemetry.mass, telemetry.friction, telemetry.confidence]);
 
 
+  // ── PhysiCore Integration Engineer — full AI system prompt ──────────────
+  const PHYSICORE_SYSTEM_PROMPT = `You are the PhysiCore Integration Engineer — an expert AI embedded inside the PhysiCore platform. Your job is to get any engineering team fully integrated with PhysiCore in 30 minutes, regardless of their hardware stack.
+
+You have complete knowledge of PhysiCore internals, every supported platform, every wiring diagram, every error message, and every fix. You generate real, working code — no placeholders, no "replace this with your value". You ask targeted questions, then produce the exact files, commands, and steps needed.
+
+## WHAT PHYSICORE IS
+PhysiCore is a real-time physics adaptation engine. It closes the sim-to-real gap automatically at 60Hz. It runs a physics kernel (RK4 + ISA atmosphere) corrected by a residual ensemble (3 MLPs), optimised by CEM-MPC (6-step lookahead), with online SystemID adapting mass/friction/inertia from live sensor data. Within 30 seconds of real motion it knows your hardware's real physics. No manual calibration. No retraining.
+
+## CONTROL LOOP (every 16.7ms)
+1. Hardware sends telemetry JSON over serial or MAVLink
+2. Bridge converts to state vector [pitch_rad, gyro_rad_s, pos, vel]
+3. Physics kernel predicts next state via RK4
+4. Residual ensemble corrects the prediction
+5. CEM-MPC optimises 6-step action sequence
+6. Optimal action sent back to hardware
+7. Real outcome observed → SystemID updates mass/friction
+8. Registry saves learned params → next session starts warmer
+
+## TELEMETRY FORMAT (serial JSON at 50Hz)
+{"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"accel_x":0.0,"accel_y":0.0,"accel_z":9.81,"motor_l":0,"motor_r":0,"timestamp":1234}
+
+## COMMAND FORMAT (bridge → hardware)
+{"op":"command","action":[-0.46]}
+
+## SUPPORTED PLATFORMS & BRIDGE COMMANDS
+- Balancing bot (Arduino+MPU6050): python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3 --baud 115200
+- PX4 quadrotor: --platform px4_quadrotor --connection udp:14550
+- ArduPilot quad: --platform ardupilot_quadrotor --connection udp:14550
+- ArduPilot plane: --platform ardupilot_plane --connection udp:14550
+- eVTOL: --platform evtol --connection udp:14550
+- ROS2 manipulator arm: --platform ros2_manipulator
+- ROS2 legged robot: --platform ros2_legged
+- ROS2 humanoid: --platform ros2_legged
+- ROS2 ground rover: --platform ros2_ground_rover
+- ROS2 AUV: --platform ros2_auv
+- ROS2 surgical robot: --platform ros2_surgical
+- Rocket (custom FC serial): --platform custom_rocket_fc --connection COM3 --baud 115200
+- Satellite: --platform satellite_serial --connection COM3
+- Generic serial: --mode robot_serial --connection COM3 --baud 115200
+
+## DASHBOARD CONNECTION
+Open PhysiCore → click MAVLINK → endpoint: ws://localhost:8765 → Connect → click ACTIVE CONTROL ON
+
+## BALANCING BOT — FULL INTEGRATION GUIDE
+
+### Required hardware
+- Arduino Uno/Nano/Mega or ESP32
+- MPU6050 IMU (or BNO055, MPU9250)
+- L298N motor driver (or TB6612FNG, DRV8833)
+- Two DC motors with wheels
+
+### Wiring (MPU6050 + L298N + Arduino Uno)
+MPU6050: SDA→A4, SCL→A5, VCC→3.3V (NEVER 5V), GND→GND
+L298N: ENA→Pin5, IN1→Pin4, IN2→Pin3, ENB→Pin6, IN3→Pin7, IN4→Pin8
+
+### Libraries (Arduino IDE → Manage Libraries)
+- MPU6050_light by rfetick
+- ArduinoJson by Benoit Blanchon (version 6.x)
+
+### BALANCE_POINT calibration (CRITICAL)
+1. Flash firmware. Open Serial Monitor at 115200 baud.
+2. Hold robot perfectly upright. Read the "pitch" value.
+3. Set BALANCE_POINT to that exact value. Re-flash.
+4. Verify: pitch should now read ~0.0 when perfectly upright.
+Wrong BALANCE_POINT = motors spin constantly in one direction.
+
+### Firmware structure
+- Reads IMU at 50Hz
+- Sends JSON telemetry via Serial.println()
+- Listens for {"op":"command","action":[torque]} commands
+- Safety timeout: falls back to internal PID if no command for 500ms
+- applyMotors(v): maps v∈[-1,1] to PWM signals
+
+### Bridge setup
+Close Arduino IDE first (blocks serial port)
+pip install pymavlink websockets aiohttp pyserial pyyaml
+python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3
+
+### Port detection
+Windows: Device Manager → Ports (COM & LPT) → look for CH340 or CP2102
+Mac: /dev/cu.usbserial-XXXX or /dev/cu.usbmodem-XXXX
+Linux: /dev/ttyUSB0 or /dev/ttyACM0
+
+## PX4 / ARDUPILOT DRONE
+
+### What it does
+PhysiCore connects over MAVLink. It does NOT replace PX4/ArduPilot — it adds real-time physics adaptation on top. It learns your drone's real mass and aerodynamics in flight.
+
+### Setup
+pip install pymavlink websockets aiohttp
+python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550
+
+### For companion computer (Raspberry Pi / Jetson)
+QGroundControl: enable UDP telemetry to companion IP
+Run bridge on companion: --connection udp:14550
+
+### MAVLink streams needed
+ATTITUDE, VFR_HUD, GLOBAL_POSITION_INT, RAW_IMU, SYS_STATUS
+Bridge requests these automatically at 20Hz.
+
+## ROS2 ROBOT ARM
+
+### Bridge setup
+source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_manipulator
+
+### Topics bridge subscribes to
+/imu/data (sensor_msgs/Imu)
+/joint_states (sensor_msgs/JointState)
+/odom (nav_msgs/Odometry)
+/ft_sensor/wrench (geometry_msgs/WrenchStamped) — optional
+
+### State mapping
+joint_states.position[0] → pitch (rad)
+joint_states.position[1] → roll
+joint_states.velocity[0] → gyro_x
+joint_states.effort[0] → motor_l
+
+## ROS2 LEGGED / HUMANOID
+
+source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_legged
+
+Contact dynamics and mass adaptation works the same as arm.
+PhysiCore learns terrain friction and body inertia automatically.
+
+## SOUNDING ROCKET
+
+### Telemetry required
+altitude, velocity (or compute from altitude delta), accel_x/y/z, pitch, mass, phase (IDLE/BOOST/COAST/RECOVERY), thrust
+
+### Setup
+python physicore/bridge/physicore_bridge.py --platform custom_rocket_fc --connection /dev/ttyUSB0 --baud 115200
+
+### What PhysiCore does for rockets
+- Sentinel OS: Lyapunov stability monitor + Flight Termination System
+- Propellant observer: tracks mass depletion in real time
+- ISA atmosphere: density changes with altitude
+- Transonic drag model: Cd rises 0.3→0.8 at Mach 0.9→1.0
+- Recoverability score: before any FTS decision
+
+## AUV / UNDERWATER
+
+python physicore/bridge/physicore_bridge.py --platform ros2_auv
+
+Topics: /imu/data, /depth (for altitude field), /dvl/velocity (if available)
+PhysiCore uses quadratic drag model and learns buoyancy correction online.
+
+## FIRMWARE CODE GENERATION
+
+When asked to generate firmware, always produce:
+1. Complete .ino file with exact library includes, pin definitions, IMU init, telemetry JSON send, command receive, motor apply — no placeholders
+2. Comment every critical section
+3. Include library installation instructions at top
+4. Include BALANCE_POINT calibration instructions for balancing bots
+5. Include safety timeout
+
+For ROS2: produce complete Python node file with exact topic names and message types.
+For PX4/ArduPilot: produce shell setup script with exact bridge command.
+
+## TROUBLESHOOTING
+
+### "No heartbeat" or bridge won't connect
+- Check COM port number (Device Manager on Windows)
+- Close Arduino IDE — it blocks the serial port
+- Wrong baud rate: must match firmware (115200)
+- Try: python physicore/bridge/physicore_bridge.py --test
+
+### Dashboard shows no data
+- Check endpoint is exactly: ws://localhost:8765
+- Not https, not wss, not ws://localhost:8766
+- Bridge must be running first
+
+### Bot falls immediately
+1. BALANCE_POINT wrong — recalibrate (most common)
+2. Firmware not applying commands — check applyMotors() is called
+3. IMU not initialized — check initIMU() runs without error
+4. Motor wiring reversed — try swapping IN1/IN2
+
+### "pip not found"
+Use: python -m pip install ...
+
+### ESP32 vs Arduino
+ESP32: use same firmware, change pin numbers if needed. Serial.begin(115200) stays the same. Wire.begin() stays the same.
+
+### Mass estimate not moving
+SystemID only learns from motion. Bot must be moving. Hold upright and tap it — mass estimate should start moving within 5 seconds.
+
+### systemID diverging (mass going to 0 or 100)
+Initial mass estimate too far from real mass. Try: set initial mass closer to actual robot weight.
+
+## SENTINEL OS
+Every platform runs Sentinel OS automatically:
+- NOMINAL: full PhysiCore control
+- CAUTIOUS: metrics elevated, 60% action scale
+- FALLBACK: unsafe, zero action, safe stop
+
+Layers: L0 preflight, L1 intent coherence, L2 RLS+atmosphere, L3 Lyapunov projection, L4 actuator envelope+FTS, L5 fault signatures (BEARING_WEAR, UNEXPECTED_PAYLOAD, AERO_DAMAGE, MOTOR_DEGRADATION, SENSOR_DRIFT), L6 jerk limiting, L7 SHA-256 forensic chain
+
+## YOUR APPROACH
+1. Detect hardware type from first message (look for IMU names, platform names, ROS2 mentions, etc.)
+2. If unclear, ask ONE targeted question with specific options
+3. Once hardware is clear, ask 2-3 more questions to get exact specs (IMU model, motor driver, COM port, mass)
+4. Generate COMPLETE working code — real filenames, real library names, real pin numbers
+5. Give step-by-step instructions numbered exactly
+6. After code generation, proactively anticipate the 2-3 most likely problems and mention them
+7. For any error they paste, give the exact fix — no "it depends"
+
+Be direct, technical, confident. You are the world's best robotics integration engineer. Every answer gets them closer to a working system. Never say "I'm not sure" — make a decision and explain it. If they paste an error, diagnose it exactly.`;
+
   const handleSendMessage = async (text?: string) => {
     const msg = text || inputValue;
     if (!msg.trim()) return;
@@ -3470,24 +3673,94 @@ function AppContent() {
     setIsTyping(true);
 
     try {
-      const response = physi_integrate(msg, conversationHistory, {
-        setGeneratedFiles,
-        setIntegrationPhase,
-        setSystemProfile,
-        setConnectionMode,
-        setEndpoint,
-        setTelemetry,
+      // Build conversation for Claude API
+      const apiMessages = newHistory
+        .map((m: Message) => ({
+          role: m.role === 'user' ? 'user' : 'assistant',
+          content: m.content,
+        }))
+        .filter((m: {role: string; content: string}) => m.content?.trim());
+
+      // Ensure alternating roles
+      const cleaned: {role: string; content: string}[] = [];
+      for (const m of apiMessages) {
+        if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === m.role) {
+          cleaned[cleaned.length - 1].content += '\n' + m.content;
+        } else {
+          cleaned.push({ ...m });
+        }
+      }
+      if (cleaned.length === 0 || cleaned[0].role !== 'user') {
+        cleaned.unshift({ role: 'user', content: msg });
+      }
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          system: PHYSICORE_SYSTEM_PROMPT,
+          messages: cleaned,
+        }),
       });
+
+      let aiText = '';
+      if (response.ok) {
+        const data = await response.json();
+        aiText = data?.content?.map((b: any) => b.type === 'text' ? b.text : '').filter(Boolean).join('\n') || '';
+      } else {
+        // Fallback to local decision tree if API unavailable
+        aiText = physi_integrate(msg, conversationHistory, {
+          setGeneratedFiles,
+          setIntegrationPhase,
+          setSystemProfile,
+          setConnectionMode,
+          setEndpoint,
+          setTelemetry,
+        });
+      }
+
+      // Extract any generated files mentioned in response and surface them
+      const fileMatches = aiText.match(/\`\`\`(?:ino|python|sh|bash|yaml|json|cpp|py)\n([\s\S]*?)\`\`\`/g);
+      if (fileMatches && fileMatches.length > 0) {
+        const files = fileMatches.map((block: string, i: number) => {
+          const langMatch = block.match(/\`\`\`(\w+)/);
+          const lang = langMatch?.[1] || 'txt';
+          const extMap: Record<string, string> = { ino: 'ino', python: 'py', py: 'py', sh: 'sh', bash: 'sh', yaml: 'yaml', json: 'json', cpp: 'cpp' };
+          const ext = extMap[lang] || 'txt';
+          const codeContent = block.replace(/\`\`\`\w*\n/, '').replace(/\`\`\`$/, '');
+          return { filename: \`physicore_integration_\${i + 1}.\${ext}\`, content: codeContent };
+        });
+        setGeneratedFiles(files);
+      }
+
       setConversationHistory(prev => [...prev, {
-        role: 'ai', content: response, timestamp: formatTime(new Date())
+        role: 'ai', content: aiText, timestamp: formatTime(new Date())
       } as Message]);
+
     } catch (e) {
       console.error('Integration error:', e);
-      setConversationHistory(prev => [...prev, {
-        role: 'ai',
-        content: '> INTEGRATION ENGINEER:\nSomething went wrong. Tell me what hardware you have and I\'ll start fresh.',
-        timestamp: formatTime(new Date())
-      } as Message]);
+      // Fallback to local decision tree
+      try {
+        const fallback = physi_integrate(msg, conversationHistory, {
+          setGeneratedFiles,
+          setIntegrationPhase,
+          setSystemProfile,
+          setConnectionMode,
+          setEndpoint,
+          setTelemetry,
+        });
+        setConversationHistory(prev => [...prev, {
+          role: 'ai', content: fallback, timestamp: formatTime(new Date())
+        } as Message]);
+      } catch {
+        setConversationHistory(prev => [...prev, {
+          role: 'ai',
+          content: 'Tell me what hardware you have and I will generate your complete PhysiCore integration.',
+          timestamp: formatTime(new Date())
+        } as Message]);
+      }
     } finally {
       setIsTyping(false);
     }
@@ -4224,39 +4497,160 @@ function AppContent() {
 
 
   const renderIntegrator = () => {
+    const QUICK_STARTS = [
+      'I have a balancing bot with Arduino and MPU6050',
+      'I have a PX4 quadrotor and want to connect PhysiCore',
+      'I have a ROS2 robot arm',
+      'I have a sounding rocket with a custom flight computer',
+      'I have a ROS2 legged robot / humanoid',
+      'I have an AUV / underwater robot',
+      'I have custom hardware and need help',
+    ];
+
+    const hasMessages = conversationHistory.length > 0;
+
     return (
-      <div className="pt-[52px] min-h-screen bg-bg flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--color-bgRaised)_0%,_var(--color-bg)_100%)]">
-        <div className="max-w-[700px] w-full space-y-8 text-center">
-          <div className="w-16 h-16 bg-blue/10 border border-blue/30 rounded-full flex items-center justify-center mx-auto text-blue">
-            <Cpu size={32} />
-          </div>
-          <div className="space-y-3">
-            <h2 className="font-display text-4xl font-bold text-white tracking-tight">Integration Engineer</h2>
-            <p className="font-body text-textSecondary text-lg max-w-[500px] mx-auto">
-              Ready to help you bridge the gap between simulation and your actual hardware.
-            </p>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-6 bg-bgRaised border border-border text-left space-y-3 group hover:border-blue transition-all cursor-pointer">
-              <div className="flex items-center gap-3 text-blue">
-                <Terminal size={18} />
-                <span className="font-display font-medium text-blue tracking-widest text-xs uppercase">Terminal Bridge</span>
-              </div>
-              <p className="text-xs text-textDim leading-relaxed">Download and configure the high-performance Python bridge for real-time MAVLink/ROS2 communication.</p>
+      <div className="pt-[52px] h-screen flex flex-col bg-void">
+        {/* Header */}
+        <div className="border-b border-border bg-bg px-6 py-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-4">
+            <div className="w-8 h-8 bg-green/10 border border-green/30 flex items-center justify-center">
+              <Cpu size={16} className="text-green" />
             </div>
-            <div className="p-6 bg-bgRaised border border-border text-left space-y-3 group hover:border-blue transition-all cursor-pointer" onClick={() => setView('manual')}>
-              <div className="flex items-center gap-3 text-blue">
-                <BookOpen size={18} />
-                <span className="font-display font-medium text-blue tracking-widest text-xs uppercase">Knowledge Base</span>
-              </div>
-              <p className="text-xs text-textDim leading-relaxed">Search official PhysiCore technical documentation, wiring diagrams, and calibration guides.</p>
+            <div>
+              <div className="font-display text-sm font-bold text-white uppercase tracking-widest">Integration Engineer</div>
+              <div className="font-mono text-[9px] text-green uppercase tracking-widest">PhysiCore AI · Trained on every platform · 30 min to working hardware</div>
             </div>
           </div>
-          
-          <div className="pt-8 flex justify-center gap-6">
-            <button onClick={() => setView('home')} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-white transition-colors">Return Home</button>
-            <button onClick={() => setView('dashboard')} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-white transition-colors">Mission Control</button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setView('manual')}
+              className="flex items-center gap-2 px-4 py-2 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:border-amber hover:text-amber transition-all"
+            >
+              <BookOpen size={12} />
+              Manual
+            </button>
+            <button
+              onClick={() => { setConversationHistory([]); setGeneratedFiles([]); }}
+              className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors px-3 py-2 border border-border hover:border-border"
+            >
+              New session
+            </button>
+          </div>
+        </div>
+
+        {/* Chat area */}
+        <div className="flex-1 overflow-y-auto custom-scroll px-6 py-6 space-y-6">
+          {!hasMessages && (
+            <div className="max-w-[680px] mx-auto space-y-8 pt-8">
+              <div className="space-y-3">
+                <div className="font-mono text-[10px] text-green uppercase tracking-widest">Integration Engineer</div>
+                <div className="bg-bgRaised border border-green/20 p-6 space-y-4">
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    I'm the PhysiCore Integration Engineer. Tell me what hardware you have and I'll generate your complete integration — firmware, bridge config, wiring, and step-by-step setup — in one conversation.
+                  </p>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">
+                    What are you integrating with PhysiCore?
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">Quick start</div>
+                <div className="grid grid-cols-1 gap-2">
+                  {QUICK_STARTS.map((qs, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSendMessage(qs)}
+                      className="text-left px-4 py-3 border border-border bg-bgRaised font-body text-xs text-textSecondary hover:border-green hover:text-white hover:bg-green/5 transition-all"
+                    >
+                      {qs}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {conversationHistory.map((msg: Message, i: number) => (
+            <div key={i} className={`max-w-[680px] ${msg.role === 'user' ? 'ml-auto' : 'mx-auto'} space-y-2`}>
+              <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">
+                {msg.role === 'user' ? 'You' : 'Integration Engineer'}
+              </div>
+              <div className={`p-4 border text-sm font-body leading-relaxed whitespace-pre-wrap ${
+                msg.role === 'user'
+                  ? 'bg-bgRaised border-border text-textSecondary'
+                  : 'bg-bgRaised border-green/20 text-textSecondary'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+
+          {isTyping && (
+            <div className="max-w-[680px] mx-auto space-y-2">
+              <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">Integration Engineer</div>
+              <div className="p-4 border border-green/20 bg-bgRaised flex items-center gap-3">
+                <div className="flex gap-1">
+                  {[0,1,2].map(i => (
+                    <div key={i} className="w-1.5 h-1.5 rounded-full bg-green animate-pulse" style={{ animationDelay: `${i * 150}ms` }} />
+                  ))}
+                </div>
+                <span className="font-mono text-[10px] text-green uppercase tracking-widest">Generating your integration...</span>
+              </div>
+            </div>
+          )}
+
+          {generatedFiles.length > 0 && (
+            <div className="max-w-[680px] mx-auto space-y-3">
+              <div className="font-mono text-[9px] text-green uppercase tracking-widest">Generated files</div>
+              <div className="space-y-2">
+                {generatedFiles.map((file: GeneratedFile, i: number) => (
+                  <div key={i} className="border border-green/20 bg-bgRaised">
+                    <div className="px-4 py-2 border-b border-green/10 flex items-center justify-between">
+                      <span className="font-mono text-[10px] text-green">{file.filename}</span>
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([file.content], { type: 'text/plain' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url; a.download = file.filename; a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest transition-colors"
+                      >
+                        Download
+                      </button>
+                    </div>
+                    <pre className="p-4 font-mono text-[10px] text-cyan overflow-x-auto max-h-[300px] custom-scroll whitespace-pre-wrap">{file.content}</pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Input */}
+        <div className="border-t border-border bg-bg px-6 py-4 shrink-0">
+          <div className="max-w-[680px] mx-auto flex gap-3">
+            <input
+              type="text"
+              value={inputValue}
+              onChange={e => setInputValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+              placeholder="Describe your hardware, paste an error, or ask anything..."
+              className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
+              disabled={isTyping}
+            />
+            <button
+              onClick={() => handleSendMessage()}
+              disabled={isTyping || !inputValue.trim()}
+              className="px-6 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Send
+            </button>
+          </div>
+          <div className="max-w-[680px] mx-auto mt-2">
+            <span className="font-mono text-[9px] text-textDim">PhysiCore AI · Paste errors directly · Generates real code for your exact hardware</span>
           </div>
         </div>
       </div>
@@ -5390,53 +5784,6 @@ max_torque: 2.5`}</Code>
         <div className="flex flex-col items-center gap-4">
           <Cpu className="text-green animate-spin-slow" size={48} />
           <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
-        </div>
-      </div>
-    );
-  }
-
-
-  if (!user) {
-    return (
-      <div className="h-screen w-full bg-void flex items-center justify-center">
-        <div className="flex flex-col items-center gap-6 max-w-sm w-full px-8">
-          <Cpu className="text-green" size={48} />
-          <div className="text-center space-y-2">
-            <h1 className="font-display text-2xl font-bold text-white uppercase tracking-widest italic">PhysiCore</h1>
-            <p className="font-mono text-[10px] text-textSecondary uppercase tracking-widest">Authorised Access Only</p>
-          </div>
-          {authError && (
-            <p className="font-mono text-[10px] text-red text-center">{authError.message}</p>
-          )}
-          <button
-            onClick={handleLogin}
-            disabled={isLoggingIn}
-            className="w-full py-4 bg-green/10 border border-green/40 text-green font-display text-xs font-bold uppercase tracking-widest hover:bg-green/20 transition-all disabled:opacity-50"
-          >
-            {isLoggingIn ? 'Connecting...' : 'Sign in with Google'}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthorized) {
-    return (
-      <div className="h-screen w-full bg-void flex items-center justify-center">
-        <div className="flex flex-col items-center gap-6 max-w-sm w-full px-8 text-center">
-          <ShieldAlert className="text-red" size={48} />
-          <div className="space-y-2">
-            <h2 className="font-display text-xl font-bold text-white uppercase tracking-widest">Access Denied</h2>
-            <p className="font-mono text-[10px] text-textSecondary uppercase tracking-widest">
-              {user.email} is not authorised to use PhysiCore.
-            </p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="w-full py-4 border border-red/40 text-red font-display text-xs font-bold uppercase tracking-widest hover:bg-red/10 transition-all"
-          >
-            Sign Out
-          </button>
         </div>
       </div>
     );

@@ -2,18 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SimState, MetaAnalysisResponse } from "../types";
 
-let aiClient: GoogleGenAI | null = null;
-
-const getAiClient = () => {
-  if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is missing. AI features will be disabled.");
-    }
-    aiClient = new GoogleGenAI({ apiKey });
-  }
-  return aiClient;
-};
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export const performMetaAnalysis = async (
   state: SimState,
@@ -37,7 +26,6 @@ export const performMetaAnalysis = async (
   `;
 
   try {
-    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
