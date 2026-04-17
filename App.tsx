@@ -44,11 +44,6 @@ const RKT_P0 = 101325;
 const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
-  "koshmarus@gmail.com",
-  "stesrocketryteam@gmail.com",
-  "darisglx@gmail.com",
-  "vladimir.robotics@gmail.com",
-  "projectauvm@manipal.edu",
   "prathameshshirbhate8anpc@gmail.com",
   "ashwanth123creations@gmail.com"
 ];
@@ -364,49 +359,23 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-async function callClaude(systemPrompt: string, conversationHistory: any[] = []) {
-  const messages = conversationHistory.map(msg => ({
-    role: (msg.role === 'user' || msg.role === 'human') ? 'user' : 'assistant',
-    content: msg.content || ''
-  })).filter(m => m.content.trim());
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-  if (messages.length === 0) {
-    messages.push({ role: 'user', content: 'Hello' });
-  }
-
-  // Ensure alternating roles — Claude API requires user/assistant alternation
-  const cleaned: { role: string; content: string }[] = [];
-  for (const msg of messages) {
-    if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === msg.role) {
-      cleaned[cleaned.length - 1].content += '\n' + msg.content;
-    } else {
-      cleaned.push({ ...msg });
-    }
-  }
-
+async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: cleaned,
-      }),
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: userPrompt,
+      config: {
+        systemInstruction: systemPrompt,
+      }
     });
-
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      return { success: false, error: `HTTP_${response.status}`, message: err?.error?.message || 'API error' };
-    }
-
-    const data = await response.json();
-    const text = data?.content?.map((b: any) => b.type === 'text' ? b.text : '').filter(Boolean).join('\n');
+    const text = response.text;
     if (text) return { success: true, text };
-    return { success: false, error: 'EMPTY', message: 'Empty response from Claude' };
+    return { success: false, error: 'EMPTY', message: 'Empty response from Gemini' };
   } catch (e: any) {
-    return { success: false, error: 'NETWORK', message: e.message || 'Network error' };
+    console.error("Gemini Error:", e);
+    return { success: false, error: 'GEMINI_ERROR', message: e.message || 'AI error' };
   }
 }
 
@@ -2486,7 +2455,7 @@ function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
-  const isAuthorized = true;
+  const isAuthorized = user?.email ? BETA_TESTERS.includes(user.email) : false;
   
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -3050,10 +3019,10 @@ function AppContent() {
         - Prefix with '> META-ANALYST:'.
       `;
 
-      const result = await callClaude(
-  "You are the PhysiCore Meta-Analyst. Analyze robotics telemetry and provide concise diagnostic insights. Return plain text — short paragraphs only, no JSON, no code blocks.",
-  [{ role: 'user', content: `Analyze this system state: ${JSON.stringify(telemetry)}. History length: ${conversationHistory.length}. Give 2-3 sentences on what is happening and one recommendation.` }]
-);
+      const result = await callGemini(
+        "You are the PhysiCore Meta-Analyst. Analyze robotics telemetry and provide concise diagnostic insights. Return plain text — short paragraphs only, no JSON, no code blocks.",
+        `Analyze this system state: ${JSON.stringify(telemetry)}. History length: ${conversationHistory.length}. Give 2-3 sentences on what is happening and one recommendation.`
+      );
       
       if (result.success) {
         setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
@@ -4247,6 +4216,74 @@ function AppContent() {
 };
 
 
+  const renderIntegrator = () => {
+    return (
+      <div className="pt-[52px] min-h-screen bg-bg flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_var(--color-bgRaised)_0%,_var(--color-bg)_100%)]">
+        <div className="max-w-[700px] w-full space-y-8 text-center">
+          <div className="w-16 h-16 bg-blue/10 border border-blue/30 rounded-full flex items-center justify-center mx-auto text-blue">
+            <Cpu size={32} />
+          </div>
+          <div className="space-y-3">
+            <h2 className="font-display text-4xl font-bold text-white tracking-tight">Integration Engineer</h2>
+            <p className="font-body text-textSecondary text-lg max-w-[500px] mx-auto">
+              Ready to help you bridge the gap between simulation and your actual hardware.
+            </p>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-6 bg-bgRaised border border-border text-left space-y-3 group hover:border-blue transition-all cursor-pointer">
+              <div className="flex items-center gap-3 text-blue">
+                <Terminal size={18} />
+                <span className="font-display font-medium text-blue tracking-widest text-xs uppercase">Terminal Bridge</span>
+              </div>
+              <p className="text-xs text-textDim leading-relaxed">Download and configure the high-performance Python bridge for real-time MAVLink/ROS2 communication.</p>
+            </div>
+            <div className="p-6 bg-bgRaised border border-border text-left space-y-3 group hover:border-blue transition-all cursor-pointer" onClick={() => setView('manual')}>
+              <div className="flex items-center gap-3 text-blue">
+                <BookOpen size={18} />
+                <span className="font-display font-medium text-blue tracking-widest text-xs uppercase">Knowledge Base</span>
+              </div>
+              <p className="text-xs text-textDim leading-relaxed">Search official PhysiCore technical documentation, wiring diagrams, and calibration guides.</p>
+            </div>
+          </div>
+          
+          <div className="pt-8 flex justify-center gap-6">
+            <button onClick={() => setView('home')} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-white transition-colors">Return Home</button>
+            <button onClick={() => setView('dashboard')} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-white transition-colors">Mission Control</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderTeam = () => {
+    return (
+      <div className="pt-[52px] min-h-screen bg-bg flex items-center justify-center p-6">
+        <div className="max-w-[800px] w-full text-center space-y-12">
+          <div className="space-y-4">
+            <h2 className="font-display text-5xl font-bold text-white tracking-tighter">PhysiCore Team</h2>
+            <div className="h-1 w-24 bg-green mx-auto" />
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="p-8 bg-bgRaised border border-border text-center space-y-4">
+              <div className="w-20 h-20 bg-green/10 rounded-full mx-auto flex items-center justify-center text-green">
+                <User size={40} />
+              </div>
+              <div className="space-y-1">
+                <div className="font-display font-bold text-lg text-white">Prathamesh Shirbhate</div>
+                <div className="font-mono text-[10px] text-green uppercase tracking-widest">Founder & Lead Architect</div>
+              </div>
+              <p className="text-xs text-textSecondary italic">"Building the foundation for autonomous intelligence that respects the laws of physics."</p>
+            </div>
+          </div>
+          
+          <button onClick={() => setView('home')} className="btn-outline h-12 px-8 text-xs font-bold uppercase tracking-widest">Return Home</button>
+        </div>
+      </div>
+    );
+  };
+
   const renderManual = () => {
     const sections = [
       { id: 'intro',      title: '01. WHAT IS PHYSICORE',    icon: <Info size={14} /> },
@@ -4496,7 +4533,7 @@ function AppContent() {
                 <Phase n="PHASE 2" title="Calibrate BALANCE_POINT — critical">
                   <Step n={9}>In Arduino IDE: <strong className="text-white">Tools → Serial Monitor</strong>. Bottom right dropdown → set to <strong className="text-white">115200 baud</strong>.</Step>
                   <Step n={10}>You will see JSON printing every 20ms:
-                    <Code>{"pitch":2.3,"roll":0.1,"gyro_x":0.2,...}</Code>
+                    <Code>{`{"pitch":2.3,"roll":0.1,"gyro_x":0.2,...}`}</Code>
                   </Step>
                   <Step n={11}>Hold your robot <strong className="text-white">perfectly upright</strong> — the exact angle where it would balance. Look at the <code className="text-cyan">pitch</code> value. Write it down. Example: 2.3</Step>
                   <Step n={12}>Close Serial Monitor. Find this line in the firmware and change 0.0 to your reading:
@@ -5346,6 +5383,53 @@ max_torque: 2.5`}</Code>
         <div className="flex flex-col items-center gap-4">
           <Cpu className="text-green animate-spin-slow" size={48} />
           <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
+        </div>
+      </div>
+    );
+  }
+
+
+  if (!user) {
+    return (
+      <div className="h-screen w-full bg-void flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6 max-w-sm w-full px-8">
+          <Cpu className="text-green" size={48} />
+          <div className="text-center space-y-2">
+            <h1 className="font-display text-2xl font-bold text-white uppercase tracking-widest italic">PhysiCore</h1>
+            <p className="font-mono text-[10px] text-textSecondary uppercase tracking-widest">Authorised Access Only</p>
+          </div>
+          {authError && (
+            <p className="font-mono text-[10px] text-red text-center">{authError.message}</p>
+          )}
+          <button
+            onClick={handleLogin}
+            disabled={isLoggingIn}
+            className="w-full py-4 bg-green/10 border border-green/40 text-green font-display text-xs font-bold uppercase tracking-widest hover:bg-green/20 transition-all disabled:opacity-50"
+          >
+            {isLoggingIn ? 'Connecting...' : 'Sign in with Google'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="h-screen w-full bg-void flex items-center justify-center">
+        <div className="flex flex-col items-center gap-6 max-w-sm w-full px-8 text-center">
+          <ShieldAlert className="text-red" size={48} />
+          <div className="space-y-2">
+            <h2 className="font-display text-xl font-bold text-white uppercase tracking-widest">Access Denied</h2>
+            <p className="font-mono text-[10px] text-textSecondary uppercase tracking-widest">
+              {user.email} is not authorised to use PhysiCore.
+            </p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="w-full py-4 border border-red/40 text-red font-display text-xs font-bold uppercase tracking-widest hover:bg-red/10 transition-all"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     );
