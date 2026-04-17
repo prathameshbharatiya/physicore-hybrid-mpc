@@ -359,10 +359,17 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let globalAi: GoogleGenAI | null = null;
+const getGlobalAi = () => {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY missing");
+  if (!globalAi) globalAi = new GoogleGenAI({ apiKey: key });
+  return globalAi;
+};
 
 async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
+    const ai = getGlobalAi();
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: userPrompt,
