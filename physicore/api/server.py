@@ -40,17 +40,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from physicore import PhysiCore, PhysiCoreConfig, PLATFORM_DYNAMICS
 
+# Registry + Sentinel
+try:
+    from physicore.core.registry import get_registry, ModelRegistry
+    from physicore.sentinel.core import SentinelOS, get_sentinel_config, SentinelMode
+    HAS_REGISTRY = True
+    HAS_SENTINEL = True
+except ImportError:
+    HAS_REGISTRY = False
+    HAS_SENTINEL = False
+
 
 # ── Global engine state ────────────────────────────────────────────────────────
 
 class EngineState:
     def __init__(self):
         self.engine: Optional[PhysiCore] = None
+        self.sentinel: Optional[object] = None    # SentinelOS instance
         self.platform: str = "none"
         self.running: bool = False
         self.last_step_time: float = 0.0
         self.telemetry_clients: List[WebSocket] = []
         self.last_diagnostics: dict = {}
+        self.session_id: Optional[str] = None
         self.lock = threading.Lock()
 
 engine_state = EngineState()
@@ -349,3 +361,187 @@ async def broadcast_diagnostics():
                 engine_state.telemetry_clients.remove(ws)
         except Exception:
             pass
+
+
+# ── Registry endpoints (data flywheel) ────────────────────────────────────────
+
+@app.get("/api/registry/summary")
+async def registry_summary():
+    """Global registry summary — all platforms, session counts, prior strength."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    reg = get_registry()
+    return reg.global_summary()
+
+
+@app.get("/api/registry/{platform}")
+async def registry_platform(platform: str):
+    """Per-platform registry summary — sessions, latest params, prior weight."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    reg = get_registry()
+    return reg.platform_summary(platform)
+
+
+@app.post("/api/registry/{platform}/save")
+async def registry_save(platform: str):
+    """Save current engine state to registry. Call at end of hardware session."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    engine = require_engine()
+    reg    = get_registry()
+    session_id = reg.save(engine, platform=platform,
+                          session_meta={"saved_via": "api", "ts": time.time()})
+    engine_state.session_id = session_id
+    return {"status": "saved", "session_id": session_id, "platform": platform}
+
+
+@app.post("/api/registry/{platform}/load")
+async def registry_load(platform: str):
+    """Load saved model state from registry into current engine."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    engine = require_engine()
+    reg    = get_registry()
+    loaded = reg.load(engine, platform)
+    return {"status": "loaded" if loaded else "no_prior",
+            "platform": platform, "loaded": loaded}
+
+
+@app.get("/api/registry/{platform}/sessions")
+async def registry_sessions(platform: str, limit: int = 20):
+    """List recent sessions for a platform from the registry log."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    from pathlib import Path
+    import json as _json
+    reg   = get_registry()
+    d     = reg._platform_dir(platform)
+    fp    = d / "sessions.jsonl"
+    if not fp.exists():
+        return {"sessions": [], "count": 0}
+    sessions = []
+    for line in open(fp):
+        try:
+            sessions.append(_json.loads(line.strip()))
+        except Exception:
+            pass
+    sessions = sessions[-limit:]
+    return {"sessions": sessions, "count": len(sessions), "platform": platform}
+
+
+@app.get("/api/registry/{platform}/convergence")
+async def registry_convergence(platform: str):
+    """
+    Convergence proof: compares session 1 vs latest session.
+    Shows that the registry actually makes PhysiCore better over time.
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    from pathlib import Path
+    import json as _json
+    reg  = get_registry()
+    d    = reg._platform_dir(platform)
+    fp   = d / "sessions.jsonl"
+    if not fp.exists():
+        return {"message": "No sessions yet", "sessions_count": 0}
+    sessions = [_json.loads(l.strip()) for l in open(fp) if l.strip()]
+    if len(sessions) < 2:
+        return {"message": f"Need >=2 sessions, have {len(sessions)}",
+                "sessions_count": len(sessions)}
+    first  = sessions[0]
+    latest = sessions[-1]
+    return {
+        "sessions_count":    len(sessions),
+        "platform":          platform,
+        "session_1": {
+            "id":              first["session_id"],
+            "convergence_pct": first["convergence_pct"],
+            "innovation_ema":  first["innovation_ema"],
+            "steps":           first["steps"],
+        },
+        "session_latest": {
+            "id":              latest["session_id"],
+            "convergence_pct": latest["convergence_pct"],
+            "innovation_ema":  latest["innovation_ema"],
+            "steps":           latest["steps"],
+        },
+        "improvement": {
+            "convergence_delta": round(
+                latest["convergence_pct"] - first["convergence_pct"], 2),
+            "innovation_delta":  round(
+                first["innovation_ema"] - latest["innovation_ema"], 6),
+            "interpretation":    (
+                "Registry flywheel working — convergence improved across sessions"
+                if latest["convergence_pct"] > first["convergence_pct"]
+                else "Convergence stable — more sessions needed for improvement"
+            ),
+        },
+    }
+
+
+# ── Sentinel endpoints ─────────────────────────────────────────────────────────
+
+class SentinelStepRequest(BaseModel):
+    state:    List[float]
+    x_ref:    List[float]
+    altitude: float = 0.0
+
+@app.post("/api/sentinel/configure")
+async def sentinel_configure(platform: str = "balancing_bot"):
+    """Attach Sentinel OS to the current engine."""
+    if not HAS_SENTINEL:
+        raise HTTPException(503, "Sentinel not available")
+    engine = require_engine()
+    with engine_state.lock:
+        engine_state.sentinel = SentinelOS(engine, platform=platform, verbose=False)
+    return {"status": "sentinel_attached", "platform": platform}
+
+
+@app.post("/api/sentinel/step")
+async def sentinel_step(req: SentinelStepRequest):
+    """One Sentinel-governed control step. Returns safe action."""
+    if engine_state.sentinel is None:
+        raise HTTPException(400, "Sentinel not configured. POST /api/sentinel/configure first.")
+    import numpy as _np
+    state  = _np.array(req.state, dtype=float)
+    x_ref  = _np.array(req.x_ref, dtype=float)
+    with engine_state.lock:
+        action = engine_state.sentinel.step(state, x_ref, altitude=req.altitude)
+    s = engine_state.sentinel.status
+    return {
+        "action":         action.tolist(),
+        "sentinel_mode":  s["mode"],
+        "is_safe":        s["is_safe"],
+        "lyapunov_V":     s["lyapunov"]["V"],
+        "ledger_hash":    s["ledger_hash"],
+        "fault":          s["fault"],
+        "rls_mass":       s["rls"]["total_mass"],
+    }
+
+
+@app.get("/api/sentinel/status")
+async def sentinel_status():
+    """Full Sentinel OS status — all layers."""
+    if engine_state.sentinel is None:
+        return {"status": "not_configured"}
+    return engine_state.sentinel.status
+
+
+@app.get("/api/sentinel/ledger")
+async def sentinel_ledger(limit: int = 100):
+    """Last N entries from the SHA-256 forensic ledger."""
+    if engine_state.sentinel is None:
+        raise HTTPException(400, "Sentinel not configured")
+    entries = engine_state.sentinel.ledger[-limit:]
+    return {"entries": entries, "chain_hash": engine_state.sentinel.chain_hash,
+            "count": len(entries)}
+
+
+@app.get("/api/sentinel/faults")
+async def sentinel_faults():
+    """All fault events detected during this session."""
+    if engine_state.sentinel is None:
+        raise HTTPException(400, "Sentinel not configured")
+    return {"faults": engine_state.sentinel.fault_log,
+            "count": len(engine_state.sentinel.fault_log)}
