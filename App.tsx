@@ -359,10 +359,24 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Lazy initializer for Gemini
+let aiInstance: GoogleGenAI | null = null;
+function getAI() {
+  if (!aiInstance) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      console.warn("GEMINI_API_KEY is missing. AI features will be unavailable.");
+      return null;
+    }
+    aiInstance = new GoogleGenAI({ apiKey: key });
+  }
+  return aiInstance;
+}
 
 async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
+    const ai = getAI();
+    if (!ai) return { success: false, error: 'NO_KEY', message: 'API Key missing' };
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: userPrompt,
@@ -410,7 +424,7 @@ interface Message {
 interface GeneratedFile {
   filename: string;
   content: string;
-  extension: string;
+  extension?: string;
 }
 
 // --- UTILS ---
@@ -2622,8 +2636,10 @@ function AppContent() {
     }
   }, [isAdmin]);
 
+  const bootstrappedRef = useRef(false);
   useEffect(() => {
-    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user) {
+    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user && !bootstrappedRef.current) {
+      bootstrappedRef.current = true;
       // Auto-bootstrap team if empty and we are admin
       bootstrapTeam();
     }
@@ -3813,7 +3829,6 @@ Be direct, technical, confident. You are the world's best robotics integration e
           setSystemProfile,
           setConnectionMode,
           setEndpoint,
-          setTelemetry,
         });
       }
 
@@ -3845,7 +3860,6 @@ Be direct, technical, confident. You are the world's best robotics integration e
           setSystemProfile,
           setConnectionMode,
           setEndpoint,
-          setTelemetry,
         });
         setConversationHistory(prev => [...prev, {
           role: 'ai', content: fallback, timestamp: formatTime(new Date())
@@ -4667,8 +4681,7 @@ Never say "it depends" or "you might". Give the exact fix.`,
           const data = await resp.json();
           const text = data.content?.[0]?.text || 'Could not get response. Check your connection.';
           // Parse into steps format
-          const lines = text.split('
-').filter((l:string)=>l.trim());
+          const lines = text.split('\n').filter((l:string)=>l.trim());
           const steps = lines.slice(0,6).map((l:string, i:number)=>({
             label: l.replace(/^\d+\.\s*/, '').substring(0,60),
             cmd: l.match(/`([^`]+)`/)?.[1] || l.replace(/^\d+\.\s*/, '')
@@ -6466,8 +6479,8 @@ max_torque: 2.5`}</Code>
         </main>
       </div>
     </div>
-  );
-};
+    );
+  };
 
   if (loading || checkingAccess) {
     return (
