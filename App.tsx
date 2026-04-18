@@ -2676,6 +2676,12 @@ function AppContent() {
   });
   const [integrationPhase, setIntegrationPhase] = useState(1);
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
+  const [ieState, setIE] = useState<IEState>({
+    phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [],
+    checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
+  });
+  const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
+  const [ieTsInput, setIETsInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSystemConnected, setIsSystemConnected] = useState(false);
@@ -4485,12 +4491,10 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
 
   const renderIntegrator = () => {
-    const [ieState, setIE] = React.useState<IEState>({
-      phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [],
-      checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
-    });
-    const [copiedId, setCopiedId] = React.useState<string|null>(null);
-    const [tsInput, setTsInput] = React.useState('');
+    const copiedId = ieCopiedId;
+    const setCopiedId = setIECopiedId;
+    const tsInput = ieTsInput;
+    const setTsInput = setIETsInput;
 
     const flow = IE_FLOWS[ieState.hw];
     const currentQ = flow?.questions[ieState.qIndex];
