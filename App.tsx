@@ -5176,7 +5176,7 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
                       'Why did Sentinel go CAUTIOUS?',
                       'Is BEARING_WEAR fault real?',
                       'Bot still jittery after ACTIVE CONTROL ON',
-                      'Why isn't friction converging?',
+                      "Why isn't friction converging?",
                       'What does this Lyapunov reading mean?',
                     ].map(q=>(
                       <button key={q} onClick={()=>checkTroubleshoot(q)}
@@ -5264,7 +5264,7 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
             <div className="space-y-2">
               <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">
                 {isControlActive && isSystemConnected
-                  ? 'Ask anything about your live session — mass drift, Lyapunov, faults, Sentinel mode...'
+                  ? "Ask anything about your live session — mass drift, Lyapunov, faults, Sentinel mode..."
                   : 'Describe your problem exactly'}
               </p>
               <div className="flex gap-3">
