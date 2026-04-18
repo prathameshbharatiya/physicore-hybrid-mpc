@@ -3718,7 +3718,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
           const extMap: Record<string, string> = { ino: 'ino', python: 'py', py: 'py', sh: 'sh', bash: 'sh', yaml: 'yaml', json: 'json', cpp: 'cpp' };
           const ext = extMap[lang] || 'txt';
           const codeContent = block.replace(/\`\`\`\w*\n/, '').replace(/\`\`\`$/, '');
-          return { filename: \`physicore_integration_\${i + 1}.\${ext}\`, content: codeContent };
+          return { filename: `physicore_integration_${i + 1}.${ext}`, content: codeContent };
         });
         setGeneratedFiles(files);
       }
