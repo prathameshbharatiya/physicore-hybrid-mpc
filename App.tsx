@@ -2651,6 +2651,93 @@ function AppContent() {
   const [manualSection, setManualSection] = useState('intro');
   const [isControlActive, setIsControlActive] = useState(false);
 
+  // Integration Engineer State
+  const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
+  const [systemProfile, setSystemProfile] = useState<SystemProfile>({
+    platform: null, firmware: null, domain: null, massClass: null, connectionMode: null, protocols: null
+  });
+  const [integrationPhase, setIntegrationPhase] = useState(1);
+  const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
+  const [ieState, setIE] = useState<IEState>({
+    phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [],
+    checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
+  });
+  const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
+  const [ieTsInput, setIETsInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [inputValue, setInputValue] = useState('');
+  const [isSystemConnected, setIsSystemConnected] = useState(false);
+  const [isSystemConnecting, setIsSystemConnecting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge'>('mavlink_bridge');
+  const [digitalTwinConfirmed, setDigitalTwinConfirmed] = useState(false);
+  const [showDigitalTwinModal, setShowDigitalTwinModal] = useState(false);
+  const [endpoint, setEndpoint] = useState('ws://localhost:8765');
+  const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
+
+  const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
+
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [simulationConfig, setSimulationConfig] = useState<any | null>(null);
+  const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
+  const [showUserManagement, setShowUserManagement] = useState(false);
+
+  const [telemetry, setTelemetry] = useState({
+    mass: 0,
+    friction: 0,
+    actuatorEfficiency: 0,
+    residual: 0,
+    confidence: 0,
+    variance: 0,
+    isStable: true,
+    isFaulted: false,
+    step_count: 0,
+    cpuLoad: 0,
+    latency: 0,
+    residualHistory: [] as any[],
+    effortHistory: [] as any[],
+    targetPos: { x: 0, y: 0 },
+    // Rocket/Aviation specific telemetry
+    pos: null as any,
+    vel: { x: 0, y: 0, z: 0 } as any,
+    accel: { x: 0, y: 0, z: 0 } as any,
+    gyro: { x: 0, y: 0, z: 0 } as any,
+    orientation: { r: 0, p: 0, y: 0 } as any,
+    roll: 0,
+    pitch: 0,
+    yaw: 0,
+    propMass: 0,
+    time: 0,
+    phase: 'PRELAUNCH' as string,
+    altitude: 0,
+    speed: 0,
+    gyro_x: 0,
+    gyro_y: 0,
+    gyro_z: 0,
+    airspeed: 0,
+    groundspeed: 0,
+    climb_rate: 0,
+    mach: 0,
+    aoa: 0,
+    bank: 0,
+    motor_l: 0,
+    motor_r: 0,
+    battery_pct: 0,
+    battery_v: 0,
+    armed: false,
+    flight_mode: 'UNKNOWN',
+    vehicle_type: 'UNKNOWN',
+    connected: false,
+    gps_fix: 0,
+    satellites: 0
+  });
+
+  const [flightData, setFlightData] = useState<any[]>([]);
+  const [isRocketSimRunning, setIsRocketSimRunning] = useState(false);
+  const [rocketSimSpeed, setRocketSimSpeed] = useState(1);
+  const [actualFlightData, setActualFlightData] = useState<any[] | null>(null);
+  const [showImportOverlay, setShowImportOverlay] = useState(false);
+
   // --- MPC & SystemID State ---
   const [simMode, setSimMode] = useState<SimMode>(SimMode.MPC_STABILIZATION);
   const [simState, setSimState] = useState<SimState>({
@@ -2884,36 +2971,7 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
     }
   };
   
-  // Integration Engineer State
-  const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
-  const [systemProfile, setSystemProfile] = useState<SystemProfile>({
-    platform: null, firmware: null, domain: null, massClass: null, connectionMode: null, protocols: null
-  });
-  const [integrationPhase, setIntegrationPhase] = useState(1);
-  const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
-  const [ieState, setIE] = useState<IEState>({
-    phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [],
-    checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
-  });
-  const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
-  const [ieTsInput, setIETsInput] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
-  const [inputValue, setInputValue] = useState('');
-  const [isSystemConnected, setIsSystemConnected] = useState(false);
-  const [isSystemConnecting, setIsSystemConnecting] = useState(false);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connectionMode, setConnectionMode] = useState<'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge'>('mavlink_bridge');
-  const [digitalTwinConfirmed, setDigitalTwinConfirmed] = useState(false);
-  const [showDigitalTwinModal, setShowDigitalTwinModal] = useState(false);
-  const [endpoint, setEndpoint] = useState('ws://localhost:8765');
-  const [dRealEndpoint, setDRealEndpoint] = useState('http://localhost:8080');
-
-  const [handshakeConfirmed, setHandshakeConfirmed] = useState(false);
-
-  const [isLaunching, setIsLaunching] = useState(false);
-  const [simulationConfig, setSimulationConfig] = useState<any | null>(null);
-  const [metaAnalysisResult, setMetaAnalysisResult] = useState<string | null>(null);
-  const [showUserManagement, setShowUserManagement] = useState(false);
+  // Logic for common actions
 
   // Persistent WebSocket for Real-time Telemetry
   const socketRef = useRef<WebSocket | null>(null);
@@ -3147,61 +3205,7 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
     min_stability: 1.5
   });
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
-  const [flightData, setFlightData] = useState<any[]>([]);
-  const [isRocketSimRunning, setIsRocketSimRunning] = useState(false);
-  const [rocketSimSpeed, setRocketSimSpeed] = useState(1);
-  const [actualFlightData, setActualFlightData] = useState<any[] | null>(null);
-  const [showImportOverlay, setShowImportOverlay] = useState(false);
 
-  const [telemetry, setTelemetry] = useState({
-    mass: 0,
-    friction: 0,
-    actuatorEfficiency: 0,
-    residual: 0,
-    confidence: 0,
-    variance: 0,
-    isStable: true,
-    isFaulted: false,
-    step_count: 0,
-    cpuLoad: 0,
-    latency: 0,
-    residualHistory: [] as any[],
-    effortHistory: [] as any[],
-    targetPos: { x: 0, y: 0 },
-    // Rocket/Aviation specific telemetry
-    pos: null as any,
-    vel: { x: 0, y: 0, z: 0 } as any,
-    accel: { x: 0, y: 0, z: 0 } as any,
-    gyro: { x: 0, y: 0, z: 0 } as any,
-    orientation: { r: 0, p: 0, y: 0 } as any,
-    roll: 0,
-    pitch: 0,
-    yaw: 0,
-    propMass: 0,
-    time: 0,
-    phase: 'PRELAUNCH' as string,
-    altitude: 0,
-    speed: 0,
-    gyro_x: 0,
-    gyro_y: 0,
-    gyro_z: 0,
-    airspeed: 0,
-    groundspeed: 0,
-    climb_rate: 0,
-    mach: 0,
-    aoa: 0,
-    bank: 0,
-    motor_l: 0,
-    motor_r: 0,
-    battery_pct: 0,
-    battery_v: 0,
-    armed: false,
-    flight_mode: 'UNKNOWN',
-    vehicle_type: 'UNKNOWN',
-    connected: false,
-    gps_fix: 0,
-    satellites: 0
-  });
 
   const performTelemetryAnalysis = async () => {
     try {
