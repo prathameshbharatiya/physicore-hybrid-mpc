@@ -1852,110 +1852,149 @@ const RocketManifestWizard = ({ params, setParams, projectEmail, setProjectEmail
 // Zero API. Zero network calls. Never fails.
 // Asks ALL questions, generates real code, auto-configures dashboard.
 
-const IE_FLOWS: Record<string, {key:string; q:string; opts?:string[]}[]> = {
-  balancing_bot: [
-    {key:'imu',         q:'What IMU sensor are you using?',                       opts:['MPU6050','BNO055','MPU9250','ICM20689','Other']},
-    {key:'mcu',         q:'What microcontroller?',                                opts:['Arduino Uno','Arduino Nano','Arduino Mega','ESP32','Raspberry Pi Pico']},
-    {key:'motor_driver',q:'What motor driver?',                                   opts:['L298N','TB6612FNG','DRV8833','BTS7960','Other']},
-    {key:'mass',        q:'Robot mass in kg? (e.g. 1.2)',                         opts:undefined},
-    {key:'com_height',  q:'Center of mass height from wheel axle in meters? (e.g. 0.15)', opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  px4: [
-    {key:'connection',  q:'How is your computer connected to PX4?',               opts:['USB to Pixhawk','UDP WiFi port 14550','UART telemetry radio']},
-    {key:'frame',       q:'Frame type?',                                          opts:['Quadrotor','Hexarotor','Fixed-wing','VTOL']},
-    {key:'mass',        q:'Drone mass with battery in kg? (e.g. 1.5)',            opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  ardupilot: [
-    {key:'frame',       q:'Frame type?',                                          opts:['Quadrotor (Copter)','Fixed-wing (Plane)','VTOL','Rover']},
-    {key:'connection',  q:'Connection method?',                                   opts:['USB','UDP Mission Planner','SiK telemetry radio']},
-    {key:'mass',        q:'Vehicle mass in kg?',                                  opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  ros2_arm: [
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Jazzy','Iron','Rolling']},
-    {key:'topic',       q:'Joint states topic? (run: ros2 topic list)',           opts:['/joint_states','/robot/joint_states','/arm/joint_states']},
-    {key:'dof',         q:'Number of joints (DOF)?',                              opts:['4','6','7','Other']},
-    {key:'brand',       q:'Robot arm brand/model?',                               opts:['Universal Robots UR5/UR10','KUKA','Fanuc','ABB','Franka','Custom']},
-    {key:'mass',        q:'End-effector + payload mass in kg?',                   opts:undefined},
-    {key:'ft_sensor',   q:'Force-torque sensor available?',                       opts:['Yes','No']},
-  ],
-  humanoid: [
-    {key:'brand',       q:'Which humanoid?',                                      opts:['Unitree G1','Unitree H1','Boston Dynamics Spot','Figure AI Apollo','Custom']},
-    {key:'interface',   q:'Control interface?',                                   opts:['ROS2','Unitree SDK','Boston Dynamics SDK','Custom']},
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Jazzy','Not using ROS2']},
-    {key:'mass',        q:'Robot mass in kg?',                                    opts:undefined},
-  ],
-  legged: [
-    {key:'brand',       q:'Which legged platform?',                               opts:['Unitree Go1','Unitree Go2','ANYmal','MIT Mini Cheetah','Spot','Custom']},
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Jazzy','Iron']},
-    {key:'mass',        q:'Robot mass in kg?',                                    opts:undefined},
-    {key:'terrain',     q:'Primary terrain?',                                     opts:['Flat indoor','Outdoor grass/gravel','Stairs','Unknown/varied']},
-  ],
-  rocket: [
-    {key:'fc',          q:'Flight computer?',                                     opts:['Arduino Mega','Teensy 4.1','ESP32','Custom FC']},
-    {key:'baro',        q:'Barometer/altimeter?',                                 opts:['BMP280','MS5611','BMP388','MPL3115A2']},
-    {key:'dry_mass',    q:'Rocket dry mass in kg?',                               opts:undefined},
-    {key:'baud',        q:'Serial baud rate?',                                    opts:['115200','57600','9600']},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  auv: [
-    {key:'platform',    q:'AUV platform?',                                        opts:['BlueROV2','Custom AUV','Thalassa','Research AUV']},
-    {key:'dvl',         q:'DVL (Doppler Velocity Log) available?',                opts:['Yes','No — IMU + depth only']},
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Iron','Jazzy']},
-    {key:'mass',        q:'Vehicle mass in kg?',                                  opts:undefined},
-  ],
-  surgical: [
-    {key:'dof',         q:'Number of DOF?',                                       opts:['4','6','7','Other']},
-    {key:'ft_sensor',   q:'Force-torque sensor?',                                 opts:['Yes','No']},
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Iron']},
-    {key:'topic',       q:'Joint states topic?',                                  opts:['/joint_states','/robot/joint_states']},
-  ],
-  satellite: [
-    {key:'actuators',   q:'Attitude actuators?',                                  opts:['Reaction wheels','Thrusters only','Both']},
-    {key:'altitude',    q:'Orbital altitude in km?',                              opts:undefined},
-    {key:'mass',        q:'Spacecraft mass in kg?',                               opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  ugv: [
-    {key:'platform',    q:'UGV type?',                                            opts:['Wheeled','Tracked','Legged','Hybrid']},
-    {key:'distro',      q:'ROS2 distribution?',                                   opts:['Humble','Iron','Jazzy']},
-    {key:'mass',        q:'Vehicle mass in kg?',                                  opts:undefined},
-    {key:'gps',         q:'GPS available?',                                       opts:['Yes','No — GPS-denied operation']},
-  ],
-  rover: [
-    {key:'interface',   q:'Communication?',                                       opts:['ROS2','Arduino serial','ESP32 serial','Custom']},
-    {key:'distro',      q:'ROS2 distribution? (if applicable)',                   opts:['Humble','Iron','N/A']},
-    {key:'mass',        q:'Robot mass in kg?',                                    opts:undefined},
-    {key:'wheel_base',  q:'Distance between wheels in meters?',                   opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
-  evtol: [
-    {key:'fc',          q:'Flight controller?',                                   opts:['PX4','ArduPilot','Custom']},
-    {key:'rotors',      q:'Number of rotors?',                                    opts:['4','6','8','12','Other']},
-    {key:'mass',        q:'Vehicle mass in kg?',                                  opts:undefined},
-    {key:'os',          q:'Your laptop OS?',                                      opts:['Windows','Mac','Linux']},
-  ],
+// ─── INTEGRATION ENGINEER — COMPLETE REWRITE ─────────────────────────────────
+// Button-driven Q&A, real code generation, visual step checklist, troubleshooter
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface IEQuestion { key: string; q: string; opts?: string[]; }
+interface IEFlow { label: string; icon: string; questions: IEQuestion[]; }
+
+// ── Hardware flows ─────────────────────────────────────────────────────────────
+const IE_FLOWS: Record<string, IEFlow> = {
+  balancing_bot: {
+    label: 'Self-balancing robot', icon: '⚖',
+    questions: [
+      { key:'imu',          q:'IMU sensor?',                 opts:['MPU6050','BNO055','MPU9250','ICM20689'] },
+      { key:'mcu',          q:'Microcontroller?',            opts:['Arduino Uno','Arduino Nano','Arduino Mega','ESP32','Raspberry Pi Pico'] },
+      { key:'motor_driver', q:'Motor driver?',               opts:['L298N','TB6612FNG','DRV8833','BTS7960'] },
+      { key:'mass',         q:'Robot mass in kg? (e.g. 1.2)', opts:undefined },
+      { key:'com_height',   q:'CoM height from wheel axle in meters? (e.g. 0.15)', opts:undefined },
+      { key:'os',           q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
+    ],
+  },
+  px4: {
+    label: 'PX4 drone', icon: '✈',
+    questions: [
+      { key:'connection', q:'Connection to PX4?',   opts:['USB to Pixhawk','UDP WiFi port 14550','UART telemetry radio'] },
+      { key:'frame',      q:'Frame type?',           opts:['Quadrotor','Hexarotor','Fixed-wing','VTOL'] },
+      { key:'mass',       q:'Drone mass with battery (kg)?', opts:undefined },
+      { key:'os',         q:'Your laptop OS?',       opts:['Windows','Mac','Linux'] },
+    ],
+  },
+  ardupilot: {
+    label: 'ArduPilot vehicle', icon: '🛩',
+    questions: [
+      { key:'frame',      q:'Vehicle type?',         opts:['Quadrotor (Copter)','Fixed-wing (Plane)','VTOL','Rover'] },
+      { key:'connection', q:'Connection method?',    opts:['USB','UDP Mission Planner','SiK telemetry radio'] },
+      { key:'mass',       q:'Vehicle mass (kg)?',    opts:undefined },
+      { key:'os',         q:'Your laptop OS?',       opts:['Windows','Mac','Linux'] },
+    ],
+  },
+  ros2_arm: {
+    label: 'ROS2 robot arm', icon: '🦾',
+    questions: [
+      { key:'distro',    q:'ROS2 distribution?',         opts:['Humble','Jazzy','Iron','Rolling'] },
+      { key:'brand',     q:'Arm brand/model?',           opts:['Universal Robots UR5/UR10','KUKA','Fanuc','ABB','Franka','Custom'] },
+      { key:'dof',       q:'Number of joints (DOF)?',    opts:['4','6','7'] },
+      { key:'topic',     q:'Joint states topic?',        opts:['/joint_states','/robot/joint_states','/arm/joint_states'] },
+      { key:'ft_sensor', q:'Force-torque sensor?',       opts:['Yes','No'] },
+      { key:'mass',      q:'End-effector + payload (kg)?', opts:undefined },
+    ],
+  },
+  humanoid: {
+    label: 'Humanoid robot', icon: '🤖',
+    questions: [
+      { key:'brand',     q:'Which humanoid?',            opts:['Unitree G1','Unitree H1','Figure AI Apollo','Boston Dynamics Spot','Custom'] },
+      { key:'interface', q:'Control interface?',         opts:['ROS2','Unitree SDK','Boston Dynamics SDK','Custom'] },
+      { key:'distro',    q:'ROS2 distribution?',         opts:['Humble','Jazzy','Not using ROS2'] },
+      { key:'mass',      q:'Robot mass (kg)?',           opts:undefined },
+    ],
+  },
+  legged: {
+    label: 'Legged / quadruped', icon: '🐕',
+    questions: [
+      { key:'brand',   q:'Platform?',             opts:['Unitree Go1','Unitree Go2','ANYmal','MIT Mini Cheetah','Custom'] },
+      { key:'distro',  q:'ROS2 distribution?',    opts:['Humble','Jazzy','Iron'] },
+      { key:'terrain', q:'Primary terrain?',      opts:['Flat indoor','Outdoor grass/gravel','Stairs','Unknown/varied'] },
+      { key:'mass',    q:'Robot mass (kg)?',      opts:undefined },
+    ],
+  },
+  rocket: {
+    label: 'Sounding rocket', icon: '🚀',
+    questions: [
+      { key:'fc',       q:'Flight computer?',            opts:['Arduino Mega','Teensy 4.1','ESP32','Custom FC'] },
+      { key:'baro',     q:'Barometer/altimeter?',        opts:['BMP280','MS5611','BMP388','MPL3115A2'] },
+      { key:'baud',     q:'Serial baud rate?',           opts:['115200','57600','9600'] },
+      { key:'os',       q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
+      { key:'dry_mass', q:'Rocket dry mass (kg)?',       opts:undefined },
+    ],
+  },
+  auv: {
+    label: 'AUV / underwater robot', icon: '🌊',
+    questions: [
+      { key:'platform', q:'AUV platform?',                opts:['BlueROV2','Custom AUV','Research AUV'] },
+      { key:'dvl',      q:'DVL available?',               opts:['Yes','No — IMU + depth only'] },
+      { key:'distro',   q:'ROS2 distribution?',           opts:['Humble','Iron','Jazzy'] },
+      { key:'mass',     q:'Vehicle mass (kg)?',           opts:undefined },
+    ],
+  },
+  evtol: {
+    label: 'eVTOL aircraft', icon: '🚁',
+    questions: [
+      { key:'fc',     q:'Flight controller?',    opts:['PX4','ArduPilot','Custom'] },
+      { key:'rotors', q:'Number of rotors?',     opts:['4','6','8','12'] },
+      { key:'mass',   q:'Vehicle mass (kg)?',    opts:undefined },
+      { key:'os',     q:'Your laptop OS?',       opts:['Windows','Mac','Linux'] },
+    ],
+  },
+  surgical: {
+    label: 'Surgical robot', icon: '🏥',
+    questions: [
+      { key:'dof',       q:'Number of DOF?',         opts:['4','6','7'] },
+      { key:'ft_sensor', q:'Force-torque sensor?',   opts:['Yes','No'] },
+      { key:'distro',    q:'ROS2 distribution?',     opts:['Humble','Iron'] },
+      { key:'topic',     q:'Joint states topic?',    opts:['/joint_states','/robot/joint_states'] },
+    ],
+  },
+  rover: {
+    label: 'Ground rover / AMR', icon: '🚗',
+    questions: [
+      { key:'interface',  q:'Communication?',                opts:['ROS2','Arduino serial','ESP32 serial'] },
+      { key:'distro',     q:'ROS2 distribution?',            opts:['Humble','Iron','N/A'] },
+      { key:'mass',       q:'Robot mass (kg)?',              opts:undefined },
+      { key:'wheel_base', q:'Wheel separation (m)?',         opts:undefined },
+      { key:'os',         q:'Your laptop OS?',               opts:['Windows','Mac','Linux'] },
+    ],
+  },
+  satellite: {
+    label: 'Satellite / spacecraft', icon: '🛸',
+    questions: [
+      { key:'actuators', q:'Attitude actuators?',    opts:['Reaction wheels','Thrusters only','Both'] },
+      { key:'altitude',  q:'Orbital altitude (km)?', opts:undefined },
+      { key:'mass',      q:'Spacecraft mass (kg)?',  opts:undefined },
+      { key:'os',        q:'Your laptop OS?',        opts:['Windows','Mac','Linux'] },
+    ],
+  },
 };
 
+// ── Detection ─────────────────────────────────────────────────────────────────
 function ie_detect(s: string): string {
   const t = s.toLowerCase();
   if (t.match(/balanc|self.?balanc|inverted.?pendulum|segway/)) return 'balancing_bot';
   if (t.match(/px4|pixhawk/)) return 'px4';
   if (t.match(/ardupilot|apm|cube.?pilot/)) return 'ardupilot';
-  if (t.match(/ros2|ros 2|moveit|ur5|ur10|kuka|fanuc|abb|robot.*arm|manipulator.*arm/)) return 'ros2_arm';
-  if (t.match(/humanoid|unitree|figure.?ai|boston.?dynamic|\bg1\b|\bh1\b|apollo/)) return 'humanoid';
-  if (t.match(/legged|quadruped|anymal|mini.?cheetah|\bgo1\b|\bgo2\b/)) return 'legged';
   if (t.match(/evtol|e.?vtol|air.?taxi|tilt.?rotor/)) return 'evtol';
-  if (t.match(/surgical|medical.?robot|endoscop|ophthalm/)) return 'surgical';
+  if (t.match(/ros2.*arm|robot.*arm|manipulator.*arm|ur5|ur10|kuka|fanuc|abb|franka/)) return 'ros2_arm';
+  if (t.match(/humanoid|unitree.*g1|unitree.*h1|figure.?ai|boston.?dynamic/)) return 'humanoid';
+  if (t.match(/legged|quadruped|anymal|mini.?cheetah|\bgo1\b|\bgo2\b/)) return 'legged';
   if (t.match(/\bauv\b|underwater|subsea|bluerov|\bdvl\b/)) return 'auv';
+  if (t.match(/surgical|medical.?robot|endoscop/)) return 'surgical';
   if (t.match(/satellite|spacecraft|orbital|cubesat/)) return 'satellite';
-  if (t.match(/\bugv\b|military.?robot|defence|defense|anduril/)) return 'ugv';
-  if (t.match(/rocket|sounding.?rocket|flight.?computer|pyro/)) return 'rocket';
-  if (t.match(/drone|quadrotor|fpv|multirotor/)) return 'px4';
+  if (t.match(/rocket|sounding.?rocket|flight.?computer/)) return 'rocket';
   if (t.match(/rover|ground.?robot|\bamr\b|warehouse.?robot/)) return 'rover';
+  if (t.match(/drone|quadrotor|fpv|multirotor/)) return 'px4';
   if (t.match(/esp32|esp8266|arduino/)) return 'balancing_bot';
+  if (t.match(/ros2|ros 2/)) return 'ros2_arm';
   return '';
 }
 
@@ -1965,179 +2004,173 @@ function ie_port(os: string): string {
   return '/dev/ttyUSB0';
 }
 
+// ── Code generation ───────────────────────────────────────────────────────────
 function ie_generateCode(hw: string, answers: Record<string,string>): {filename:string; content:string}[] {
-  const mass = answers.mass || '1.0';
+  const mass = answers.mass || answers.dry_mass || '1.0';
   const os = answers.os || 'Linux';
   const port = ie_port(os);
-  const distro = (answers.distro || 'humble').toLowerCase().replace('not using ros2','humble');
+  const distro = (answers.distro || 'humble').toLowerCase().replace('not using ros2','humble').replace('n/a','humble');
   const topic = answers.topic || '/joint_states';
   const dof = parseInt(answers.dof || '6');
   const imu = answers.imu || 'MPU6050';
   const driver = answers.motor_driver || 'L298N';
 
   if (hw === 'balancing_bot') {
-    return [
-      { filename: 'physicore_balancing_bot.ino', content:
-`/*
- * PhysiCore Balancing Bot — ${imu} + ${driver}
- * Mass: ${mass}kg | MCU: ${answers.mcu||'Arduino'}
+    const imuLib: Record<string,string> = { MPU6050:'MPU6050_light by rfetick', BNO055:'Adafruit BNO055', MPU9250:'MPU9250_asukiaaa', ICM20689:'ICM42688 by Sparkfun' };
+    const imuInc: Record<string,string> = {
+      MPU6050:'#include <MPU6050_light.h>\nMPU6050 mpu(Wire);',
+      BNO055:'#include <Adafruit_BNO055.h>\nAdafruit_BNO055 bno(55, 0x28);',
+      MPU9250:'#include <MPU9250_asukiaaa.h>\nMPU9250_asukiaaa mpu;',
+      ICM20689:'#include <ICM42688.h>\nICM42688 imuSensor(SPI,10);',
+    };
+    const imuSetup: Record<string,string> = {
+      MPU6050:'  Wire.begin();\n  byte s=mpu.begin();\n  while(s!=0){Serial.println("{\\"error\\":\\"MPU6050 not found\\"}");delay(500);s=mpu.begin();}\n  mpu.calcOffsets(true,true);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      BNO055:'  bno.begin(); bno.setExtCrystalUse(true);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      MPU9250:'  Wire.begin(); mpu.setup(0x68);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      ICM20689:'  imuSensor.begin();\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+    };
+    const imuRead: Record<string,string> = {
+      MPU6050:'  mpu.update();\n  pitch=mpu.getAngleX()-BALANCE_POINT;\n  gyro_x=mpu.getGyroX();',
+      BNO055:'  imu::Vector<3> e=bno.getVector(Adafruit_BNO055::VECTOR_EULER);\n  imu::Vector<3> g=bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);\n  pitch=e.x()-BALANCE_POINT; gyro_x=g.y();',
+      MPU9250:'  mpu.accelUpdate(); mpu.gyroUpdate();\n  pitch=mpu.accelX()*57.2958-BALANCE_POINT; gyro_x=mpu.gyroY();',
+      ICM20689:'  imuSensor.readSensor();\n  pitch=imuSensor.getAccelX_g()*57.2958-BALANCE_POINT; gyro_x=imuSensor.getGyroY_dps();',
+    };
+    const mPins: Record<string,string> = {
+      L298N:'const int L_EN=5,L_IN1=4,L_IN2=3,R_EN=6,R_IN1=7,R_IN2=8;',
+      TB6612FNG:'const int PWMA=5,AIN1=4,AIN2=3,PWMB=6,BIN1=7,BIN2=8,STBY=9;',
+      DRV8833:'const int AIN1=4,AIN2=3,BIN1=7,BIN2=8;',
+      BTS7960:'const int L_RPWM=5,L_LPWM=6,R_RPWM=9,R_LPWM=10;',
+    };
+    const mApply: Record<string,string> = {
+      L298N:'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(L_IN1,f);digitalWrite(L_IN2,!f);analogWrite(L_EN,p);\n  digitalWrite(R_IN1,f);digitalWrite(R_IN2,!f);analogWrite(R_EN,p);',
+      TB6612FNG:'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(AIN1,f);digitalWrite(AIN2,!f);analogWrite(PWMA,p);\n  digitalWrite(BIN1,f);digitalWrite(BIN2,!f);analogWrite(PWMB,p);digitalWrite(STBY,HIGH);',
+      DRV8833:'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(AIN1,v>0?p:0);analogWrite(AIN2,v<=0?p:0);\n  analogWrite(BIN1,v>0?p:0);analogWrite(BIN2,v<=0?p:0);',
+      BTS7960:'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(v>=0?L_RPWM:L_LPWM,p);analogWrite(v>=0?R_RPWM:R_LPWM,p);',
+    };
+
+    const ino = `/*
+ * PhysiCore Balancing Bot — ${imu} + ${driver} + ${answers.mcu||'Arduino'}
+ * Mass: ${mass}kg  CoM height: ${answers.com_height||'0.15'}m
+ *
  * INSTALL (Sketch → Include Library → Manage Libraries):
- *   "MPU6050_light" by rfetick
- *   "ArduinoJson" by Benoit Blanchon v6.x
+ *   ${imuLib[imu]||imu}
+ *   ArduinoJson by Benoit Blanchon (v6.x)
+ *
+ * WIRING: ${imu} SDA→A4  SCL→A5  VCC→3.3V  GND→GND
  */
 #include <Wire.h>
-#include <MPU6050_light.h>
 #include <ArduinoJson.h>
+${imuInc[imu]||imuInc.MPU6050}
+${mPins[driver]||mPins.L298N}
 
-const int L_EN=5,L_IN1=4,L_IN2=3,R_EN=6,R_IN1=7,R_IN2=8;
-const float BALANCE_POINT=0.0, MAX_TORQUE=2.5;  // N·m — matches PhysiCore engine output range
+// ── CALIBRATION ─────────────────────────────────────────────────────────────
+// Hold robot UPRIGHT → Open Serial Monitor at 115200 → read pitch
+// Set BALANCE_POINT to that value → re-upload
+const float BALANCE_POINT = 0.0;
+const float MAX_TORQUE    = 2.5;  // N·m — DO NOT change
+// ────────────────────────────────────────────────────────────────────────────
 const float KP=35.0, KI=0.5, KD=1.2;
+const int   LOOP_MS=20;
 
-MPU6050 mpu(Wire);
-float pitch=0,pitch_rate=0,motor_l=0,motor_r=0;
-bool physicore_active=false;
-unsigned long last_cmd=0,last_tx=0;
-float pid_i=0,prev_err=0;
+float pitch=0, gyro_x=0, motor_l=0, motor_r=0;
+bool  physicore_active=false;
+unsigned long last_cmd=0, last_tx=0;
+float pid_i=0, prev_err=0;
 
 void setup(){
-  Serial.begin(115200); Wire.begin();
-  pinMode(L_EN,OUTPUT);pinMode(L_IN1,OUTPUT);pinMode(L_IN2,OUTPUT);
-  pinMode(R_EN,OUTPUT);pinMode(R_IN1,OUTPUT);pinMode(R_IN2,OUTPUT);
+  Serial.begin(115200);
+  pinMode(LED_BUILTIN,OUTPUT);
+${imuSetup[imu]||imuSetup.MPU6050}
   applyMotors(0);
-  byte s=mpu.begin();
-  while(s!=0){Serial.println("{\\"error\\":\\"MPU6050 not found\\"}");delay(500);s=mpu.begin();}
-  Serial.println("{\\"status\\":\\"calibrating\\",\\"message\\":\\"Keep STILL 3 seconds\\"}");
-  mpu.calcOffsets(true,true);
-  Serial.println("{\\"status\\":\\"ready\\",\\"mass\\":${mass}}");
 }
 
 void loop(){
   unsigned long now=millis();
-  mpu.update();
-  pitch=mpu.getAngleX()-BALANCE_POINT;
-  pitch_rate=mpu.getGyroX();
+${imuRead[imu]||imuRead.MPU6050}
 
-  if(Serial.available()>0){
+  while(Serial.available()>0){
     StaticJsonDocument<256> cmd;
     if(deserializeJson(cmd,Serial)==DeserializationError::Ok){
       if(strcmp(cmd["op"],"command")==0){
-        float t=cmd["action"][0].as<float>();
-        motor_l=constrain(t/MAX_TORQUE,-1.0f,1.0f);
+        motor_l=constrain(cmd["action"][0].as<float>()/MAX_TORQUE,-1.0f,1.0f);
         motor_r=motor_l; physicore_active=true; last_cmd=now;
+        digitalWrite(LED_BUILTIN,HIGH);
       }
     }
   }
 
-  if(now-last_cmd>500) physicore_active=false;
+  if(now-last_cmd>500){ physicore_active=false; digitalWrite(LED_BUILTIN,LOW); }
 
   if(physicore_active){ applyMotors(motor_l); }
   else{
     float e=-pitch;
-    pid_i=constrain(pid_i+e*0.02f,-50,50);
-    float d=(e-prev_err)/0.02f;
+    pid_i=constrain(pid_i+e*(LOOP_MS/1000.0f),-50,50);
+    float d=(e-prev_err)/(LOOP_MS/1000.0f);
     float v=constrain((KP*e+KI*pid_i+KD*d)/255.0f,-1,1);
     prev_err=e; motor_l=motor_r=v; applyMotors(v);
   }
 
-  if(now-last_tx>=20){
+  if(now-last_tx>=LOOP_MS){
     last_tx=now;
     StaticJsonDocument<256> doc;
-    doc["pitch"]=pitch; doc["roll"]=mpu.getAngleY();
-    doc["gyro_x"]=pitch_rate; doc["gyro_y"]=mpu.getGyroY();
-    doc["gyro_z"]=mpu.getGyroZ();
-    doc["accel_x"]=mpu.getAccX();doc["accel_y"]=mpu.getAccY();doc["accel_z"]=mpu.getAccZ();
-    doc["motor_l"]=motor_l*MAX_TORQUE;doc["motor_r"]=motor_r*MAX_TORQUE;
-    doc["active"]=physicore_active;doc["timestamp"]=now;
-    serializeJson(doc,Serial);Serial.println();
+    doc["pitch"]=pitch; doc["gyro_x"]=gyro_x;
+    doc["motor_l"]=motor_l*MAX_TORQUE; doc["motor_r"]=motor_r*MAX_TORQUE;
+    doc["active"]=physicore_active; doc["timestamp"]=now;
+    serializeJson(doc,Serial); Serial.println();
   }
-  while(millis()-now<20);
+  while(millis()-now<LOOP_MS);
 }
 
 void applyMotors(float v){
-  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);
-  digitalWrite(L_IN1,f);digitalWrite(L_IN2,!f);analogWrite(L_EN,p);
-  digitalWrite(R_IN1,f);digitalWrite(R_IN2,!f);analogWrite(R_EN,p);
-}` },
-      { filename: 'run_bridge.sh', content:
-`#!/bin/bash
-# PhysiCore Bridge — Balancing Bot
-# ${os} | Port: ${port} | Mass: ${mass}kg
-pip install pymavlink websockets aiohttp pyserial
-python physicore/bridge/physicore_bridge.py \\
-  --platform balancing_bot_arduino \\
-  --connection ${port} \\
-  --baud 115200` },
-      { filename: 'INTEGRATION_GUIDE.md', content:
-`# PhysiCore Balancing Bot Integration
-## ${imu} + ${driver} | ${answers.mcu||'Arduino'} | Mass: ${mass}kg
+${mApply[driver]||mApply.L298N}
+}`;
 
-### Step 1 — Install Arduino libraries
-Sketch → Include Library → Manage Libraries
-- MPU6050_light by rfetick
-- ArduinoJson v6.x by Benoit Blanchon
+    const yaml = `name: My Balancing Bot
+platform: balancing_bot
+connection: ${port}
+baud: 115200
+mass: ${mass}
+friction: 0.15
+inertia: ${(parseFloat(mass)*parseFloat(answers.com_height||'0.15')*parseFloat(answers.com_height||'0.15')*0.3).toFixed(4)}
+imu: ${imu}
+motor_driver: ${driver}
+mcu: "${answers.mcu||'Arduino Uno'}"
+control_hz: 60.0
+use_registry: true
+sentinel_enabled: true
+max_torque: 2.5`;
 
-### Step 2 — Flash firmware
-Open physicore_balancing_bot.ino in Arduino IDE.
-Set motor pins at top to match your wiring.
-Upload to your board.
+    const bridge = os.toLowerCase().includes('win')
+      ? `@echo off\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore\\bridge\\physicore_bridge.py --config balancing_bot.yaml`
+      : `#!/bin/bash\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore/bridge/physicore_bridge.py --config balancing_bot.yaml`;
 
-### Step 3 — Verify IMU
-Serial Monitor at 115200 baud → tilt robot → confirm pitch changes.
-{"pitch":8.4,"gyro_y":-2.1,...} means it is working.
-
-### Step 4 — Run bridge
-Close Arduino IDE first (it blocks the serial port).
-Run: bash run_bridge.sh
-
-### Step 5 — Connect dashboard
-MAVLINK → ws://localhost:8765 → Connect
-
-### Step 6 — Activate
-Click ACTIVE CONTROL ON.
-Watch mass estimate update in sidebar — that is SystemID learning your hardware.` }
+    return [
+      { filename:'physicore_balancing_bot.ino', content:ino },
+      { filename:'balancing_bot.yaml', content:yaml },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
     ];
   }
 
-  if (hw === 'px4' || hw === 'ardupilot' || hw === 'evtol') {
+  if (hw==='px4'||hw==='ardupilot'||hw==='evtol') {
     const conn = (answers.connection||'').toLowerCase().includes('usb') ? '/dev/ttyACM0' : 'udp:14550';
-    const platform = hw === 'evtol' ? 'evtol' : hw === 'ardupilot' ? `ardupilot_${(answers.frame||'quadrotor').toLowerCase().includes('wing')?'plane':'quadrotor'}` : 'px4_quadrotor';
+    const platform = hw==='evtol' ? 'evtol' : hw==='ardupilot' ? `ardupilot_${(answers.frame||'').toLowerCase().includes('wing')?'plane':'quadrotor'}` : 'px4_quadrotor';
+    const yaml = `name: My ${hw.toUpperCase()} ${answers.frame||'Drone'}\nplatform: ${hw}\nconnection: ${conn}\nmass: ${mass}\nfriction: 0.1\ninertia: 0.05\ncontrol_hz: 60.0\nuse_registry: true`;
+    const bridge = os.toLowerCase().includes('win')
+      ? `@echo off\npip install pymavlink websockets aiohttp pyyaml\npython physicore\\bridge\\physicore_bridge.py --config drone.yaml`
+      : `#!/bin/bash\npip install pymavlink websockets aiohttp pyyaml\npython physicore/bridge/physicore_bridge.py --config drone.yaml`;
     return [
-      { filename: 'run_bridge.sh', content:
-`#!/bin/bash
-# PhysiCore Bridge — ${hw.toUpperCase()} | ${answers.frame||'Quadrotor'} | Mass: ${mass}kg
-pip install pymavlink websockets aiohttp
-python physicore/bridge/physicore_bridge.py \\
-  --platform ${platform} \\
-  --connection ${conn}` },
-      { filename: 'INTEGRATION_GUIDE.md', content:
-`# PhysiCore ${hw.toUpperCase()} Integration
-## ${answers.frame||'Quadrotor'} | Mass: ${mass}kg | Connection: ${conn}
-
-### Step 1 — Enable MAVLink telemetry
-In QGroundControl/Mission Planner:
-Enable UDP telemetry on port 14550.
-
-### Step 2 — Run bridge
-bash run_bridge.sh
-
-### Step 3 — Connect dashboard
-MAVLINK → ws://localhost:8765 → Connect
-
-### Step 4 — Fly and activate
-Arm vehicle → Click ACTIVE CONTROL ON.
-PhysiCore reads telemetry at 60Hz.
-Mass estimate starts at ${mass}kg, adapts to real flight.` }
+      { filename:'drone.yaml', content:yaml },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
     ];
   }
 
-  if (hw === 'ros2_arm') {
-    const hasFT = answers.ft_sensor === 'Yes';
-    return [
-      { filename: 'physicore_arm_bridge.py', content:
-`#!/usr/bin/env python3
-"""PhysiCore ROS2 Arm Bridge
-${answers.brand||'Custom'} ${dof}-DOF | ROS2 ${distro} | Topic: ${topic}
-Run: python3 physicore_arm_bridge.py
+  if (hw==='ros2_arm'||hw==='humanoid'||hw==='legged'||hw==='auv'||hw==='surgical'||hw==='rover') {
+    const hasFT = answers.ft_sensor==='Yes';
+    const platform = hw==='ros2_arm'||hw==='surgical' ? 'ros2_manipulator' : hw==='humanoid'||hw==='legged' ? 'ros2_legged' : hw==='auv' ? 'ros2_auv' : 'ros2_ground_rover';
+    const node = `#!/usr/bin/env python3
+"""PhysiCore ROS2 Bridge — ${answers.brand||hw} ${dof}-DOF
+ROS2 ${distro} | Topic: ${topic}
+Run: python3 physicore_ros2_bridge.py
 """
 import rclpy
 from rclpy.node import Node
@@ -2147,12 +2180,11 @@ import json, socket, math
 
 class Bridge(Node):
     def __init__(self):
-        super().__init__('physicore_arm_bridge')
-        self.j=[0.0]*${dof}; self.v=[0.0]*${dof}; self.e=[0.0]*${dof}
-        self.f=[0.0,0.0,0.0]
+        super().__init__('physicore_bridge')
+        self.j=[0.0]*${dof}; self.v=[0.0]*${dof}; self.e=[0.0]*${dof}; self.f=[0.0,0.0,0.0]
         self.create_subscription(JointState,'${topic}',self.jcb,10)
         ${hasFT ? "self.create_subscription(WrenchStamped,'/ft_sensor/wrench',self.fcb,10)" : ''}
-        self.get_logger().info('PhysiCore arm bridge ready')
+        self.get_logger().info('PhysiCore ROS2 bridge ready')
 
     def jcb(self,msg):
         n=min(len(msg.position),${dof})
@@ -2168,76 +2200,213 @@ class Bridge(Node):
         p=json.dumps({"op":"publish","topic":"/telemetry","msg":{
             "pitch":math.degrees(self.j[0]),
             "roll":math.degrees(self.j[1]) if ${dof}>1 else 0,
-            "yaw":math.degrees(self.j[2]) if ${dof}>2 else 0,
-            "gyro_x":self.v[0],"gyro_y":self.v[1] if ${dof}>1 else 0,"gyro_z":self.v[2] if ${dof}>2 else 0,
+            "gyro_x":self.v[0],"gyro_y":self.v[1] if ${dof}>1 else 0,
             "accel_x":self.f[0],"accel_y":self.f[1],"accel_z":self.f[2],
             "motor_l":self.e[0],"motor_r":self.e[1] if ${dof}>1 else 0,
             "vehicle_type":"MANIPULATOR","domain":"ROBOTICS","connected":True,
             "joint_positions":self.j,"joint_velocities":self.v
         }})+'\\n'
         try:
-            s=socket.socket(); s.connect(('localhost',8765))
-            s.sendall(p.encode()); s.close()
+            s=socket.socket(); s.connect(('localhost',8765)); s.sendall(p.encode()); s.close()
         except: pass
 
 def main():
     rclpy.init(); rclpy.spin(Bridge())
 
-if __name__=='__main__': main()` },
-      { filename: 'run_bridge.sh', content:
-`#!/bin/bash
-# PhysiCore ROS2 Arm Bridge — ${answers.brand||'Custom'} ${dof}-DOF
-source /opt/ros/${distro}/setup.bash
-pip install pymavlink websockets aiohttp
-python physicore/bridge/physicore_bridge.py --platform ros2_manipulator &
-sleep 2
-python3 physicore_arm_bridge.py` },
-      { filename: 'INTEGRATION_GUIDE.md', content:
-`# PhysiCore ROS2 Arm Integration
-## ${answers.brand||'Custom'} | ${dof} DOF | Topic: ${topic}
+if __name__=='__main__': main()`;
 
-### Step 1 — Verify topics
-source /opt/ros/${distro}/setup.bash
-ros2 topic echo ${topic} --once
-
-### Step 2 — Run bridge
-bash run_bridge.sh
-
-### Step 3 — Connect dashboard
-MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON` }
+    const yaml = `name: ${answers.brand||hw}\nplatform: ${hw}\nconnection: ros2\nmass: ${mass}\nfriction: 0.3\ninertia: 0.1\nros2_distro: ${distro}\njoint_topic: ${topic}\ndof: ${dof}\ncontrol_hz: 60.0\nuse_registry: true`;
+    const bridge = `#!/bin/bash\nsource /opt/ros/${distro}/setup.bash\npip install pymavlink websockets aiohttp pyyaml\npython physicore/bridge/physicore_bridge.py --platform ${platform} &\nsleep 2\npython3 physicore_ros2_bridge.py`;
+    return [
+      { filename:'physicore_ros2_bridge.py', content:node },
+      { filename:'robot.yaml', content:yaml },
+      { filename:'run_bridge.sh', content:bridge },
     ];
   }
 
-  // Generic for all other hardware
-  const platform = hw==='humanoid'||hw==='legged' ? 'ros2_legged' :
-                   hw==='auv' ? 'ros2_auv' :
-                   hw==='surgical' ? 'ros2_surgical' :
-                   hw==='ugv'||hw==='rover' ? 'ros2_ground_rover' :
-                   hw==='rocket' ? 'custom_rocket_fc' :
-                   hw==='satellite' ? 'satellite_serial' : 'ros2_ground_rover';
-  const isSerial = ['rocket','satellite'].includes(hw);
-  return [
-    { filename: 'run_bridge.sh', content:
-`#!/bin/bash
-# PhysiCore Bridge — ${hw} | Mass: ${mass}kg
-${!isSerial ? `source /opt/ros/${distro}/setup.bash\n` : ''}pip install pymavlink websockets aiohttp pyserial
-python physicore/bridge/physicore_bridge.py \\
-  --platform ${platform} \\
-  ${isSerial ? `--connection ${port} --baud ${answers.baud||'115200'}` : ''}` },
-    { filename: 'INTEGRATION_GUIDE.md', content:
-`# PhysiCore ${hw.replace(/_/g,' ').toUpperCase()} Integration
-## Mass: ${mass}kg | Platform: ${platform}
+  if (hw==='rocket') {
+    const ino = `/*
+ * PhysiCore Rocket Flight Computer — ${answers.fc||'Arduino Mega'} + ${answers.baro||'BMP280'}
+ * Dry mass: ${mass}kg | Baud: ${answers.baud||'115200'}
+ * INSTALL: ${answers.baro||'BMP280'} library + ArduinoJson v6.x
+ */
+#include <Wire.h>
+#include <ArduinoJson.h>
+// TODO: add your ${answers.baro||'BMP280'} include here
 
-### Run bridge
-bash run_bridge.sh
+float altitude=0, prev_alt=0, velocity=0, mass_kg=${mass};
+String phase="IDLE";
+unsigned long last_tx=0;
 
-### Connect dashboard
-MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON
-
-PhysiCore adapts mass, friction, and dynamics from real sensor data automatically.` }
-  ];
+void setup(){
+  Serial.begin(${answers.baud||'115200'}); Wire.begin();
+  // TODO: init your ${answers.baro||'BMP280'} sensor here
+  Serial.println("{\\"status\\":\\"ready\\"}");
 }
 
+void loop(){
+  unsigned long now=millis();
+  // TODO: read altitude from ${answers.baro||'BMP280'}
+  // altitude = baro.readAltitude(1013.25);
+
+  velocity=(altitude-prev_alt)/0.02; prev_alt=altitude;
+  if(velocity>2.0) phase="POWERED";
+  else if(altitude>50&&velocity<0) phase="COAST";
+  else if(altitude<50&&velocity<-0.5) phase="RECOVERY";
+  else phase="IDLE";
+
+  if(now-last_tx>=20){
+    last_tx=now;
+    StaticJsonDocument<256> doc;
+    doc["altitude"]=altitude; doc["velocity"]=velocity;
+    doc["mass"]=mass_kg; doc["phase"]=phase; doc["timestamp"]=now;
+    serializeJson(doc,Serial); Serial.println();
+  }
+  delay(1);
+}`;
+    const yaml = `name: My Rocket\nplatform: rocket\nconnection: ${port}\nbaud: ${answers.baud||'115200'}\nmass: ${mass}\nfriction: 0.45\ninertia: 220\ncontrol_hz: 60.0\nuse_registry: true`;
+    const bridge = os.toLowerCase().includes('win')
+      ? `@echo off\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore\\bridge\\physicore_bridge.py --config rocket.yaml`
+      : `#!/bin/bash\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore/bridge/physicore_bridge.py --config rocket.yaml`;
+    return [
+      { filename:'physicore_rocket_fc.ino', content:ino },
+      { filename:'rocket.yaml', content:yaml },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
+    ];
+  }
+
+  return [{ filename:'run_bridge.sh', content:`#!/bin/bash\npython physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` }];
+}
+
+// ── Steps per hardware ────────────────────────────────────────────────────────
+function ie_getSteps(hw: string, answers: Record<string,string>): {id:string; label:string; detail:string; cmd?:string}[] {
+  const os = answers.os||'Linux';
+  const port = ie_port(os);
+  const distro = (answers.distro||'humble').toLowerCase();
+  const topic = answers.topic||'/joint_states';
+  const isWin = os.toLowerCase().includes('win');
+
+  if (hw==='balancing_bot') return [
+    { id:'lib',      label:'Install Arduino libraries', detail:`Arduino IDE → Sketch → Include Library → Manage Libraries\nInstall: ${answers.imu||'MPU6050'} library\nInstall: ArduinoJson by Benoit Blanchon (v6.x)` },
+    { id:'flash',    label:'Flash firmware', detail:`Open physicore_balancing_bot.ino\nTools → Board → select ${answers.mcu||'your board'}\nTools → Port → select your port → click Upload` },
+    { id:'calib',    label:'Calibrate BALANCE_POINT', detail:`Open Serial Monitor at 115200 baud\nHold robot perfectly upright → read pitch value\nEdit firmware: const float BALANCE_POINT = <that value>;\nRe-upload firmware` },
+    { id:'imu',      label:'Verify IMU is working', detail:`Tilt robot forward/back → pitch value must change\nGood: {"pitch":8.4,"gyro_x":-2.1,...}\nBad: all zeros → check SDA/SCL wiring` },
+    { id:'bridge',   label:'Run the bridge', detail:`Close Arduino IDE first (locks the serial port)\nEdit balancing_bot.yaml: change connection: ${port} to your actual port\n${isWin ? 'Find port: Device Manager → Ports' : 'Find port: ls /dev/ttyUSB* or ls /dev/cu.*'}`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → endpoint: ws://localhost:8765 → Connect\nLive pitch data appears immediately` },
+    { id:'activate', label:'Activate PhysiCore', detail:`Click ACTIVE CONTROL ON\nLED turns ON = PhysiCore is sending commands\nWatch mass estimate adapt in sidebar — that is SystemID learning your robot` },
+  ];
+
+  if (hw==='px4'||hw==='ardupilot'||hw==='evtol') return [
+    { id:'telemetry', label:'Enable MAVLink telemetry', detail:`QGroundControl → Application Settings → Telemetry → enable UDP port 14550\n${(answers.connection||'').toLowerCase().includes('usb') ? 'Or: connect USB cable directly to Pixhawk' : 'Laptop and drone must be on same WiFi'}` },
+    { id:'bridge',    label:'Run the bridge', detail:`Installs pymavlink, websockets, aiohttp\nYou should see: "MAVLink connected"`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',   label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive telemetry: altitude, pitch, roll, yaw` },
+    { id:'activate',  label:'Arm and activate', detail:`Arm vehicle normally\nClick ACTIVE CONTROL ON\nPhysiCore reads telemetry at 60 Hz, adapts mass/friction live` },
+  ];
+
+  if (['ros2_arm','humanoid','legged','auv','surgical','rover'].includes(hw)) return [
+    { id:'source',   label:'Source ROS2', detail:`Must run in every terminal before using ROS2`, cmd:`source /opt/ros/${distro}/setup.bash` },
+    { id:'topics',   label:'Verify joint states topic', detail:`Joint data must appear — if not, your robot driver is not running`, cmd:`ros2 topic echo ${topic} --once` },
+    { id:'bridge',   label:'Run the bridge', detail:`Starts PhysiCore bridge on port 8765 + ROS2 bridge node`, cmd:'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
+    { id:'activate', label:'Activate control', detail:`Click ACTIVE CONTROL ON\nPhysiCore adapts your robot's physics from live joint data` },
+  ];
+
+  if (hw==='rocket') return [
+    { id:'firmware', label:'Complete and flash firmware', detail:`Add ${answers.baro||'BMP280'} library include + initialization\nFlash to ${answers.fc||'Arduino Mega'}` },
+    { id:'verify',   label:'Verify telemetry on ground', detail:`Serial Monitor at ${answers.baud||'115200'} baud\nSee: {"altitude":0.2,"phase":"IDLE",...}` },
+    { id:'bridge',   label:'Run the bridge', detail:`Edit rocket.yaml: change connection to your port\n${isWin ? 'Find port: Device Manager → Ports' : 'Find port: ls /dev/ttyUSB*'}`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive altitude and phase appear` },
+  ];
+
+  return [];
+}
+
+// ── Troubleshoot tree ─────────────────────────────────────────────────────────
+function ie_troubleshoot(msg: string, hw: string, answers: Record<string,string>): {title:string; steps:{label:string; cmd:string}[]} | null {
+  const m = msg.toLowerCase();
+  const os = answers.os||'Linux';
+  const distro = (answers.distro||'humble').toLowerCase();
+  const topic = answers.topic||'/joint_states';
+
+  if (m.match(/port|com\d|\btty\b|which.*port|can't find.*serial/)) return {
+    title:'Finding your serial port',
+    steps:[
+      { label:'Windows', cmd:'Device Manager → Ports (COM & LPT) → note COMx' },
+      { label:'Mac', cmd:'ls /dev/cu.*' },
+      { label:'Linux', cmd:'ls /dev/ttyUSB*  or  ls /dev/ttyACM*' },
+      { label:'Then update yaml', cmd:`connection: YOUR_PORT in ${hw==='rocket'?'rocket':'balancing_bot'}.yaml` },
+    ],
+  };
+  if (m.match(/imu|pitch.*zero|pitch.*not.*chang|mpu.*not|bno.*not/)) return {
+    title:'IMU not responding',
+    steps:[
+      { label:'Check wiring', cmd:`${answers.imu||'MPU6050'}: SDA → A4, SCL → A5, VCC → 3.3V (NOT 5V), GND → GND` },
+      { label:'Verify in Serial Monitor', cmd:'Tilt robot — pitch value must change. If stays at 0: wiring error' },
+      { label:'Check library', cmd:`Sketch → Include Library → Manage Libraries → search ${answers.imu||'MPU6050'}` },
+    ],
+  };
+  if (m.match(/jitter|jittery|vibrat|shak|oscillat|not.*smooth/)) return {
+    title:'Jittery / oscillating robot',
+    steps:[
+      { label:'BALANCE_POINT wrong', cmd:'Hold upright → read pitch in Serial Monitor → set BALANCE_POINT to that value → re-upload' },
+      { label:'MAX_TORQUE check', cmd:'Must be 2.5 in firmware — not 100, not 255' },
+      { label:'IMU noise', cmd:'Run mpu.calcOffsets() in setup() to calibrate offsets' },
+    ],
+  };
+  if (m.match(/not.*balanc|fall|tip.*over|won't.*stand|can't.*stay/)) return {
+    title:'Robot won\'t balance',
+    steps:[
+      { label:'Is PhysiCore active?', cmd:'Click ACTIVE CONTROL ON — LED_BUILTIN must turn ON' },
+      { label:'BALANCE_POINT calibrated?', cmd:'Redo calibration: upright → Serial Monitor → read pitch → set BALANCE_POINT' },
+      { label:'Mass correct?', cmd:`YAML mass: ${answers.mass||'?'} kg — measure your actual robot mass` },
+      { label:'Bridge connected?', cmd:'Dashboard must show "Connected" and live pitch data' },
+    ],
+  };
+  if (m.match(/not.*connect|can't.*connect|dashboard.*not|no.*data|ws.*fail/)) return {
+    title:'Dashboard not connecting',
+    steps:[
+      { label:'Endpoint', cmd:'Must be exactly: ws://localhost:8765 (not https, not http)' },
+      { label:'Bridge running?', cmd:'Terminal must show "PhysiCore bridge started" — not closed' },
+      { label:'Arduino IDE closed?', cmd:'Close it — it locks the serial port' },
+      { label:'Firewall?', cmd:'Allow port 8765 in firewall / Windows Defender' },
+    ],
+  };
+  if (m.match(/ros2.*not|topic.*not.*found|rclpy|no.*topic|source/)) return {
+    title:'ROS2 / topics not found',
+    steps:[
+      { label:'Source first', cmd:`source /opt/ros/${distro}/setup.bash` },
+      { label:'List topics', cmd:'ros2 topic list' },
+      { label:'Check joint states', cmd:`ros2 topic echo ${topic} --once` },
+      { label:'rclpy missing?', cmd:`sudo apt install ros-${distro}-rclpy` },
+    ],
+  };
+  if (m.match(/mavlink|heartbeat|qground|mission.*planner|no.*heartbeat/)) return {
+    title:'MAVLink not connecting',
+    steps:[
+      { label:'Enable telemetry', cmd:'QGC: Application Settings → Telemetry → UDP port 14550' },
+      { label:'Same network?', cmd:'Laptop and drone must be on same WiFi for UDP' },
+      { label:'USB connection?', cmd:'connection: /dev/ttyACM0 (Linux) or COM3 (Windows)' },
+      { label:'pymavlink installed?', cmd:'pip install pymavlink' },
+    ],
+  };
+  return null;
+}
+
+// ── IEState type for the new button-driven UI ─────────────────────────────────
+interface IEState {
+  phase: 'welcome' | 'questions' | 'generated' | 'troubleshoot';
+  hw: string;
+  qIndex: number;
+  answers: Record<string,string>;
+  files: {filename:string; content:string}[];
+  steps: {id:string; label:string; detail:string; cmd?:string}[];
+  checklist: Record<string,boolean>;
+  activeFile: number;
+  troubleshootResult: {title:string; steps:{label:string;cmd:string}[]} | null;
+  freeInput: string;
+}
+
+// ── physi_integrate is now a thin shim for backward compat with handleSendMessage ──
 function physi_integrate(
   userMsg: string,
   history: any[],
@@ -2247,199 +2416,18 @@ function physi_integrate(
     setSystemProfile?: (fn: (prev: any) => any) => void;
     setConnectionMode?: (m: any) => void;
     setEndpoint?: (e: string) => void;
-    setTelemetry?: (fn: (prev: any) => any) => void;
   }
 ): string {
-  const m = userMsg.toLowerCase().trim();
-  const userTurns = history.filter((x: any) => x.role === 'user');
-  const step = userTurns.length;
-
-  // Troubleshooting — intercept any time
-  if (step > 0 && m.match(/not work|error|fail|can.t connect|doesn.t|issue|problem|port.*wrong/)) {
-    if (m.match(/port|com\d|\btty\b|which.*port|what.*port/)) {
-      return `> INTEGRATION ENGINEER:
-Finding your serial port:
-
-Windows
-     Open Device Manager → Ports (COM & LPT)
-     Note the COMx number (e.g. COM3)
-     Use: --connection COM3
-
-Mac
-     Open a terminal and run: ls /dev/cu.*
-     Look for something like: /dev/cu.usbserial-0001
-     Use: --connection /dev/cu.usbserial-0001
-
-Linux
-     Run: ls /dev/ttyUSB*  or  ls /dev/ttyACM*
-     Use: --connection /dev/ttyUSB0
-
-Then rerun the bridge with the correct port.`;
-    }
-    return `> INTEGRATION ENGINEER:
-Troubleshooting — work through these one at a time:
-
-STEP 1 — Close Arduino IDE
-     It locks the serial port exclusively. The bridge cannot connect while it is open.
-
-STEP 2 — Find your serial port
-     Windows: Device Manager → Ports (COM & LPT) → note the COMx number
-     Mac: run in terminal: ls /dev/cu.*  — look for usbserial or usbmodem
-     Linux: run: ls /dev/ttyUSB*  or  ls /dev/ttyACM*
-
-STEP 3 — Verify your IMU is sending real data
-     Open Serial Monitor at 115200 baud
-     Tilt the robot — pitch must change
-     If pitch stays at 0.0 the IMU is not wired correctly
-
-STEP 4 — Check baud rate
-     Must be 115200 in both the firmware and the bridge command --baud 115200
-
-STEP 5 — Check dashboard endpoint
-     Must be exactly: ws://localhost:8765
-     Not https — use ws://
-
-STEP 6 — Activate control
-     PhysiCore only sends commands when ACTIVE CONTROL ON is clicked
-
-Tell me which step fails and I will give you the exact fix.`;
+  // This is only called for troubleshooting freetext now
+  // The main Q&A is handled by renderIntegrator's local state machine
+  const hw = ie_detect(userMsg) || 'balancing_bot';
+  const local = ie_troubleshoot(userMsg, hw, {});
+  if (local) {
+    const stepsText = local.steps.map((s,i) => `STEP ${i+1} — ${s.label}\n     ${s.cmd}`).join('\n\n');
+    return `> INTEGRATION ENGINEER:\n${local.title}\n\n${stepsText}`;
   }
-
-  // Detect hardware
-  const hwNow = ie_detect(userMsg);
-  const hwFirst = ie_detect(userTurns[0]?.content || '');
-  const hw = hwNow || hwFirst;
-
-  // No hardware detected
-  if (!hw) {
-    return `> INTEGRATION ENGINEER:
-I generate complete integration code for any hardware — firmware, bridge config, and a step-by-step guide. No placeholders. Real code.
-
-What are you integrating? Pick one:
-
-  • Balancing bot (Arduino or ESP32 + MPU6050)
-  • PX4 drone
-  • ArduPilot drone
-  • ROS2 robot arm (UR5, UR10, KUKA, Fanuc, Franka, custom)
-  • Humanoid robot (Unitree G1/H1, Figure AI Apollo, Boston Dynamics)
-  • Legged robot (ANYmal, Go1, Go2, Mini Cheetah)
-  • eVTOL aircraft
-  • Surgical robot
-  • AUV or underwater robot
-  • Satellite or spacecraft
-  • Rocket or sounding rocket
-  • Ground rover or AMR
-  • Custom hardware`;
-  }
-
-  const flow = IE_FLOWS[hw] || IE_FLOWS['rover'];
-
-  // Collect answers from history
-  // step=0 means first message just arrived (hardware detected), ask Q0
-  // step=1 means user answered Q0, ask Q1
-  // step=N means user answered QN-1, ask QN or generate
-  const answeredCount = step;
-  const answers: Record<string,string> = {};
-  // userTurns[0] is the hardware detection trigger.
-  // userTurns[1...step-1] are previous answers.
-  // userMsg is the current answer.
-  for (let i = 0; i < answeredCount && i < flow.length; i++) {
-    if (i < step - 1) {
-      answers[flow[i].key] = userTurns[i + 1]?.content || '';
-    } else {
-      answers[flow[i].key] = userMsg;
-    }
-  }
-
-  if (answeredCount < flow.length) {
-    // Still need more answers
-    const q = flow[answeredCount];
-    let resp = `> INTEGRATION ENGINEER:`;
-    if (answeredCount === 0) {
-      resp += `\n${hw.replace(/_/g,' ').toUpperCase()} detected. I need ${flow.length} quick details to generate your exact code.\n`;
-    } else {
-      resp += `\nGot it — ${userMsg}.\n`;
-    }
-    resp += `\n${q.q}`;
-    if (q.opts) resp += '\n' + q.opts.map(o => `  • ${o}`).join('\n');
-    resp += `\n\n*(Question ${answeredCount + 1} of ${flow.length})*`;
-    return resp;
-  }
-
-  // All questions answered — add final answer and generate
-  if (flow.length > 0) {
-    answers[flow[flow.length - 1].key] = userMsg;
-  }
-
-  const files = ie_generateCode(hw, answers);
-  const mass = parseFloat(answers.mass || '1.0') || 1.0;
-  const isSerial = ['balancing_bot','rocket','satellite'].includes(hw);
-  const isMavlink = ['px4','ardupilot','drone','evtol'].includes(hw);
-
-  // Auto-configure dashboard
-  if (callbacks) {
-    if (callbacks.setGeneratedFiles) {
-      callbacks.setGeneratedFiles(files.map(f => ({ filename: f.filename, content: f.content })));
-    }
-    if (callbacks.setSystemProfile) {
-      callbacks.setSystemProfile((prev: any) => ({
-        ...prev,
-        platform: hw,
-        domain: isMavlink ? 'AVIATION' : hw === 'rocket' ? 'ROCKETS' : 'ROBOTICS',
-        massClass: mass > 100 ? 'heavy' : mass > 10 ? 'medium' : 'light',
-        protocols: isSerial ? ['SERIAL'] : isMavlink ? ['MAVLINK'] : ['ROS2'],
-      }));
-    }
-    if (callbacks.setConnectionMode) callbacks.setConnectionMode('mavlink_bridge');
-    if (callbacks.setEndpoint) callbacks.setEndpoint('ws://localhost:8765');
-    if (callbacks.setIntegrationPhase) {
-      setTimeout(() => callbacks.setIntegrationPhase!(4), 100);
-    }
-  }
-
-  const fileList = files.map(f => `  • ${f.filename}`).join('\n');
-
-  const bbSteps = [
-    `Install Arduino libraries\n     Arduino IDE → Sketch → Include Library → Manage Libraries\n     Search: MPU6050_light → Install\n     Search: ArduinoJson → Install (v6.x by Benoit Blanchon)`,
-    `Flash the firmware\n     Open physicore_balancing_bot.ino in Arduino IDE\n     Tools → Board → select your board\n     Tools → Port → select your port\n     Click Upload`,
-    `Verify the IMU is working\n     Open Serial Monitor at 115200 baud\n     Tilt the robot — the pitch value must change\n     Good: {"pitch":8.4,"gyro_y":-2.1,...} Bad: no output or all zeros`,
-    `Run the bridge\n     Close Arduino IDE first — it locks the serial port exclusively\n     Open a terminal and run: bash run_bridge.sh`,
-    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect — you should see live pitch data immediately`,
-    `Start PhysiCore control\n     Click ACTIVE CONTROL ON\n     Watch mass estimate update in the sidebar — that is SystemID learning your robot`,
-  ];
-
-  const mavSteps = [
-    `Enable MAVLink telemetry\n     In QGroundControl: Application Settings → Telemetry\n     Enable UDP output on port 14550`,
-    `Run the bridge\n     Open a terminal and run: bash run_bridge.sh\n     You should see "MAVLink connected" within a few seconds`,
-    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect`,
-    `Arm and activate\n     Arm your vehicle normally\n     Click ACTIVE CONTROL ON\n     PhysiCore reads your telemetry at 60 Hz and adapts to your hardware live`,
-  ];
-
-  const ros2Steps = [
-    `Source your ROS2 environment\n     Run: source /opt/ros/${(answers.distro||'humble').toLowerCase()}/setup.bash`,
-    `Run the bridge\n     Run: bash run_bridge.sh\n     You should see joint states flowing in the terminal`,
-    `Connect the dashboard\n     Dashboard is already set to ws://localhost:8765\n     Click Connect`,
-    `Activate control\n     Click ACTIVE CONTROL ON\n     PhysiCore adapts your robot's mass and friction from live joint data automatically`,
-  ];
-
-  const steps = hw === 'balancing_bot' ? bbSteps : isMavlink ? mavSteps : ros2Steps;
-  const stepsText = steps.map((s, i) => `STEP ${i+1} — ${s}`).join('\n\n');
-
-  return `> INTEGRATION ENGINEER:
-${hw.replace(/_/g,' ').toUpperCase()} integration ready. Your files are in the panel below.
-
-${stepsText}
-
----
-Files generated:
-${fileList}
-
-Dashboard pre-configured → ws://localhost:8765 | Nominal mass: ${mass}kg
-SystemID will adapt mass and friction automatically from your real hardware data.
-
-Stuck on any step? Tell me exactly what you see and I will give you the fix.`;
+  return `> INTEGRATION ENGINEER:\nTell me what hardware you have and I'll generate your complete integration — firmware, bridge config, and step-by-step guide.\n\nExamples:\n  • "I have a balancing bot with Arduino and MPU6050"\n  • "I have a PX4 drone"\n  • "I have a ROS2 robot arm"\n  • "I have a sounding rocket"`;
 }
-
 
 
 
@@ -4497,167 +4485,358 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
 
   const renderIntegrator = () => {
-    const QUICK_STARTS = [
-      'I have a balancing bot with Arduino and MPU6050',
-      'I have a PX4 quadrotor and want to connect PhysiCore',
-      'I have a ROS2 robot arm',
-      'I have a sounding rocket with a custom flight computer',
-      'I have a ROS2 legged robot / humanoid',
-      'I have an AUV / underwater robot',
-      'I have custom hardware and need help',
-    ];
+    const [ieState, setIE] = React.useState<IEState>({
+      phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [],
+      checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
+    });
+    const [copiedId, setCopiedId] = React.useState<string|null>(null);
+    const [tsInput, setTsInput] = React.useState('');
 
-    const hasMessages = conversationHistory.length > 0;
+    const flow = IE_FLOWS[ieState.hw];
+    const currentQ = flow?.questions[ieState.qIndex];
 
-    return (
+    function copyText(text: string, id: string) {
+      navigator.clipboard?.writeText(text).catch(()=>{});
+      setCopiedId(id); setTimeout(()=>setCopiedId(null), 1800);
+    }
+
+    function selectHardware(hw: string) {
+      setIE({ phase:'questions', hw, qIndex:0, answers:{}, files:[], steps:[],
+               checklist:{}, activeFile:0, troubleshootResult:null, freeInput:'' });
+    }
+
+    function detectAndSelect(text: string) {
+      const detected = ie_detect(text);
+      if (detected && IE_FLOWS[detected]) selectHardware(detected);
+      else setIE(s=>({...s, phase:'questions', hw:'balancing_bot', qIndex:0}));
+    }
+
+    function answerQ(value: string) {
+      const key = currentQ!.key;
+      const newAnswers = {...ieState.answers, [key]: value};
+      const nextIndex = ieState.qIndex + 1;
+      if (nextIndex < flow!.questions.length) {
+        setIE(s=>({...s, answers:newAnswers, qIndex:nextIndex, freeInput:''}));
+      } else {
+        const files = ie_generateCode(ieState.hw, newAnswers);
+        const steps = ie_getSteps(ieState.hw, newAnswers);
+        setGeneratedFiles(files.map(f=>({filename:f.filename, content:f.content})));
+        if (['px4','ardupilot','evtol'].includes(ieState.hw)) {
+          setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765');
+        } else {
+          setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765');
+        }
+        setIE(s=>({...s, phase:'generated', answers:newAnswers, files, steps,
+                   checklist:{}, activeFile:0, freeInput:''}));
+      }
+    }
+
+    function checkTroubleshoot(msg: string) {
+      const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
+      setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
+    }
+
+    const HW_GRID = Object.entries(IE_FLOWS);
+
+    // ── WELCOME ──────────────────────────────────────────────────────────────
+    if (ieState.phase === 'welcome') return (
       <div className="pt-[52px] h-screen flex flex-col bg-void">
-        {/* Header */}
         <div className="border-b border-border bg-bg px-6 py-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-green/10 border border-green/30 flex items-center justify-center">
               <Cpu size={16} className="text-green" />
             </div>
             <div>
               <div className="font-display text-sm font-bold text-white uppercase tracking-widest">Integration Engineer</div>
-              <div className="font-mono text-[9px] text-green uppercase tracking-widest">PhysiCore AI · Trained on every platform · 30 min to working hardware</div>
+              <div className="font-mono text-[9px] text-green uppercase tracking-widest">Any hardware · Real code · 30 minutes</div>
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setView('manual')}
-              className="flex items-center gap-2 px-4 py-2 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:border-amber hover:text-amber transition-all"
-            >
-              <BookOpen size={12} />
-              Manual
-            </button>
-            <button
-              onClick={() => { setConversationHistory([]); setGeneratedFiles([]); }}
-              className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors px-3 py-2 border border-border hover:border-border"
-            >
-              New session
-            </button>
           </div>
         </div>
 
-        {/* Chat area */}
-        <div className="flex-1 overflow-y-auto custom-scroll px-6 py-6 space-y-6">
-          {!hasMessages && (
-            <div className="max-w-[680px] mx-auto space-y-8 pt-8">
-              <div className="space-y-3">
-                <div className="font-mono text-[10px] text-green uppercase tracking-widest">Integration Engineer</div>
-                <div className="bg-bgRaised border border-green/20 p-6 space-y-4">
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">
-                    I'm the PhysiCore Integration Engineer. Tell me what hardware you have and I'll generate your complete integration — firmware, bridge config, wiring, and step-by-step setup — in one conversation.
-                  </p>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">
-                    What are you integrating with PhysiCore?
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">Quick start</div>
-                <div className="grid grid-cols-1 gap-2">
-                  {QUICK_STARTS.map((qs, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleSendMessage(qs)}
-                      className="text-left px-4 py-3 border border-border bg-bgRaised font-body text-xs text-textSecondary hover:border-green hover:text-white hover:bg-green/5 transition-all"
-                    >
-                      {qs}
-                    </button>
-                  ))}
-                </div>
+        <div className="flex-1 overflow-y-auto custom-scroll px-6 py-8">
+          <div className="max-w-[720px] mx-auto space-y-8">
+
+            {/* Detect from description */}
+            <div className="space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Describe your hardware</p>
+              <div className="flex gap-3">
+                <input
+                  className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
+                  placeholder="e.g. I have a balancing bot with Arduino Uno and MPU6050..."
+                  value={ieState.freeInput}
+                  onChange={e=>setIE(s=>({...s,freeInput:e.target.value}))}
+                  onKeyDown={e=>e.key==='Enter'&&ieState.freeInput.trim()&&detectAndSelect(ieState.freeInput)}
+                />
+                <button
+                  onClick={()=>ieState.freeInput.trim()&&detectAndSelect(ieState.freeInput)}
+                  className="px-5 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all"
+                >Detect →</button>
               </div>
             </div>
-          )}
 
-          {conversationHistory.map((msg: Message, i: number) => (
-            <div key={i} className={`max-w-[680px] ${msg.role === 'user' ? 'ml-auto' : 'mx-auto'} space-y-2`}>
-              <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">
-                {msg.role === 'user' ? 'You' : 'Integration Engineer'}
-              </div>
-              <div className={`p-4 border text-sm font-body leading-relaxed whitespace-pre-wrap ${
-                msg.role === 'user'
-                  ? 'bg-bgRaised border-border text-textSecondary'
-                  : 'bg-bgRaised border-green/20 text-textSecondary'
-              }`}>
-                {msg.content}
+            {/* Hardware grid */}
+            <div className="space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Or pick your hardware</p>
+              <div className="grid grid-cols-3 gap-2">
+                {HW_GRID.map(([key, h]) => (
+                  <button key={key} onClick={()=>selectHardware(key)}
+                    className="text-left p-4 border border-border bg-bgRaised hover:border-green hover:bg-green/5 transition-all group">
+                    <div className="text-xl mb-2">{h.icon}</div>
+                    <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-green transition-colors">{h.label}</div>
+                  </button>
+                ))}
               </div>
             </div>
-          ))}
 
-          {isTyping && (
-            <div className="max-w-[680px] mx-auto space-y-2">
-              <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">Integration Engineer</div>
-              <div className="p-4 border border-green/20 bg-bgRaised flex items-center gap-3">
-                <div className="flex gap-1">
-                  {[0,1,2].map(i => (
-                    <div key={i} className="w-1.5 h-1.5 rounded-full bg-green animate-pulse" style={{ animationDelay: `${i * 150}ms` }} />
-                  ))}
+          </div>
+        </div>
+      </div>
+    );
+
+    // ── QUESTIONS ─────────────────────────────────────────────────────────────
+    if (ieState.phase === 'questions' && flow && currentQ) return (
+      <div className="pt-[52px] h-screen flex flex-col bg-void">
+        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 shrink-0">
+          <button onClick={()=>setIE(s=>({...s,phase:'welcome'}))}
+            className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← Back</button>
+          <span className="text-lg">{flow.icon}</span>
+          <span className="font-display text-sm font-bold text-white uppercase tracking-widest">{flow.label}</span>
+          <div className="ml-auto flex gap-1.5">
+            {flow.questions.map((_,i)=>(
+              <div key={i} className={`w-1.5 h-1.5 rounded-full ${i<ieState.qIndex?'bg-green':i===ieState.qIndex?'bg-white':'bg-border'}`}/>
+            ))}
+            <span className="font-mono text-[9px] text-textDim ml-2">{ieState.qIndex+1}/{flow.questions.length}</span>
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center px-6">
+          <div className="w-full max-w-[560px] space-y-6">
+            <div className="space-y-1">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Question {ieState.qIndex+1}</p>
+              <p className="font-display text-lg font-bold text-white">{currentQ.q}</p>
+            </div>
+
+            {currentQ.opts ? (
+              <div className="grid grid-cols-2 gap-2">
+                {currentQ.opts.map(opt=>(
+                  <button key={opt} onClick={()=>answerQ(opt)}
+                    className="px-4 py-3 border border-border bg-bgRaised text-left font-body text-sm text-textSecondary hover:border-green hover:text-white hover:bg-green/5 transition-all">
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <input
+                  autoFocus
+                  className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
+                  placeholder={currentQ.q}
+                  value={ieState.freeInput}
+                  onChange={e=>setIE(s=>({...s,freeInput:e.target.value}))}
+                  onKeyDown={e=>e.key==='Enter'&&ieState.freeInput.trim()&&(answerQ(ieState.freeInput.trim()),setIE(s=>({...s,freeInput:''})))}
+                />
+                <button
+                  onClick={()=>{if(ieState.freeInput.trim()){answerQ(ieState.freeInput.trim());setIE(s=>({...s,freeInput:''}));}}}
+                  className="px-5 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
+                  Next →
+                </button>
+              </div>
+            )}
+
+            {/* Previous answers */}
+            {ieState.qIndex>0 && (
+              <div className="flex flex-wrap gap-3 pt-2 border-t border-border">
+                {flow.questions.slice(0,ieState.qIndex).map(q=>(
+                  <span key={q.key} className="font-mono text-[9px] text-textDim">
+                    {q.key}: <span className="text-green">{ieState.answers[q.key]}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+
+    // ── GENERATED ─────────────────────────────────────────────────────────────
+    if (ieState.phase === 'generated') return (
+      <div className="pt-[52px] min-h-screen bg-void">
+        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 sticky top-[52px] z-10">
+          <button onClick={()=>setIE(s=>({...s,phase:'welcome'}))}
+            className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← New</button>
+          <span className="text-base">{flow?.icon}</span>
+          <span className="font-display text-xs font-bold text-green uppercase tracking-widest">✓ {flow?.label} — {ieState.files.length} files ready</span>
+          <button onClick={()=>{setTsInput(''); setIE(s=>({...s,phase:'troubleshoot',troubleshootResult:null}));}}
+            className="ml-auto px-4 py-2 border border-border font-mono text-[9px] text-textDim uppercase tracking-widest hover:border-amber hover:text-amber transition-all">
+            Help / Troubleshoot
+          </button>
+        </div>
+
+        <div className="px-6 py-6 max-w-[1100px] mx-auto">
+          <div className="grid grid-cols-2 gap-6">
+
+            {/* LEFT: Steps */}
+            <div className="space-y-1">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-3">Integration steps</p>
+              {ieState.steps.map((step,i)=>(
+                <div key={step.id} className="flex gap-3 py-3 border-b border-border/50">
+                  <button
+                    onClick={()=>setIE(s=>({...s,checklist:{...s.checklist,[step.id]:!s.checklist[step.id]}}))}
+                    className={`w-5 h-5 border flex-shrink-0 mt-0.5 flex items-center justify-center transition-all ${ieState.checklist[step.id]?'bg-green border-green':'border-border hover:border-green'}`}>
+                    {ieState.checklist[step.id]&&<span className="text-black text-[10px] font-bold">✓</span>}
+                  </button>
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-display text-xs font-bold uppercase tracking-widest transition-all ${ieState.checklist[step.id]?'text-textDim line-through':'text-white'}`}>
+                      {i+1}. {step.label}
+                    </p>
+                    <p className="font-mono text-[10px] text-textDim mt-1 whitespace-pre-line leading-relaxed">{step.detail}</p>
+                    {step.cmd && (
+                      <div className="mt-2 flex items-center gap-2 bg-bgRaised border border-border px-3 py-1.5">
+                        <code className="font-mono text-[10px] text-cyan flex-1 truncate">{step.cmd}</code>
+                        <button onClick={()=>copyText(step.cmd!,step.id)}
+                          className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest flex-shrink-0 transition-colors">
+                          {copiedId===step.id?'✓':'copy'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <span className="font-mono text-[10px] text-green uppercase tracking-widest">Generating your integration...</span>
-              </div>
-            </div>
-          )}
+              ))}
 
-          {generatedFiles.length > 0 && (
-            <div className="max-w-[680px] mx-auto space-y-3">
-              <div className="font-mono text-[9px] text-green uppercase tracking-widest">Generated files</div>
-              <div className="space-y-2">
-                {generatedFiles.map((file: GeneratedFile, i: number) => (
-                  <div key={i} className="border border-green/20 bg-bgRaised">
-                    <div className="px-4 py-2 border-b border-green/10 flex items-center justify-between">
-                      <span className="font-mono text-[10px] text-green">{file.filename}</span>
-                      <button
-                        onClick={() => {
-                          const blob = new Blob([file.content], { type: 'text/plain' });
-                          const url = URL.createObjectURL(blob);
-                          const a = document.createElement('a');
-                          a.href = url; a.download = file.filename; a.click();
-                          URL.revokeObjectURL(url);
-                        }}
-                        className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest transition-colors"
-                      >
-                        Download
-                      </button>
-                    </div>
-                    <pre className="p-4 font-mono text-[10px] text-cyan overflow-x-auto max-h-[300px] custom-scroll whitespace-pre-wrap">{file.content}</pre>
+              {/* Your config */}
+              <div className="mt-4 bg-bgRaised border border-border p-4 space-y-1.5">
+                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-2">Your configuration</p>
+                {Object.entries(ieState.answers).map(([k,v])=>(
+                  <div key={k} className="flex justify-between font-mono text-[10px]">
+                    <span className="text-textDim">{k}</span>
+                    <span className="text-green font-bold">{v}</span>
                   </div>
                 ))}
               </div>
             </div>
-          )}
+
+            {/* RIGHT: Files */}
+            <div>
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-3">Generated files</p>
+              <div className="flex gap-1 mb-3 border-b border-border pb-2">
+                {ieState.files.map((f,i)=>(
+                  <button key={i} onClick={()=>setIE(s=>({...s,activeFile:i}))}
+                    className={`px-3 py-1 font-mono text-[9px] uppercase tracking-widest transition-all ${ieState.activeFile===i?'text-green border-b-2 border-green':'text-textDim hover:text-white'}`}>
+                    {f.filename.split('/').pop()?.length||0 > 20 ? f.filename.split('/').pop()?.slice(0,18)+'…' : f.filename.split('/').pop()}
+                  </button>
+                ))}
+              </div>
+              {ieState.files[ieState.activeFile] && (
+                <>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-mono text-[9px] text-textDim">{ieState.files[ieState.activeFile].filename}</span>
+                    <div className="flex gap-2">
+                      <button onClick={()=>copyText(ieState.files[ieState.activeFile].content, `f${ieState.activeFile}`)}
+                        className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest transition-colors">
+                        {copiedId===`f${ieState.activeFile}`?'✓ copied':'copy all'}
+                      </button>
+                      <button onClick={()=>{
+                        const f=ieState.files[ieState.activeFile];
+                        const blob=new Blob([f.content],{type:'text/plain'});
+                        const url=URL.createObjectURL(blob);
+                        const a=document.createElement('a');a.href=url;a.download=f.filename;a.click();
+                        URL.revokeObjectURL(url);
+                      }} className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest transition-colors">
+                        ↓ download
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="bg-bgRaised border border-border p-4 font-mono text-[10px] text-cyan overflow-x-auto max-h-[480px] custom-scroll whitespace-pre-wrap leading-relaxed">
+                    {ieState.files[ieState.activeFile].content}
+                  </pre>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+
+    // ── TROUBLESHOOT ──────────────────────────────────────────────────────────
+    return (
+      <div className="pt-[52px] h-screen flex flex-col bg-void">
+        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 shrink-0">
+          {ieState.files.length>0
+            ? <button onClick={()=>setIE(s=>({...s,phase:'generated'}))} className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← Back to files</button>
+            : <button onClick={()=>setIE(s=>({...s,phase:'welcome'}))} className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← Start</button>
+          }
+          <span className="font-display text-sm font-bold text-white uppercase tracking-widest">Troubleshooter</span>
         </div>
 
-        {/* Input */}
-        <div className="border-t border-border bg-bg px-6 py-4 shrink-0">
-          <div className="max-w-[680px] mx-auto flex gap-3">
-            <input
-              type="text"
-              value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-              placeholder="Describe your hardware, paste an error, or ask anything..."
-              className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
-              disabled={isTyping}
-            />
-            <button
-              onClick={() => handleSendMessage()}
-              disabled={isTyping || !inputValue.trim()}
-              className="px-6 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Send
-            </button>
-          </div>
-          <div className="max-w-[680px] mx-auto mt-2">
-            <span className="font-mono text-[9px] text-textDim">PhysiCore AI · Paste errors directly · Generates real code for your exact hardware</span>
+        <div className="flex-1 overflow-y-auto custom-scroll px-6 py-6">
+          <div className="max-w-[680px] mx-auto space-y-6">
+
+            {/* Quick issue buttons */}
+            <div className="space-y-2">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Common issues — click to get exact fix</p>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['Port not found','port not found serial'],
+                  ['IMU not responding','imu pitch not changing zero'],
+                  ['Bot jittery','bot jittery oscillating'],
+                  ["Bot won't balance",'bot not balancing falling'],
+                  ['Dashboard not connecting','dashboard not connecting ws fail'],
+                  ...(ieState.hw&&['ros2_arm','humanoid','legged','auv'].includes(ieState.hw) ? [['ROS2 topic missing','ros2 topic not found']] : []),
+                  ...(ieState.hw&&['px4','ardupilot','evtol'].includes(ieState.hw) ? [['MAVLink heartbeat timeout','mavlink no heartbeat']] : []),
+                ].map(([label,query])=>(
+                  <button key={label} onClick={()=>checkTroubleshoot(query as string)}
+                    className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim hover:border-amber hover:text-amber uppercase tracking-widest transition-all">
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Result */}
+            {ieState.troubleshootResult && (
+              <div className="border border-green/30 bg-bgRaised p-5 space-y-4">
+                <p className="font-display text-sm font-bold text-green uppercase tracking-widest">{ieState.troubleshootResult.title}</p>
+                {ieState.troubleshootResult.steps.map((s,i)=>(
+                  <div key={i} className="space-y-1.5">
+                    <p className="font-mono text-[10px] text-textSecondary font-bold">{s.label}</p>
+                    <div className="flex items-center gap-2 bg-bg border border-border px-3 py-2">
+                      <code className="font-mono text-[10px] text-cyan flex-1">{s.cmd}</code>
+                      <button onClick={()=>copyText(s.cmd,`ts${i}`)}
+                        className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest flex-shrink-0 transition-colors">
+                        {copiedId===`ts${i}`?'✓':'copy'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Freetext */}
+            <div className="space-y-2">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Or describe your problem</p>
+              <div className="flex gap-3">
+                <input
+                  className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
+                  placeholder="Describe exactly what you see — error message, what LED does, what terminal shows..."
+                  value={tsInput}
+                  onChange={e=>setTsInput(e.target.value)}
+                  onKeyDown={e=>{if(e.key==='Enter'&&tsInput.trim()){checkTroubleshoot(tsInput);setTsInput('');}}}
+                />
+                <button onClick={()=>{if(tsInput.trim()){checkTroubleshoot(tsInput);setTsInput('');}}}
+                  className="px-5 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
+                  Diagnose
+                </button>
+              </div>
+              <p className="font-mono text-[9px] text-textDim">Hardware context: {flow?.label||'none'} {ieState.answers.imu||ieState.answers.distro||''}</p>
+            </div>
           </div>
         </div>
       </div>
     );
   };
 
-  const renderTeam = () => {
+
+    const renderTeam = () => {
     return (
       <div className="pt-[52px] min-h-screen bg-bg flex items-center justify-center p-6">
         <div className="max-w-[800px] w-full text-center space-y-12">
