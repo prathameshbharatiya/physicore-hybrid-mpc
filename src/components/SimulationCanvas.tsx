@@ -156,6 +156,7 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
       });
     }, 32);
 
+    let overlayReq: number;
     const drawOverlay = () => {
       const ctx = canvasRef.current?.getContext('2d');
       if (!ctx || !robotRef.current) return;
@@ -201,13 +202,14 @@ const SimulationCanvas: React.FC<SimulationCanvasProps> = ({ mode, onStateUpdate
       ctx.fill();
       ctx.restore();
 
-      requestAnimationFrame(drawOverlay);
+      overlayReq = requestAnimationFrame(drawOverlay);
     };
-    const overlayReq = requestAnimationFrame(drawOverlay);
+    overlayReq = requestAnimationFrame(drawOverlay);
 
     return () => {
       clearInterval(controlLoop);
       cancelAnimationFrame(overlayReq);
+      Matter.Runner.stop(runner);
       Matter.Engine.clear(engine);
       Matter.Render.stop(render);
     };

@@ -2,12 +2,26 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SimState, MetaAnalysisResponse } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiInstance: GoogleGenAI | null = null;
+function getAI() {
+  if (!aiInstance) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      console.warn("GEMINI_API_KEY missing in service");
+      return null;
+    }
+    aiInstance = new GoogleGenAI({ apiKey: key });
+  }
+  return aiInstance;
+}
 
 export const performMetaAnalysis = async (
   state: SimState,
   history: SimState[]
 ): Promise<MetaAnalysisResponse> => {
+  const ai = getAI();
+  if (!ai) throw new Error("GEMINI_API_KEY_MISSING");
+  
   const prompt = `
     System: You are the "PhysiCore Meta-Analyst".
     Role: Interpret telemetry and diagnostics from a model-based predictive control (MPC) system.

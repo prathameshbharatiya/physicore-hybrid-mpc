@@ -359,10 +359,25 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Lazy initializer for Gemini
+let aiInstance: GoogleGenAI | null = null;
+function getAI() {
+  if (!aiInstance) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      console.warn("GEMINI_API_KEY is missing. AI features will be unavailable.");
+      return null;
+    }
+    aiInstance = new GoogleGenAI({ apiKey: key });
+  }
+  return aiInstance;
+}
 
 async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
+    const ai = getAI();
+    if (!ai) return { success: false, error: 'NO_KEY', message: 'API Key missing' };
+    
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: userPrompt,
@@ -2442,6 +2457,18 @@ export default function App() {
 
 function AppContent() {
   const [user, loading, error] = useAuthState(auth);
+  const [forceProceed, setForceProceed] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loading) {
+        console.warn("Auth state loading timed out. Forcing proceed.");
+        setForceProceed(true);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
   const isAuthorized = user?.email ? BETA_TESTERS.includes(user.email) : false;
@@ -2495,7 +2522,6 @@ function AppContent() {
     }
     
     setIsBootstrapping(false);
-    alert(`Team authorization complete. ${addedCount} new members added.`);
   };
 
   const handleRemoveUser = async (userId: string) => {
@@ -3189,9 +3215,14 @@ function AppContent() {
     const reveals = document.querySelectorAll('.reveal');
     reveals.forEach(r => revealObserver.observe(r));
 
+    const revealTimeout = setTimeout(() => {
+      document.querySelectorAll('.reveal:not(.active)').forEach(el => el.classList.add('active'));
+    }, 2000);
+
     return () => {
       observer.disconnect();
       revealObserver.disconnect();
+      clearTimeout(revealTimeout);
     };
   }, [view, loading, checkingAccess]);
 
@@ -5963,13 +5994,25 @@ max_torque: 2.5`}</Code>
   );
 };
 
-  if (loading || checkingAccess) {
+  if ((loading && !forceProceed) || checkingAccess) {
     return (
-      <div className="h-screen w-full bg-void flex items-center justify-center">
+      <div className="h-screen w-full bg-void flex flex-col items-center justify-center gap-6 p-6">
         <div className="flex flex-col items-center gap-4">
           <Cpu className="text-green animate-spin-slow" size={48} />
-          <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
+          <span className="font-mono text-xs text-green uppercase tracking-widest animate-pulse">Verifying Neural Handshake...</span>
         </div>
+        
+        {loading && (
+          <motion.button
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 3 }}
+            onClick={() => setForceProceed(true)}
+            className="mt-8 px-6 py-2 border border-border/40 font-mono text-[10px] text-textSecondary hover:text-white transition-all uppercase tracking-widest"
+          >
+            Force Bypass Initialization
+          </motion.button>
+        )}
       </div>
     );
   }
@@ -6203,6 +6246,8 @@ const HeroCanvas = () => {
     window.addEventListener('resize', resize);
     resize();
 
+    let requestRef = { current: 0 };
+
     const animate = () => {
       frame++;
       ctx.fillStyle = COLORS.void;
@@ -6252,11 +6297,14 @@ const HeroCanvas = () => {
       ctx.stroke();
       ctx.restore();
 
-      requestAnimationFrame(animate);
+      requestRef.current = requestAnimationFrame(animate);
     };
 
-    animate();
-    return () => window.removeEventListener('resize', resize);
+    requestRef.current = requestAnimationFrame(animate);
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(requestRef.current);
+    };
   }, []);
 
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
@@ -6283,6 +6331,7 @@ const AviationTrajectoryCanvas = ({ state, params, isRunning, setIsRunning, isCo
     resize();
 
     let frame = 0;
+    let animId: number;
     const animate = () => {
       frame++;
       ctx.fillStyle = COLORS.bgInset;
@@ -6321,10 +6370,10 @@ const AviationTrajectoryCanvas = ({ state, params, isRunning, setIsRunning, isCo
       ctx.fillText(`ALT: ${state.y.toFixed(0)}m`, 20, 30);
       ctx.fillText(`SPD: ${Math.sqrt(state.vx**2 + state.vy**2).toFixed(1)}m/s`, 20, 45);
 
-      requestAnimationFrame(animate);
+      animId = requestAnimationFrame(animate);
     };
 
-    const animId = requestAnimationFrame(animate);
+    animId = requestAnimationFrame(animate);
     return () => {
       window.removeEventListener('resize', resize);
       cancelAnimationFrame(animId);
@@ -6363,6 +6412,7 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
     if (!ctx) return;
 
     const state = stateRef.current;
+    let animId: number;
     state.robot = { x: canvas.width / 2, y: canvas.height / 2, vx: 0, vy: 0 };
     state.target = { x: canvas.width / 2, y: canvas.height / 2 };
 
@@ -6481,7 +6531,7 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
         ctx.setLineDash([]);
 
-        requestAnimationFrame(animate);
+        animId = requestAnimationFrame(animate);
         return;
       }
 
@@ -6513,7 +6563,7 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
           ctx.fillStyle = COLORS.textDim;
           ctx.font = '10px "JetBrains Mono"';
           ctx.fillText('Check bridge is running and sending data', canvas.width / 2, canvas.height / 2 + 20);
-          requestAnimationFrame(animate);
+          animId = requestAnimationFrame(animate);
           return;
         }
         state.target = t.targetPos || state.target;
@@ -6597,11 +6647,14 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         effortHistory:      state.effortHistory,
       }));
 
-      requestAnimationFrame(animate);
+      animId = requestAnimationFrame(animate);
     };
 
-    animate();
-    return () => window.removeEventListener('resize', resize);
+    animId = requestAnimationFrame(animate);
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animId);
+    };
   }, [isConnected]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
