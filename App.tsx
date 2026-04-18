@@ -410,7 +410,7 @@ interface Message {
 interface GeneratedFile {
   filename: string;
   content: string;
-  extension: string;
+  extension?: string;
 }
 
 // --- UTILS ---
@@ -2416,6 +2416,7 @@ function physi_integrate(
     setSystemProfile?: (fn: (prev: any) => any) => void;
     setConnectionMode?: (m: any) => void;
     setEndpoint?: (e: string) => void;
+    setTelemetry?: (fn: any) => void;
   }
 ): string {
   // This is only called for troubleshooting freetext now
@@ -2520,9 +2521,10 @@ function AppContent() {
     }
   }, [isAdmin]);
 
+  const bootstrappedRef = useRef(false);
   useEffect(() => {
-    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user) {
-      // Auto-bootstrap team if empty and we are admin
+    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user && !bootstrappedRef.current) {
+      bootstrappedRef.current = true;
       bootstrapTeam();
     }
   }, [isAdmin, allUsers.length, isBootstrapping, user]);
