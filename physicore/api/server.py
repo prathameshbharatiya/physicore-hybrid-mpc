@@ -480,6 +480,245 @@ async def registry_convergence(platform: str):
     }
 
 
+
+# ── Intelligence Layer ─────────────────────────────────────────────────────────
+# All AI calls go through here. One key (yours), no user rate limits.
+# Frontend calls these endpoints — never calls Gemini/Anthropic directly.
+
+import os
+import re as _re
+
+_SESSION_BUFFER: list = []       # rolling 20-snapshot session context
+_SESSION_BUFFER_MAX = 20
+
+def _update_session_buffer(engine) -> None:
+    """Call every ~100 steps from the control loop."""
+    try:
+        d   = engine.diagnostics_full
+        nar = engine.narrate()
+        snap = {
+            "ts":          time.time(),
+            "step":        d["step_count"],
+            "residual":    round(d["residual_norm"], 4),
+            "uncertainty": round(d["uncertainty"], 4),
+            "params":      {k: round(v, 4) for k, v in d["params"].items()},
+            "innovation":  round(d["innovation_ema"], 4),
+            "status":      nar["status"],
+            "headline":    nar["headline"],
+            "failures":    d["failure_summary"].get("total_events", 0),
+            "hash":        d["hash_chain_head"][:8],
+        }
+        _SESSION_BUFFER.append(snap)
+        if len(_SESSION_BUFFER) > _SESSION_BUFFER_MAX:
+            _SESSION_BUFFER.pop(0)
+    except Exception:
+        pass
+
+
+def _call_gemini(system: str, user: str) -> str:
+    """Call Gemini Flash. Falls back to deterministic narration if key missing."""
+    try:
+        import google.generativeai as genai
+        key = os.environ.get("GEMINI_API_KEY", "")
+        if not key:
+            raise RuntimeError("no_key")
+        genai.configure(api_key=key)
+        model = genai.GenerativeModel(
+            model_name="gemini-2.0-flash",
+            system_instruction=system,
+        )
+        resp = model.generate_content(user)
+        return resp.text.strip()
+    except Exception as e:
+        # Graceful fallback — never crash
+        if engine_state.engine:
+            nar = engine_state.engine.narrate()
+            return f"{nar['headline']}\n\n{nar['detail']}\n\nRecommendation: {nar['action']}"
+        return "Engine not running — start the bridge first."
+
+
+class IntelligenceAnalyzeRequest(BaseModel):
+    context: Optional[str] = None   # extra context from frontend
+
+class IntelligenceTroubleshootRequest(BaseModel):
+    problem: str
+    hw_type: str = ""
+    hw_answers: dict = {}
+    session_snapshot: Optional[dict] = None
+
+
+@app.get("/api/intelligence/narrate")
+async def get_narration():
+    """
+    Deterministic plain-English engine narration.
+    No API key required. Always works.
+    """
+    engine = require_engine()
+    return engine.narrate()
+
+
+@app.get("/api/intelligence/session")
+async def get_session_context():
+    """Rolling 20-snapshot session buffer for IE live context."""
+    return {
+        "snapshots":  _SESSION_BUFFER,
+        "count":      len(_SESSION_BUFFER),
+        "has_data":   len(_SESSION_BUFFER) > 0,
+    }
+
+
+@app.post("/api/intelligence/analyze")
+async def intelligence_analyze(req: IntelligenceAnalyzeRequest):
+    """
+    Meta-analyst: interprets live session data.
+    Routes through backend — one API key, no user-facing rate limits.
+    Falls back to narrate() if key missing.
+    """
+    engine = require_engine()
+    d   = engine.diagnostics_full
+    nar = engine.narrate()
+
+    # Build rich context from real engine state
+    buf_summary = ""
+    if _SESSION_BUFFER:
+        res_trend = [s["residual"] for s in _SESSION_BUFFER[-10:]]
+        mass_vals = [s["params"].get("mass", 0) for s in _SESSION_BUFFER[-10:]]
+        buf_summary = (
+            f"Last {len(_SESSION_BUFFER)} snapshots: "
+            f"residual {res_trend[0]:.3f}→{res_trend[-1]:.3f} "
+            f"({'RISING' if res_trend[-1] > res_trend[0] else 'FALLING'}), "
+            f"mass {mass_vals[0]:.3f}→{mass_vals[-1]:.3f}"
+        )
+
+    system_prompt = """You are the PhysiCore Meta-Analyst — an expert in real-time physics adaptation and sim-to-real robotics.
+Interpret the telemetry data precisely. Use technical robotics language.
+Return a JSON object with exactly these fields:
+  insight: string (1-2 sentences, what is happening physically)
+  diagnostics: array of strings (2-4 specific observations about the numbers)
+  recommendation: string (one concrete action the operator should take now)
+  q_weight: number (suggested MPC Q weight, 0.1-20.0)
+  r_weight: number (suggested MPC R weight, 0.01-5.0)
+No prose outside the JSON. No markdown. Just the JSON object."""
+
+    user_prompt = f"""Current PhysiCore session:
+
+NARRATION: {nar['status']} — {nar['headline']}
+DETAIL: {nar['detail']}
+
+LIVE METRICS:
+  residual_norm:  {d['residual_norm']:.4f}
+  uncertainty:    {d['uncertainty']:.4f}
+  mass:           {d['params'].get('mass',0):.3f} kg
+  friction:       {d['params'].get('friction',0):.4f}
+  innovation_ema: {d['innovation_ema']:.4f}
+  step_count:     {d['step_count']}
+  sysid_trend:    {d['sysid_loss_hist'][-5:] if d['sysid_loss_hist'] else 'no data'}
+  faults:         {d['failure_summary'].get('total_events',0)} total, recent: {d['failure_summary'].get('recent_10',[])}
+
+SESSION TREND: {buf_summary if buf_summary else 'insufficient data (<100 steps)'}
+
+{f"ADDITIONAL CONTEXT: {req.context}" if req.context else ""}
+
+Analyze this and return JSON."""
+
+    raw = _call_gemini(system_prompt, user_prompt)
+
+    # Try to parse JSON — fallback to structured response
+    try:
+        # strip markdown fences if present
+        clean = _re.sub(r'```[a-z]*\n?|```', '', raw).strip()
+        parsed = json.loads(clean)
+        return {
+            "insight":        parsed.get("insight", nar["headline"]),
+            "diagnostics":    parsed.get("diagnostics", [nar["detail"]]),
+            "recommendation": parsed.get("recommendation", nar["action"]),
+            "q_weight":       float(parsed.get("q_weight", 1.0)),
+            "r_weight":       float(parsed.get("r_weight", 0.1)),
+            "status":         nar["status"],
+            "metrics":        nar["metrics"],
+            "source":         "gemini",
+        }
+    except Exception:
+        return {
+            "insight":        nar["headline"],
+            "diagnostics":    [nar["detail"]],
+            "recommendation": nar["action"],
+            "q_weight":       1.0,
+            "r_weight":       0.1,
+            "status":         nar["status"],
+            "metrics":        nar["metrics"],
+            "source":         "narrate_fallback",
+        }
+
+
+@app.post("/api/intelligence/troubleshoot")
+async def intelligence_troubleshoot(req: IntelligenceTroubleshootRequest):
+    """
+    Troubleshooter: answers hardware questions with full session context.
+    Routes through backend. Falls back to local logic if no key.
+    """
+    # Build session context if available
+    session_ctx = ""
+    if req.session_snapshot:
+        snap = req.session_snapshot
+        session_ctx = f"""
+LIVE SESSION (step {snap.get('steps', 0)}):
+  Sentinel: {snap.get('sentinelMode','UNKNOWN')}
+  Mass: {snap.get('mass',{}).get('current','?')}kg (declared {snap.get('mass',{}).get('declared','?')}kg, {snap.get('mass',{}).get('driftPct','?')}% drift)
+  Residual: {snap.get('residual',{}).get('current','?')} trend={snap.get('residual',{}).get('trend','?')}
+  Residual history: {snap.get('residual',{}).get('history',[])}
+  Stable: {snap.get('isStable','?')}, Faulted: {snap.get('isFaulted','?')}
+  Pitch: {snap.get('pitch','?')}°, MotorL: {snap.get('motorL','?')}, MotorR: {snap.get('motorR','?')}"""
+
+    engine_ctx = ""
+    if engine_state.engine and _SESSION_BUFFER:
+        last = _SESSION_BUFFER[-1]
+        engine_ctx = f"""
+ENGINE STATE (step {last['step']}):
+  Status: {last['status']} — {last['headline']}
+  Residual: {last['residual']}, Uncertainty: {last['uncertainty']}
+  Params: {last['params']}
+  Recent faults: {last['failures']} total"""
+
+    system_prompt = """You are the PhysiCore Integration Engineer — expert troubleshooter.
+You have real hardware session data. Give precise, numbered steps.
+Each step must have a concrete command or action — no vague advice.
+Maximum 6 steps. Be direct. The user is watching a live system."""
+
+    user_prompt = f"""Hardware: {req.hw_type}
+Setup answers: {json.dumps(req.hw_answers)}
+{session_ctx}
+{engine_ctx}
+
+Problem: {req.problem}
+
+Give exact numbered steps to fix this."""
+
+    raw = _call_gemini(system_prompt, user_prompt)
+
+    # Parse into steps
+    lines = [l.strip() for l in raw.split("\n") if l.strip()]
+    steps = []
+    for line in lines[:10]:
+        # Extract code/commands from backticks
+        cmd_match = _re.search(r'`([^`]+)`', line)
+        cmd = cmd_match.group(1) if cmd_match else ""
+        label = _re.sub(r'^\d+\.\s*', '', line)[:120]
+        if label:
+            steps.append({"label": label, "cmd": cmd})
+
+    if not steps:
+        steps = [{"label": raw[:200], "cmd": ""}]
+
+    return {
+        "title": f"Diagnosis — {'live session data used' if req.session_snapshot else 'static context'}",
+        "steps": steps,
+        "raw":   raw,
+        "source": "gemini" if os.environ.get("GEMINI_API_KEY") else "local",
+    }
+
+
+
 # ── Sentinel endpoints ─────────────────────────────────────────────────────────
 
 class SentinelStepRequest(BaseModel):

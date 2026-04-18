@@ -405,6 +405,14 @@ def _update_engine_state(step):
     d = engine.diagnostics_full
     state.residual_norm        = d.get('residual_norm', 0.0)
     state.uncertainty          = d.get('uncertainty', 0.0)
+
+    # Feed session buffer for intelligence layer
+    try:
+        from physicore.api.server import _update_session_buffer
+        if state.step_count % 100 == 0:
+            _update_session_buffer(engine)
+    except Exception:
+        pass
     state.estimated_mass       = d['params'].get('mass', 0.0)
     state.estimated_friction   = d['params'].get('friction', 0.0)
     state.step_count           = d.get('step_count', 0)

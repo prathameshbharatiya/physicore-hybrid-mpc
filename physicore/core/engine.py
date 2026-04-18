@@ -593,6 +593,7 @@ class PhysiCore:
         self._step_count=0
         self._last_action=self._last_state=self._last_sim_pred=None
         self._smoothed_action=None
+        self._initial_params=initial_params.copy() if initial_params else {}
 
     @classmethod
     def for_platform(cls, platform, initial_params=None, Q=None, R=None,
@@ -677,6 +678,111 @@ class PhysiCore:
             "action_dim":      self.cfg.action_dim,
             "failure_summary": self.failure_log.summary(),  # NEW: structured failure log
             "hash_chain_head": self.hash_chain._prev,        # NEW: forensic cert
+        }
+
+
+    def narrate(self) -> dict:
+        """
+        Deterministic plain-English interpretation of current engine state.
+        No API. No rate limits. Always works. Updates every step.
+
+        Returns:
+            {
+              "status": "NOMINAL" | "CONVERGING" | "ELEVATED" | "FAULT",
+              "headline": one-sentence summary,
+              "detail": two-sentence technical detail,
+              "action": what the operator should do right now,
+              "metrics": key numbers that drove this narrative
+            }
+        """
+        d = self.diagnostics_full
+        res       = d["residual_norm"]
+        unc       = d["uncertainty"]
+        steps     = d["step_count"]
+        params    = d["params"]
+        mass      = params.get("mass", 1.0)
+        friction  = params.get("friction", 0.15)
+        hist      = d["sysid_loss_hist"]
+        fail_sum  = d["failure_summary"]
+        inno      = d["innovation_ema"]
+
+        # Trend from SysID loss history
+        converging = False
+        if len(hist) >= 5:
+            converging = hist[-1] < hist[0] * 0.9  # at least 10% drop
+
+        # Mass convergence - compare against initial
+        init_mass = list(self._initial_params.values())[0] if hasattr(self, '_initial_params') else mass
+        mass_drift_pct = abs(mass - init_mass) / max(abs(init_mass), 0.01) * 100
+
+        # Classify status
+        if res > 0.80 or unc > 0.15:
+            status = "FAULT"
+            headline = f"System residual critically high ({res:.3f}) — model is significantly wrong about your hardware."
+            detail   = (
+                f"Uncertainty {unc:.4f} exceeds safe operating threshold. "
+                f"Sentinel is likely in CAUTIOUS or FALLBACK mode. "
+                f"Check for sudden payload changes, sensor noise, or wiring issues."
+            )
+            action = "Check hardware connections. Verify IMU is sending valid data. If mass changed, restart session."
+        elif res > 0.30 or unc > 0.05:
+            status = "ELEVATED"
+            headline = f"Residual elevated ({res:.3f}) — model adapting to gap between simulation and hardware."
+            detail   = (
+                f"This is {'normal during early convergence' if steps < 300 else 'above expected for this stage'}. "
+                f"Innovation EMA {inno:.4f} — {'high, fast adaptation in progress' if inno > 0.5 else 'settling, adaptation slowing'}."
+            )
+            action = "Continue running. If residual does not drop within 30 seconds, check BALANCE_POINT calibration."
+        elif steps < 100:
+            status = "CONVERGING"
+            headline = f"Session starting — {steps} steps in, mass estimate at {mass:.3f}kg."
+            detail   = (
+                f"SystemID has not yet gathered enough data to converge. "
+                f"Let the robot move freely for 30 seconds — residual will drop as the model learns your hardware."
+            )
+            action = "Keep robot moving. Do not change settings yet."
+        elif converging:
+            status = "CONVERGING"
+            headline = f"Model converging — residual {res:.4f} falling, mass {mass:.3f}kg."
+            detail   = (
+                f"SysID loss dropped {((hist[0]-hist[-1])/max(hist[0],1e-9)*100):.1f}% in the last {len(hist)*10} steps. "
+                f"Mass estimate drifted {mass_drift_pct:.1f}% from initial prior."
+            )
+            action = "System nominal. Watch residual — if it rises, check for payload change or surface change."
+        else:
+            status = "NOMINAL"
+            headline = f"Model converged — residual {res:.4f}, mass {mass:.3f}kg, friction {friction:.4f}."
+            detail   = (
+                f"PhysiCore has learned your hardware's real physics. "
+                f"Registry will save these parameters at session end so next session starts here."
+            )
+            action = "Nominal. Registry will save learned params on Ctrl+C."
+
+        # Override if failures logged
+        fail_count = fail_sum.get("total_events", 0)
+        if fail_count > 0:
+            last_10 = fail_sum.get("recent_10", [])
+            critical = [e for e in last_10 if e.get("severity") == "CRITICAL"]
+            if critical:
+                status = "FAULT"
+                headline = f"CRITICAL fault: {critical[-1].get('type','UNKNOWN')} — {critical[-1].get('description','')}"
+                action = "Disable ACTIVE CONTROL. Check hardware immediately."
+
+        return {
+            "status":   status,
+            "headline": headline,
+            "detail":   detail,
+            "action":   action,
+            "metrics": {
+                "residual":   round(res, 4),
+                "uncertainty": round(unc, 4),
+                "mass":        round(mass, 3),
+                "friction":    round(friction, 4),
+                "steps":       steps,
+                "converging":  converging,
+                "innovation":  round(inno, 4),
+                "faults":      fail_count,
+            }
         }
 
 

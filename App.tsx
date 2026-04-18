@@ -360,12 +360,13 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
 };
 
 // Lazy initializer for Gemini
+// Key is read from Vite env (VITE_GEMINI_API_KEY in Vercel environment variables)
 let aiInstance: GoogleGenAI | null = null;
-function getAI() {
+function getAI(): GoogleGenAI | null {
   if (!aiInstance) {
-    const key = process.env.GEMINI_API_KEY;
+    const key = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
     if (!key) {
-      console.warn("GEMINI_API_KEY is missing. AI features will be unavailable.");
+      // No key — AI features degrade gracefully to local narration
       return null;
     }
     aiInstance = new GoogleGenAI({ apiKey: key });
@@ -378,7 +379,7 @@ async function callGemini(systemPrompt: string, userPrompt: string) {
     const ai = getAI();
     if (!ai) return { success: false, error: 'NO_KEY', message: 'API Key missing' };
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.0-flash",
       contents: userPrompt,
       config: {
         systemInstruction: systemPrompt,
@@ -2713,6 +2714,7 @@ function AppContent() {
           current: nextState,
           estimatedParams: updatedParams,
           predictionError,
+          controlEffort: Math.sqrt(action.reduce((s:number,v:number)=>s+v*v,0)),
           controlAction: action,
           uncertainty: ensembleUncertainty,
           stability,
@@ -2724,31 +2726,126 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [isControlActive, view, mpcWeights]);
 
-  // --- Meta-Analyst Loop ---
+  // ── Meta-Analyst Loop ──────────────────────────────────────────────────────
+  // Tier 1: Gemini direct (VITE_GEMINI_API_KEY in Vercel env vars) — AI insight
+  // Tier 2: Local TypeScript narration — deterministic, no key, always works
+  // Never calls localhost. Never silently fails. Degrades gracefully.
   useEffect(() => {
     if (!isControlActive || view !== 'dashboard') return;
 
-    const interval = setInterval(async () => {
+    // ── Local TypeScript narrate() — deterministic, no API ──────────────────
+    // Mirrors the Python engine narrate() but runs in the browser
+    function localNarrate(): string {
+      if (isSystemConnected) {
+        // Real hardware connected — use live telemetry
+        const res  = telemetry.residual  || 0;
+        const mass = telemetry.mass      || 0;
+        const unc  = telemetry.variance  || 0;
+        const steps = telemetry.step_count || 0;
+        const isFault = telemetry.isFaulted;
+        const isStable = telemetry.isStable;
+
+        if (isFault || res > 0.80 || unc > 0.15) {
+          return `> META-ANALYST: ⚠ Residual critically high (${res.toFixed(3)}) — model is significantly wrong about your hardware.
+
+Check: IMU wiring, BALANCE_POINT calibration, and whether mass changed during the session.
+
+Action: Disable ACTIVE CONTROL, verify sensor data, restart session.`;
+        }
+        if (!isStable || res > 0.30) {
+          return `> META-ANALYST: Residual elevated (${res.toFixed(3)}) — model is adapting to real hardware.
+
+Mass estimate: ${mass.toFixed(3)}kg. ${steps < 300 ? 'Normal during early convergence — let it run for 30 seconds.' : 'Above expected for this stage — check BALANCE_POINT.'}
+
+Action: ${steps < 300 ? 'Keep running.' : 'Check IMU calibration if residual does not drop.'}`;
+        }
+        return `> META-ANALYST: System nominal ✓
+
+Residual: ${res.toFixed(4)} | Mass: ${mass.toFixed(3)}kg | Steps: ${steps}
+PhysiCore has learned your hardware's real physics. Registry will save these params on session end.
+
+Action: Continue operating. Watch for residual spikes that may indicate payload changes.`;
+      } else {
+        // Simulation mode — use simState
+        const err  = simState.predictionError;
+        const mass = simState.estimatedParams.mass;
+        const fric = simState.estimatedParams.friction;
+        const stab = simState.stability;
+        if (err > 0.01) {
+          return `> META-ANALYST: Simulation residual elevated (${err.toFixed(5)}) — SysID adapting.
+
+Mass estimate: ${mass.toFixed(3)}kg, friction: ${fric.toFixed(3)}. Stability: ${stab.toFixed(0)}%.
+
+Action: ${stab < 50 ? 'Consider increasing Q weight for tighter tracking.' : 'Model converging normally.'}`;
+        }
+        return `> META-ANALYST: Simulation nominal ✓
+
+Mass: ${mass.toFixed(3)}kg | Friction: ${fric.toFixed(3)} | Stability: ${stab.toFixed(0)}%
+Connect hardware to run PhysiCore on your real robot.
+
+Action: Click MAVLINK → ws://localhost:8765 → Connect.`;
+      }
+    }
+
+    const runAnalysis = async () => {
       setIsMetaAnalyzing(true);
       try {
-        const result = await performMetaAnalysis(simState, []);
-        setMetaAnalysis(result);
-        // Apply suggested tweaks if they are reasonable
-        if (result.suggestedCostTweaks) {
-          setMpcWeights({
-            q: result.suggestedCostTweaks.q_weight,
-            r: result.suggestedCostTweaks.r_weight
-          });
-        }
-      } catch (e) {
-        console.error("Meta-analysis failed", e);
-      } finally {
-        setIsMetaAnalyzing(false);
-      }
-    }, 15000); // Every 15 seconds
+        // Tier 1: Gemini AI — builds rich context from live state
+        const ai = getAI();
+        if (ai) {
+          const hwCtx = isSystemConnected
+            ? `HARDWARE CONNECTED (step ${telemetry.step_count}):
+  residual=${telemetry.residual?.toFixed(4)} trend=${(telemetry.residualHistory||[]).slice(-5).map((p:any)=>p.y?.toFixed(3)).join(',')}
+  mass=${telemetry.mass?.toFixed(3)}kg friction=${telemetry.friction?.toFixed(4)}
+  uncertainty=${telemetry.variance?.toFixed(4)} stable=${telemetry.isStable} faulted=${telemetry.isFaulted}
+  motor_l=${telemetry.motor_l?.toFixed(2)} motor_r=${telemetry.motor_r?.toFixed(2)}
+  pitch=${telemetry.pitch?.toFixed(2)}°`
+            : `SIMULATION MODE:
+  predictionError=${simState.predictionError.toFixed(5)} controlEffort=${simState.controlEffort.toFixed(3)}
+  mass=${simState.estimatedParams.mass.toFixed(3)} friction=${simState.estimatedParams.friction.toFixed(3)}
+  stability=${simState.stability.toFixed(0)}% uncertainty=${simState.uncertainty.toFixed(4)}`;
 
+          const resp = await ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents: `${hwCtx}
+
+Analyze this PhysiCore session. Return 2-3 sentences: what is happening physically, one specific recommendation. Plain text only, prefix with > META-ANALYST:`,
+            config: { systemInstruction: 'You are the PhysiCore Meta-Analyst. Interpret robotics telemetry with precision. Be concise and technical.' }
+          });
+          const text = resp.text?.trim();
+          if (text) {
+            setMetaAnalysisResult(text.startsWith('> META-ANALYST') ? text : `> META-ANALYST: ${text}`);
+
+            // Also try to get Q/R suggestions in a second fast call
+            try {
+              const tuneResp = await ai.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: `PhysiCore MPC tuning. Current: residual=${isSystemConnected ? telemetry.residual?.toFixed(4) : simState.predictionError.toFixed(5)}, stability=${isSystemConnected ? telemetry.isStable : simState.stability > 80}. Current Q=${mpcWeights.q} R=${mpcWeights.r}. Reply with only two numbers separated by comma: suggested_q,suggested_r (ranges: q=0.1-20, r=0.01-5)`,
+                config: { systemInstruction: 'Return only two numbers separated by a comma. Nothing else.' }
+              });
+              const nums = tuneResp.text?.trim().split(',').map(Number);
+              if (nums && nums.length === 2 && !isNaN(nums[0]) && !isNaN(nums[1])) {
+                const q = Math.min(20, Math.max(0.1, nums[0]));
+                const r = Math.min(5, Math.max(0.01, nums[1]));
+                setMpcWeights({ q, r });
+                setMetaAnalysis({ insight: text, diagnostics: [text], suggestedCostTweaks: { q_weight: q, r_weight: r } });
+              }
+            } catch (_) {}
+            return;
+          }
+        }
+      } catch (_geminiErr) {
+        // Gemini unavailable — fall through to local narration
+      }
+
+      // Tier 2: Local deterministic narration — always works, no API
+      setMetaAnalysisResult(localNarrate());
+    };
+
+    runAnalysis();
+    const interval = setInterval(runAnalysis, 20000);
     return () => clearInterval(interval);
-  }, [isControlActive, view, simState]);
+  }, [isControlActive, view, isSystemConnected, telemetry.step_count]);
 
   const handleLogin = async () => {
     if (isLoggingIn) return;
@@ -3131,14 +3228,40 @@ function AppContent() {
         - Prefix with '> META-ANALYST:'.
       `;
 
-      const result = await callGemini(
-        "You are the PhysiCore Meta-Analyst. Analyze robotics telemetry and provide concise diagnostic insights. Return plain text — short paragraphs only, no JSON, no code blocks.",
-        `Analyze this system state: ${JSON.stringify(telemetry)}. History length: ${conversationHistory.length}. Give 2-3 sentences on what is happening and one recommendation.`
-      );
-      
-      if (result.success) {
-        setMetaAnalysisResult(result.text || "NO_DATA_RECEIVED");
+      // Tier 1: Gemini AI with full hardware telemetry context
+      const ai = getAI();
+      if (ai) {
+        try {
+          const ctx = `PHYSICORE LIVE HARDWARE SESSION:
+  step=${telemetry.step_count} mass=${telemetry.mass?.toFixed(3)}kg friction=${telemetry.friction?.toFixed(4)}
+  residual=${telemetry.residual?.toFixed(4)} uncertainty=${telemetry.variance?.toFixed(4)}
+  stable=${telemetry.isStable} faulted=${telemetry.isFaulted}
+  pitch=${telemetry.pitch?.toFixed(2)}° motor_l=${telemetry.motor_l?.toFixed(2)} motor_r=${telemetry.motor_r?.toFixed(2)}
+  residual_trend=${(telemetry.residualHistory||[]).slice(-8).map((p:any)=>p.y?.toFixed(3)).join(',')}`;
+          const resp = await ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents: `${ctx}
+
+Analyze this. 2-3 sentences: what is happening physically, one concrete recommendation. Prefix with > META-ANALYST:`,
+            config: { systemInstruction: 'You are the PhysiCore Meta-Analyst. Be precise and technical. Plain text only.' }
+          });
+          const text = resp.text?.trim();
+          if (text) {
+            setMetaAnalysisResult(text.startsWith('> META-ANALYST') ? text : `> META-ANALYST: ${text}`);
+            return;
+          }
+        } catch (_gemErr) {}
       }
+      // Tier 2: Local deterministic narration — always works
+      const res = telemetry.residual || 0;
+      const mass = telemetry.mass || 0;
+      const steps = telemetry.step_count || 0;
+      const localMsg = res > 0.8
+        ? `> META-ANALYST: ⚠ Residual critically high (${res.toFixed(3)}) — check IMU wiring and BALANCE_POINT.`
+        : res > 0.3
+        ? `> META-ANALYST: Residual elevated (${res.toFixed(3)}) — adapting. Mass: ${mass.toFixed(3)}kg. ${steps < 300 ? 'Normal during early convergence.' : 'Check calibration.'}`
+        : `> META-ANALYST: Nominal ✓ — residual ${res.toFixed(4)}, mass ${mass.toFixed(3)}kg, ${steps} steps.`;
+      setMetaAnalysisResult(localMsg);
     } catch (error) {
       console.error("Meta-Analysis Error:", error);
     }
@@ -4752,18 +4875,41 @@ Session: not yet live (ACTIVE CONTROL OFF or not connected)
 
 Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
 
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({
-            model:'claude-sonnet-4-20250514',
-            max_tokens:800,
-            system: systemPrompt,
-            messages:[{role:'user', content:msg}]
-          })
-        });
-        const data = await resp.json();
-        const text = data.content?.[0]?.text || 'Could not get a response.';
+        let text = '';
+        // Tier 1: Gemini direct — available on Vercel with VITE_GEMINI_API_KEY
+        const ai = getAI();
+        if (ai) {
+          try {
+            const gemResp = await ai.models.generateContent({
+              model: 'gemini-2.0-flash',
+              contents: `${systemPrompt}
+
+PROBLEM: ${msg}`,
+              config: { systemInstruction: 'You are the PhysiCore Integration Engineer troubleshooter. Give numbered steps with exact commands. Be direct and precise.' }
+            });
+            text = gemResp.text?.trim() || '';
+          } catch (_ge) {}
+        }
+        // Tier 2: Anthropic (works in Claude.ai artifact sandbox)
+        if (!text) {
+          try {
+            const resp = await fetch('https://api.anthropic.com/v1/messages', {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({
+                model:'claude-sonnet-4-20250514',
+                max_tokens:800,
+                system: systemPrompt,
+                messages:[{role:'user', content:msg}]
+              })
+            });
+            if (resp.ok) {
+              const data = await resp.json();
+              text = data.content?.[0]?.text || '';
+            }
+          } catch (_ae) {}
+        }
+        if (!text) text = 'Could not reach AI. Use the quick fix buttons above for instant answers.';
         setIE(s=>({...s, troubleshootResult:{
           title: sessionActive ? 'Live diagnosis — based on your actual session data' : 'Diagnosis complete',
           steps:[{label:text, cmd:''}],
