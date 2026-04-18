@@ -359,25 +359,10 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-// Lazy initializer for Gemini
-let aiInstance: GoogleGenAI | null = null;
-function getAI() {
-  if (!aiInstance) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("GEMINI_API_KEY is missing. AI features will be unavailable.");
-      return null;
-    }
-    aiInstance = new GoogleGenAI({ apiKey: key });
-  }
-  return aiInstance;
-}
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 async function callGemini(systemPrompt: string, userPrompt: string) {
   try {
-    const ai = getAI();
-    if (!ai) return { success: false, error: 'NO_KEY', message: 'API Key missing' };
-    
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: userPrompt,
@@ -425,7 +410,7 @@ interface Message {
 interface GeneratedFile {
   filename: string;
   content: string;
-  extension?: string;
+  extension: string;
 }
 
 // --- UTILS ---
@@ -1990,6 +1975,17 @@ const IE_FLOWS: Record<string, IEFlow> = {
       { key:'os',        q:'Your laptop OS?',        opts:['Windows','Mac','Linux'] },
     ],
   },
+  custom: {
+    label: 'Custom hardware', icon: '🔧',
+    questions: [
+      { key:'type',      q:'What type of system?',        opts:['Ground robot','Aerial vehicle','Manipulator arm','Underwater vehicle','Spacecraft','Other'] },
+      { key:'interface', q:'How does it communicate?',    opts:['Arduino/ESP32 serial','ROS2','MAVLink','Custom serial'] },
+      { key:'sensors',   q:'Primary sensors?',            opts:['IMU only','IMU + encoders','IMU + GPS','IMU + barometer','IMU + vision'] },
+      { key:'mcu',       q:'Compute hardware?',           opts:['Arduino Uno/Nano/Mega','ESP32','Raspberry Pi','Jetson Nano','Jetson Orin','Laptop only'] },
+      { key:'os',        q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
+      { key:'mass',      q:'System mass (kg)?',           opts:undefined },
+    ],
+  },
 };
 
 // ── Detection ─────────────────────────────────────────────────────────────────
@@ -2010,6 +2006,7 @@ function ie_detect(s: string): string {
   if (t.match(/drone|quadrotor|fpv|multirotor/)) return 'px4';
   if (t.match(/esp32|esp8266|arduino/)) return 'balancing_bot';
   if (t.match(/ros2|ros 2/)) return 'ros2_arm';
+  if (t.match(/custom|diy|homebrew|my own|self.?built|self.?made/)) return 'custom';
   return '';
 }
 
@@ -2290,7 +2287,82 @@ void loop(){
     ];
   }
 
-  return [{ filename:'run_bridge.sh', content:`#!/bin/bash\npython physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` }];
+  if (hw === 'custom') {
+    const iface = answers.interface || 'Arduino/ESP32 serial';
+    const sensors = answers.sensors || 'IMU only';
+    const mcu = answers.mcu || 'Arduino Uno/Nano/Mega';
+    const sysType = answers.type || 'Ground robot';
+    const isSerial = iface.toLowerCase().includes('arduino') || iface.toLowerCase().includes('serial');
+    const isROS2 = iface.toLowerCase().includes('ros2');
+    const isMAV = iface.toLowerCase().includes('mavlink');
+
+    const platform = isMAV ? 'px4_quadrotor' : isROS2 ? 'ros2_ground_rover' : 'ground_rover_serial';
+
+    const guide = `# PhysiCore Custom Hardware Integration
+# System type: ${sysType} | Interface: ${iface} | Sensors: ${sensors}
+# Compute: ${mcu} | Mass: ${mass}kg
+
+## What PhysiCore needs from your hardware
+
+Your hardware must send JSON over serial (or ROS2/MAVLink) at 20-50 Hz.
+Minimum required fields — send whatever you have, PhysiCore uses what it gets:
+
+{"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,
+ "accel_x":0.0,"accel_y":0.0,"accel_z":9.81,
+ "motor_l":0.0,"motor_r":0.0,"timestamp":0}
+
+## Arduino/ESP32 serial template
+
+Add this to your existing sketch:
+
+  StaticJsonDocument<256> doc;
+  doc["pitch"]   = YOUR_PITCH_VALUE;     // angle in degrees
+  doc["gyro_x"]  = YOUR_GYRO_VALUE;      // angular velocity deg/s
+  doc["accel_z"] = YOUR_ACCEL_Z;         // m/s^2
+  doc["motor_l"] = YOUR_LEFT_MOTOR;      // -1.0 to 1.0 or N*m
+  doc["motor_r"] = YOUR_RIGHT_MOTOR;
+  doc["timestamp"] = millis();
+  serializeJson(doc, Serial);
+  Serial.println();
+
+PhysiCore sends back:
+  {"op":"command","action":[TORQUE_VALUE]}
+
+Apply that torque to your actuators.
+
+## Run the bridge
+
+${isSerial ? `python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection ${port} --baud 115200` :
+  isROS2 ? `source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` :
+  `python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550`}
+
+## Connect dashboard
+MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON
+
+## PhysiCore adapts
+Within 30 seconds it will learn your system's real mass and friction.
+No manual tuning required.`;
+
+    const yaml = `name: My Custom ${sysType}
+platform: ground_rover
+connection: ${port}
+baud: 115200
+mass: ${mass}
+friction: 0.3
+inertia: 0.1
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false`;
+
+    return [
+      { filename:'custom_integration_guide.md', content:guide },
+      { filename:'custom.yaml', content:yaml },
+    ];
+  }
+
+  return [{ filename:'run_bridge.sh', content:`#!/bin/bash
+python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` }];
 }
 
 // ── Steps per hardware ────────────────────────────────────────────────────────
@@ -2332,6 +2404,21 @@ function ie_getSteps(hw: string, answers: Record<string,string>): {id:string; la
     { id:'bridge',   label:'Run the bridge', detail:`Edit rocket.yaml: change connection to your port\n${isWin ? 'Find port: Device Manager → Ports' : 'Find port: ls /dev/ttyUSB*'}`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
     { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive altitude and phase appear` },
   ];
+
+  if (hw === 'custom') {
+    const iface = answers.interface || '';
+    const isSerial = iface.toLowerCase().includes('arduino') || iface.toLowerCase().includes('serial');
+    return [
+      { id:'read',    label:'Read the integration guide', detail:`Open custom_integration_guide.md — it has the exact JSON format your hardware needs to send and the command to receive` },
+      { id:'serial',  label:'Add serial output to your code', detail:`Send JSON at 20-50 Hz: {"pitch":0,"gyro_x":0,"accel_z":9.81,"motor_l":0,"motor_r":0,"timestamp":0}
+Include whatever sensor fields you have` },
+      { id:'bridge',  label:'Run the bridge', detail:`Edit custom.yaml with your actual serial port
+${isSerial ? 'Find port: Device Manager (Win) / ls /dev/cu.* (Mac) / ls /dev/ttyUSB* (Linux)' : 'Use --platform that matches your interface'}`, cmd:'bash run_bridge.sh' },
+      { id:'connect', label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
+      { id:'activate',label:'Activate and adapt', detail:`Click ACTIVE CONTROL ON
+PhysiCore starts learning your system's real mass and friction from live data` },
+    ];
+  }
 
   return [];
 }
@@ -2431,7 +2518,6 @@ function physi_integrate(
     setSystemProfile?: (fn: (prev: any) => any) => void;
     setConnectionMode?: (m: any) => void;
     setEndpoint?: (e: string) => void;
-    setTelemetry?: (fn: any) => void;
   }
 ): string {
   // This is only called for troubleshooting freetext now
@@ -2457,18 +2543,6 @@ export default function App() {
 
 function AppContent() {
   const [user, loading, error] = useAuthState(auth);
-  const [forceProceed, setForceProceed] = useState(false);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (loading) {
-        console.warn("Auth state loading timed out. Forcing proceed.");
-        setForceProceed(true);
-      }
-    }, 5000);
-    return () => clearTimeout(timer);
-  }, [loading]);
-
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
   const isAuthorized = user?.email ? BETA_TESTERS.includes(user.email) : false;
@@ -2522,6 +2596,7 @@ function AppContent() {
     }
     
     setIsBootstrapping(false);
+    alert(`Team authorization complete. ${addedCount} new members added.`);
   };
 
   const handleRemoveUser = async (userId: string) => {
@@ -2547,10 +2622,9 @@ function AppContent() {
     }
   }, [isAdmin]);
 
-  const bootstrappedRef = useRef(false);
   useEffect(() => {
-    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user && !bootstrappedRef.current) {
-      bootstrappedRef.current = true;
+    if (isAdmin && allUsers.length === 0 && !isBootstrapping && user) {
+      // Auto-bootstrap team if empty and we are admin
       bootstrapTeam();
     }
   }, [isAdmin, allUsers.length, isBootstrapping, user]);
@@ -3215,14 +3289,9 @@ function AppContent() {
     const reveals = document.querySelectorAll('.reveal');
     reveals.forEach(r => revealObserver.observe(r));
 
-    const revealTimeout = setTimeout(() => {
-      document.querySelectorAll('.reveal:not(.active)').forEach(el => el.classList.add('active'));
-    }, 2000);
-
     return () => {
       observer.disconnect();
       revealObserver.disconnect();
-      clearTimeout(revealTimeout);
     };
   }, [view, loading, checkingAccess]);
 
@@ -4568,9 +4637,56 @@ Be direct, technical, confident. You are the world's best robotics integration e
       }
     }
 
-    function checkTroubleshoot(msg: string) {
+    async function checkTroubleshoot(msg: string) {
       const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
       setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
+
+      // If local tree didn't match, ask Claude for help
+      if (!result) {
+        setIE(s=>({...s, troubleshootResult:{
+          title:'Diagnosing your issue...',
+          steps:[{label:'Thinking', cmd:'Please wait a moment'}]
+        }, phase:'troubleshoot'}));
+        try {
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({
+              model:'claude-sonnet-4-20250514',
+              max_tokens:600,
+              system:`You are the PhysiCore Integration Engineer troubleshooter.
+Hardware: ${IE_FLOWS[ieState.hw]?.label || ieState.hw || 'unknown'}
+User answers: ${JSON.stringify(ieState.answers)}
+Files generated: ${ieState.files.map((f:any)=>f.filename).join(', ')}
+
+Give a SHORT, PRECISE answer. Format as numbered steps. Each step must have a concrete command or action.
+Never say "it depends" or "you might". Give the exact fix.`,
+              messages:[{role:'user', content:msg}]
+            })
+          });
+          const data = await resp.json();
+          const text = data.content?.[0]?.text || 'Could not get response. Check your connection.';
+          // Parse into steps format
+          const lines = text.split('
+').filter((l:string)=>l.trim());
+          const steps = lines.slice(0,6).map((l:string, i:number)=>({
+            label: l.replace(/^\d+\.\s*/, '').substring(0,60),
+            cmd: l.match(/`([^`]+)`/)?.[1] || l.replace(/^\d+\.\s*/, '')
+          }));
+          setIE(s=>({...s, troubleshootResult:{
+            title:'Diagnosis complete',
+            steps: steps.length ? steps : [{label:text.substring(0,200), cmd:''}]
+          }}));
+        } catch(e) {
+          setIE(s=>({...s, troubleshootResult:{
+            title:'Could not reach AI',
+            steps:[
+              {label:'Check your internet connection', cmd:''},
+              {label:'Or use the quick issue buttons above for instant local fixes', cmd:''},
+            ]
+          }}));
+        }
+      }
     }
 
     const HW_GRID = Object.entries(IE_FLOWS);
@@ -4790,6 +4906,117 @@ Be direct, technical, confident. You are the world's best robotics integration e
               )}
             </div>
           </div>
+
+          {/* ── ACTION BUTTONS ── */}
+          <div className="mt-6 border border-green/20 bg-green/5 p-5 space-y-4">
+            <p className="font-mono text-[9px] text-green uppercase tracking-widest">Quick actions — everything you need to go live</p>
+            <div className="grid grid-cols-2 gap-3">
+
+              {/* Go to Dashboard */}
+              <button
+                onClick={()=>{ setView('dashboard'); }}
+                className="flex items-center gap-3 p-4 border border-green bg-green/10 hover:bg-green/20 transition-all text-left group">
+                <Activity size={16} className="text-green shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-green uppercase tracking-widest">Open Dashboard →</div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">Connect hardware and see live telemetry</div>
+                </div>
+              </button>
+
+              {/* Open Manual for this hardware */}
+              <button
+                onClick={()=>{ setView('manual'); setManualSection(
+                  ieState.hw==='balancing_bot'?'bot':
+                  ieState.hw==='px4'||ieState.hw==='ardupilot'||ieState.hw==='evtol'?'drone':
+                  ieState.hw==='rocket'?'rocket':
+                  ieState.hw==='ros2_arm'||ieState.hw==='humanoid'||ieState.hw==='legged'||ieState.hw==='surgical'?'ros2':
+                  ieState.hw==='auv'?'auv':
+                  ieState.hw==='rover'?'rover':
+                  ieState.hw==='satellite'?'satellite':
+                  ieState.hw==='custom'?'custom':'intro'
+                ); }}
+                className="flex items-center gap-3 p-4 border border-border hover:border-amber hover:bg-amber/5 transition-all text-left group">
+                <BookOpen size={16} className="text-amber shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-amber transition-colors">Full Manual →</div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">Step-by-step guide for your hardware</div>
+                </div>
+              </button>
+
+              {/* Copy bridge command */}
+              <button
+                onClick={()=>{
+                  const hw = ieState.hw;
+                  const a = ieState.answers;
+                  const port = a.os?.toLowerCase().includes('win')?'COM3':a.os?.toLowerCase().includes('mac')?'/dev/cu.usbserial-0001':'/dev/ttyUSB0';
+                  const cmd = hw==='balancing_bot'?`python physicore/bridge/physicore_bridge.py --config balancing_bot.yaml`:
+                    hw==='px4'?`python physicore/bridge/physicore_bridge.py --config drone.yaml`:
+                    hw==='ardupilot'?`python physicore/bridge/physicore_bridge.py --config drone.yaml`:
+                    hw==='rocket'?`python physicore/bridge/physicore_bridge.py --config rocket.yaml`:
+                    hw==='ros2_arm'||hw==='humanoid'||hw==='legged'||hw==='surgical'?`bash run_bridge.sh`:
+                    hw==='auv'?`bash run_bridge.sh`:
+                    hw==='rover'?`bash run_bridge.sh`:
+                    `python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover`;
+                  copyText(cmd, 'bridge_cmd');
+                }}
+                className="flex items-center gap-3 p-4 border border-border hover:border-cyan hover:bg-cyan/5 transition-all text-left group">
+                <Terminal size={16} className="text-cyan shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-cyan transition-colors">
+                    {copiedId==='bridge_cmd'?'✓ Copied!':'Copy Bridge Command'}
+                  </div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">The command that connects your hardware to PhysiCore</div>
+                </div>
+              </button>
+
+              {/* Download all files */}
+              <button
+                onClick={()=>{
+                  ieState.files.forEach((f:any)=>{
+                    const blob=new Blob([f.content],{type:'text/plain'});
+                    const url=URL.createObjectURL(blob);
+                    const a=document.createElement('a');a.href=url;a.download=f.filename;a.click();
+                    URL.revokeObjectURL(url);
+                  });
+                }}
+                className="flex items-center gap-3 p-4 border border-border hover:border-green hover:bg-green/5 transition-all text-left group">
+                <DownloadCloud size={16} className="text-green shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-green transition-colors">Download All Files</div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">Firmware + YAML + bridge script in one go</div>
+                </div>
+              </button>
+
+              {/* Troubleshoot */}
+              <button
+                onClick={()=>{setIETsInput(''); setIE(s=>({...s,phase:'troubleshoot',troubleshootResult:null}));}}
+                className="flex items-center gap-3 p-4 border border-border hover:border-red hover:bg-red/5 transition-all text-left group">
+                <AlertTriangle size={16} className="text-red shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-red transition-colors">Troubleshooter</div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">Describe any error — get the exact fix</div>
+                </div>
+              </button>
+
+              {/* Install deps command */}
+              <button
+                onClick={()=>copyText('pip install pymavlink websockets aiohttp pyserial pyyaml', 'install_cmd')}
+                className="flex items-center gap-3 p-4 border border-border hover:border-cyan hover:bg-cyan/5 transition-all text-left group">
+                <Cpu size={16} className="text-cyan shrink-0" />
+                <div>
+                  <div className="font-display text-xs font-bold text-white uppercase tracking-widest group-hover:text-cyan transition-colors">
+                    {copiedId==='install_cmd'?'✓ Copied!':'Copy Install Command'}
+                  </div>
+                  <div className="font-mono text-[9px] text-textDim mt-0.5">pip install pymavlink websockets aiohttp pyserial pyyaml</div>
+                </div>
+              </button>
+
+            </div>
+            <div className="pt-2 border-t border-border/50">
+              <p className="font-mono text-[9px] text-textDim">After bridge runs: Dashboard → MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON</p>
+            </div>
+          </div>
+
         </div>
       </div>
     );
@@ -4909,10 +5136,16 @@ Be direct, technical, confident. You are the world's best robotics integration e
       { id: 'drone',      title: '04. PX4 / ARDUPILOT DRONE',icon: <Navigation size={14} /> },
       { id: 'rocket',     title: '05. SOUNDING ROCKET',      icon: <Rocket size={14} /> },
       { id: 'ros2',       title: '06. ROS2 ROBOT ARM',       icon: <Terminal size={14} /> },
-      { id: 'config',     title: '07. ROBOT CONFIG (YAML)',  icon: <Settings size={14} /> },
-      { id: 'registry',   title: '08. PERSISTENT LEARNING',  icon: <Layers size={14} /> },
-      { id: 'sentinel',   title: '09. SENTINEL OS',          icon: <ShieldCheck size={14} /> },
-      { id: 'troubleshoot',title: '10. TROUBLESHOOTING',     icon: <AlertTriangle size={14} /> },
+      { id: 'humanoid',   title: '07. HUMANOID / LEGGED',    icon: <Activity size={14} /> },
+      { id: 'auv',        title: '08. AUV / UNDERWATER',     icon: <Wind size={14} /> },
+      { id: 'evtol',      title: '09. eVTOL AIRCRAFT',       icon: <Navigation size={14} /> },
+      { id: 'rover',      title: '10. GROUND ROVER / AMR',   icon: <Cpu size={14} /> },
+      { id: 'satellite',  title: '11. SATELLITE / SPACECRAFT',icon: <Globe size={14} /> },
+      { id: 'custom',     title: '12. CUSTOM HARDWARE',      icon: <Settings size={14} /> },
+      { id: 'config',     title: '13. ROBOT CONFIG (YAML)',  icon: <Settings size={14} /> },
+      { id: 'registry',   title: '14. PERSISTENT LEARNING',  icon: <Layers size={14} /> },
+      { id: 'sentinel',   title: '15. SENTINEL OS',          icon: <ShieldCheck size={14} /> },
+      { id: 'troubleshoot',title: '16. TROUBLESHOOTING',     icon: <AlertTriangle size={14} /> },
     ];
 
     const Step = ({ n, children }: { n: number; children: React.ReactNode }) => (
@@ -5339,6 +5572,248 @@ Be direct, technical, confident. You are the world's best robotics integration e
                     Adapts to new payload within 10-15 seconds of change ✓
                   </Good>
                 </Phase>
+              </section>
+            )}
+
+            {/* ── HUMANOID / LEGGED ── */}
+            {manualSection === 'humanoid' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Humanoid & Legged Robots</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to humanoid and legged robots over ROS2. It learns their real mass distribution, joint friction, and contact dynamics without any manual calibration.</p>
+                  <div className="p-4 border border-green/20 bg-green/5">
+                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: Unitree G1/H1, Figure AI Apollo, Boston Dynamics Spot, ANYmal, Go1/Go2, MIT Mini Cheetah, any custom biped or quadruped</span>
+                  </div>
+                </div>
+
+                <Phase n="PHASE 1" title="Verify ROS2 is publishing">
+                  <Step n={1}>Source your ROS2 installation:<Code>source /opt/ros/humble/setup.bash</Code></Step>
+                  <Step n={2}>For Unitree robots, source the Unitree ROS2 workspace first, then verify:<Code>ros2 topic list | grep joint</Code></Step>
+                  <Step n={3}>Check joint states are flowing:<Code>ros2 topic echo /joint_states --once</Code>You must see position and velocity arrays. If empty — your robot driver is not running.</Step>
+                  <Warn title="Unitree SDK note">Unitree G1/H1 requires the unitree_ros2 package. Source its workspace before running the bridge or topics will not appear.</Warn>
+                </Phase>
+
+                <Phase n="PHASE 2" title="Run the bridge">
+                  <Step n={4}>Use the Integration Engineer to generate your exact bridge script. Or run manually:
+                    <Code>{`source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_legged`}</Code>
+                  </Step>
+                  <Good>
+                    [BRIDGE] ROS2 subscribed to /joint_states<br/>
+                    [ENGINE] Initialized for 'legged_robot'<br/>
+                    [TELEM] P:0.0° | mass=30.000 res=0.0000 steps=0
+                  </Good>
+                </Phase>
+
+                <Phase n="PHASE 3" title="Connect and adapt">
+                  <Step n={5}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
+                  <Step n={6}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. Let the robot walk or move.</Step>
+                  <Step n={7}>Watch mass estimate adapt — PhysiCore learns the robot's real mass distribution from contact dynamics. Payload changes are detected automatically within 10-15 seconds.</Step>
+                  <Good>
+                    Mass estimate adapting — learning real body distribution ✓<br/>
+                    Terrain friction adapting — registry saves per-terrain ✓<br/>
+                    Sentinel in NOMINAL — all safety bounds clear ✓
+                  </Good>
+                </Phase>
+              </section>
+            )}
+
+            {/* ── AUV ── */}
+            {manualSection === 'auv' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">AUV / Underwater Robot</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore adapts to real hydrodynamic drag, buoyancy changes, and battery degradation in real time. Works with BlueROV2 and any ROS2-enabled AUV.</p>
+                  <div className="p-4 border border-green/20 bg-green/5">
+                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: BlueROV2, custom AUVs, research vehicles with ROS2 + IMU + depth sensor</span>
+                  </div>
+                </div>
+
+                <Phase n="PHASE 1" title="Verify sensor topics">
+                  <Step n={1}><Code>ros2 topic list</Code>You need: /imu/data, /depth or /bar30/pressure, optionally /dvl/velocity</Step>
+                  <Step n={2}>If DVL is available:<Code>ros2 topic echo /dvl/velocity --once</Code></Step>
+                  <Warn title="Depth sensor required">PhysiCore's AUV model needs depth to track buoyancy. Without it, uncertainty stays high and Sentinel may stay in CAUTIOUS mode.</Warn>
+                </Phase>
+
+                <Phase n="PHASE 2" title="Run the bridge">
+                  <Step n={3}><Code>{`source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_auv`}</Code></Step>
+                  <Good>
+                    [BRIDGE] ROS2 subscribed to /imu/data /depth /dvl/velocity<br/>
+                    [ENGINE] Initialized for 'auv' with quadratic drag model<br/>
+                    drag coefficient adapting from depth and thrust data
+                  </Good>
+                </Phase>
+
+                <Phase n="PHASE 3" title="Connect and dive">
+                  <Step n={4}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
+                  <Step n={5}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> before entering water.</Step>
+                  <Step n={6}>PhysiCore learns drag coefficient and buoyancy within the first 20 seconds of real motion. Registry saves per-vehicle — each AUV gets its own entry.</Step>
+                </Phase>
+              </section>
+            )}
+
+            {/* ── eVTOL ── */}
+            {manualSection === 'evtol' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">eVTOL Aircraft</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to eVTOL aircraft over MAVLink (PX4 or ArduPilot). It learns real aerodynamic coefficients, rotor efficiency degradation, and battery discharge curves in flight.</p>
+                </div>
+
+                <Phase n="PHASE 1" title="Configure MAVLink">
+                  <Step n={1}>Your eVTOL must be running PX4 or ArduPilot. MAVLink UDP port 14550 must be enabled.</Step>
+                  <Step n={2}>For multi-rotor eVTOL (quadrotor config): use --platform px4_quadrotor</Step>
+                  <Step n={3}>For tilt-rotor or fixed-wing transition: use --platform evtol</Step>
+                </Phase>
+
+                <Phase n="PHASE 2" title="Run the bridge">
+                  <Step n={4}><Code>python physicore/bridge/physicore_bridge.py --platform evtol --connection udp:14550</Code></Step>
+                  <Good>
+                    [BRIDGE] MAVLink connected. Vehicle: EVTOL<br/>
+                    [ENGINE] Initialized for 'evtol' — ISA atmosphere + transition model active
+                  </Good>
+                </Phase>
+
+                <Phase n="PHASE 3" title="Hover, transition, cruise">
+                  <Step n={5}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> before takeoff.</Step>
+                  <Step n={6}>PhysiCore handles the VTOL ↔ cruise transition automatically. The eVTOL model smoothly interpolates between hover dynamics and wing lift based on airspeed.</Step>
+                  <Step n={7}>Watch rotor efficiency adapt during flight — thermal degradation is tracked per-motor.</Step>
+                  <Warn title="Safety">Sentinel is set to stricter thresholds for eVTOL (max_uncertainty: 0.03, max_residual: 0.5). Any unusual aerodynamic event triggers CAUTIOUS mode automatically.</Warn>
+                </Phase>
+              </section>
+            )}
+
+            {/* ── ROVER ── */}
+            {manualSection === 'rover' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Ground Rover / AMR</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to differential-drive rovers, AMRs, and warehouse robots over ROS2 or direct Arduino/ESP32 serial. It adapts to real terrain friction and slip in real time.</p>
+                  <div className="p-4 border border-green/20 bg-green/5">
+                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: any ROS2 rover with /cmd_vel and /odom, Arduino/ESP32 serial robots, ROS2 Nav2 compatible</span>
+                  </div>
+                </div>
+
+                <Phase n="PHASE 1" title="ROS2 rover">
+                  <Step n={1}><Code>ros2 topic echo /odom --once</Code>You need odometry publishing. If you only have /cmd_vel with no feedback — PhysiCore can still run but SysID convergence is slower.</Step>
+                  <Step n={2}><Code>{`source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover`}</Code></Step>
+                </Phase>
+
+                <Phase n="PHASE 1 (alt)" title="Arduino/ESP32 serial rover">
+                  <Step n={1}>Your firmware must send JSON at 20-50 Hz with velocity and orientation. Use the Integration Engineer to generate exact firmware.</Step>
+                  <Step n={2}><Code>python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection COM3 --baud 115200</Code></Step>
+                </Phase>
+
+                <Phase n="PHASE 2" title="Connect and adapt">
+                  <Step n={3}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
+                  <Step n={4}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. Drive the rover. PhysiCore learns terrain friction within 15 seconds. Moving to a new floor surface — friction adapts automatically.</Step>
+                  <Good>
+                    Terrain friction adapting as surface changes ✓<br/>
+                    Slip model learned per-wheel ✓<br/>
+                    Registry saves per-rover — next session starts smarter ✓
+                  </Good>
+                </Phase>
+              </section>
+            )}
+
+            {/* ── SATELLITE ── */}
+            {manualSection === 'satellite' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Satellite / Spacecraft</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore includes a full orbital mechanics model with J2 oblateness perturbation, ISA atmosphere extension, and real-time inertia tensor estimation from reaction wheel telemetry.</p>
+                  <div className="p-4 border border-amber/20 bg-amber/5">
+                    <span className="font-mono text-[10px] text-amber uppercase tracking-widest">Advanced: requires attitude telemetry (quaternion or Euler) + reaction wheel speeds or thruster states over serial</span>
+                  </div>
+                </div>
+
+                <Phase n="PHASE 1" title="Telemetry format">
+                  <Step n={1}>Your flight computer must output JSON over serial at 10-50 Hz. Minimum:
+                    <Code>{`{"roll":0.0,"pitch":0.0,"yaw":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"altitude":550000,"timestamp":0}`}</Code>
+                    Altitude is in meters above Earth center (orbital altitude ~550km = 550000m + 6371000m).
+                  </Step>
+                </Phase>
+
+                <Phase n="PHASE 2" title="Run the bridge">
+                  <Step n={2}>Connect your flight computer over serial. Close any other serial terminals first.
+                    <Code>python physicore/bridge/physicore_bridge.py --platform satellite_serial --connection COM3 --baud 115200</Code>
+                  </Step>
+                  <Good>
+                    [ENGINE] Initialized for 'satellite'<br/>
+                    [ENGINE] J2 perturbation model active<br/>
+                    [TELEM] altitude=550000m | mass=100.000 | res=0.0000
+                  </Good>
+                </Phase>
+
+                <Phase n="PHASE 3" title="Attitude control">
+                  <Step n={3}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
+                  <Step n={4}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. PhysiCore runs a full J2-corrected attitude controller. Inertia tensor estimation converges from reaction wheel torque vs angular acceleration over the first 60 seconds.</Step>
+                </Phase>
+              </section>
+            )}
+
+            {/* ── CUSTOM HARDWARE ── */}
+            {manualSection === 'custom' && (
+              <section className="space-y-10">
+                <div className="space-y-4">
+                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Custom Hardware</h1>
+                  <p className="font-body text-lg text-textSecondary">PhysiCore works with any hardware that can send JSON over serial, ROS2 topics, or MAVLink. You do not need to match a specific robot type.</p>
+                </div>
+
+                <div className="space-y-4">
+                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">The contract — what PhysiCore needs</h2>
+                  <p className="font-body text-sm text-textSecondary">Your hardware sends sensor data. PhysiCore sends control commands back. That is the entire contract. Send what you have — PhysiCore uses whatever it gets.</p>
+                  <Code>{`// Minimum: send any of these fields at 20-50 Hz
+{"pitch":0.0}                    // angle in degrees — enough for basic adaptation
+{"pitch":0.0,"gyro_x":0.0}       // + rate — better
+{"pitch":0.0,"gyro_x":0.0,"accel_z":9.81,"motor_l":0.0,"motor_r":0.0,"timestamp":0}  // full`}</Code>
+                  <p className="font-body text-xs text-textSecondary">PhysiCore sends back: <code className="text-cyan">{"{"}"op":"command","action":[TORQUE]{"}"}</code> — apply that to your actuators.</p>
+                </div>
+
+                <Phase n="OPTION A" title="Arduino / ESP32 serial">
+                  <Step n={1}>Add JSON output to your existing sketch. Include: ArduinoJson library v6.x.</Step>
+                  <Step n={2}>Use the Integration Engineer — select "Custom hardware" — it generates exact starter firmware for your MCU and sensors.</Step>
+                  <Step n={3}><Code>python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection COM3 --baud 115200</Code></Step>
+                </Phase>
+
+                <Phase n="OPTION B" title="ROS2 custom">
+                  <Step n={1}>Publish any sensor data as ROS2 topics. The bridge subscribes to /imu/data, /odom, /joint_states — publish whichever you have.</Step>
+                  <Step n={2}><Code>python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover</Code></Step>
+                </Phase>
+
+                <Phase n="OPTION C" title="MAVLink custom">
+                  <Step n={1}>If your hardware sends MAVLink telemetry (many FC boards do by default):<Code>python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550</Code></Step>
+                </Phase>
+
+                <div className="space-y-4">
+                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">What platform to use for your custom system</h2>
+                  <div className="space-y-2">
+                    {[
+                      { match:'Ground robot (wheels, treads)', platform:'ground_rover_serial or ros2_ground_rover' },
+                      { match:'Flying vehicle (any rotor config)', platform:'px4_quadrotor' },
+                      { match:'Robotic arm (serial or parallel)', platform:'ros2_manipulator' },
+                      { match:'Anything with a pendulum / balance', platform:'balancing_bot' },
+                      { match:'Rocket / high-acceleration', platform:'custom_rocket_fc' },
+                      { match:'Underwater / high-drag', platform:'ros2_auv' },
+                    ].map((r,i)=>(
+                      <div key={i} className="flex gap-4 p-3 border border-borderDim bg-bgRaised">
+                        <span className="font-body text-xs text-textSecondary flex-1">{r.match}</span>
+                        <code className="font-mono text-[10px] text-cyan">{r.platform}</code>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="font-body text-xs text-textSecondary">The platform choice determines the physics model PhysiCore starts with. Pick the closest match — SysID will correct for the difference within 30 seconds.</p>
+                </div>
+
+                <div className="p-6 border border-green/20 bg-green/5 space-y-3">
+                  <div className="font-mono text-[10px] text-green uppercase tracking-widest">Use the Integration Engineer</div>
+                  <p className="font-body text-sm text-textSecondary">Select "Custom hardware" in the Integration Engineer. Answer 6 questions. Get firmware, YAML config, and bridge command generated specifically for your system. 30 minutes from zero to PhysiCore running on your hardware.</p>
+                  <button onClick={()=>setView('integrator')} className="px-4 py-2 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
+                    Open Integration Engineer →
+                  </button>
+                </div>
               </section>
             )}
 
@@ -5994,25 +6469,13 @@ max_torque: 2.5`}</Code>
   );
 };
 
-  if ((loading && !forceProceed) || checkingAccess) {
+  if (loading || checkingAccess) {
     return (
-      <div className="h-screen w-full bg-void flex flex-col items-center justify-center gap-6 p-6">
+      <div className="h-screen w-full bg-void flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Cpu className="text-green animate-spin-slow" size={48} />
-          <span className="font-mono text-xs text-green uppercase tracking-widest animate-pulse">Verifying Neural Handshake...</span>
+          <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
         </div>
-        
-        {loading && (
-          <motion.button
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 3 }}
-            onClick={() => setForceProceed(true)}
-            className="mt-8 px-6 py-2 border border-border/40 font-mono text-[10px] text-textSecondary hover:text-white transition-all uppercase tracking-widest"
-          >
-            Force Bypass Initialization
-          </motion.button>
-        )}
       </div>
     );
   }
@@ -6246,8 +6709,6 @@ const HeroCanvas = () => {
     window.addEventListener('resize', resize);
     resize();
 
-    let requestRef = { current: 0 };
-
     const animate = () => {
       frame++;
       ctx.fillStyle = COLORS.void;
@@ -6297,14 +6758,11 @@ const HeroCanvas = () => {
       ctx.stroke();
       ctx.restore();
 
-      requestRef.current = requestAnimationFrame(animate);
+      requestAnimationFrame(animate);
     };
 
-    requestRef.current = requestAnimationFrame(animate);
-    return () => {
-      window.removeEventListener('resize', resize);
-      cancelAnimationFrame(requestRef.current);
-    };
+    animate();
+    return () => window.removeEventListener('resize', resize);
   }, []);
 
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />;
@@ -6331,7 +6789,6 @@ const AviationTrajectoryCanvas = ({ state, params, isRunning, setIsRunning, isCo
     resize();
 
     let frame = 0;
-    let animId: number;
     const animate = () => {
       frame++;
       ctx.fillStyle = COLORS.bgInset;
@@ -6370,10 +6827,10 @@ const AviationTrajectoryCanvas = ({ state, params, isRunning, setIsRunning, isCo
       ctx.fillText(`ALT: ${state.y.toFixed(0)}m`, 20, 30);
       ctx.fillText(`SPD: ${Math.sqrt(state.vx**2 + state.vy**2).toFixed(1)}m/s`, 20, 45);
 
-      animId = requestAnimationFrame(animate);
+      requestAnimationFrame(animate);
     };
 
-    animId = requestAnimationFrame(animate);
+    const animId = requestAnimationFrame(animate);
     return () => {
       window.removeEventListener('resize', resize);
       cancelAnimationFrame(animId);
@@ -6412,7 +6869,6 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
     if (!ctx) return;
 
     const state = stateRef.current;
-    let animId: number;
     state.robot = { x: canvas.width / 2, y: canvas.height / 2, vx: 0, vy: 0 };
     state.target = { x: canvas.width / 2, y: canvas.height / 2 };
 
@@ -6531,7 +6987,7 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
         ctx.setLineDash([]);
 
-        animId = requestAnimationFrame(animate);
+        requestAnimationFrame(animate);
         return;
       }
 
@@ -6563,7 +7019,7 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
           ctx.fillStyle = COLORS.textDim;
           ctx.font = '10px "JetBrains Mono"';
           ctx.fillText('Check bridge is running and sending data', canvas.width / 2, canvas.height / 2 + 20);
-          animId = requestAnimationFrame(animate);
+          requestAnimationFrame(animate);
           return;
         }
         state.target = t.targetPos || state.target;
@@ -6647,14 +7103,11 @@ const DashboardCanvas = ({ isConnected, handshakeConfirmed, onTelemetryUpdate, t
         effortHistory:      state.effortHistory,
       }));
 
-      animId = requestAnimationFrame(animate);
+      requestAnimationFrame(animate);
     };
 
-    animId = requestAnimationFrame(animate);
-    return () => {
-      window.removeEventListener('resize', resize);
-      cancelAnimationFrame(animId);
-    };
+    animate();
+    return () => window.removeEventListener('resize', resize);
   }, [isConnected]);
 
   return <canvas ref={canvasRef} className="w-full h-full" />;
