@@ -4651,54 +4651,132 @@ Be direct, technical, confident. You are the world's best robotics integration e
       }
     }
 
+    // ── LIVE SESSION SNAPSHOT ─────────────────────────────────────────────────
+    // Builds a rich context object from current dashboard state.
+    // Injected into Claude when a session is live so the IE answers about
+    // what is *actually happening now* not just the hardware setup.
+    function buildLiveSnapshot() {
+      const sessionActive = isControlActive && isSystemConnected;
+      if (!sessionActive) return null;
+
+      const res = telemetry.residual;
+      const mass = telemetry.mass;
+      const friction = telemetry.friction;
+      const steps = telemetry.step_count || 0;
+      const isStable = telemetry.isStable;
+      const isFaulted = telemetry.isFaulted;
+      const sentinelMode = isFaulted ? 'FALLBACK' : !isStable ? 'CAUTIOUS' : 'NOMINAL';
+
+      // Residual trend from history
+      const resHist = telemetry.residualHistory || [];
+      const resRecent = resHist.slice(-10).map((p:any) => p.y);
+      const resTrend = resRecent.length >= 5
+        ? (resRecent[resRecent.length-1] - resRecent[0]) > 0.05 ? 'RISING'
+        : (resRecent[0] - resRecent[resRecent.length-1]) > 0.05 ? 'FALLING'
+        : 'STABLE'
+        : 'UNKNOWN';
+
+      // Mass convergence assessment
+      const massConverged = steps > 300 && Math.abs(mass - (parseFloat(ieState.answers.mass||'0'))) < 0.3;
+      const massDriftPct = ieState.answers.mass
+        ? Math.abs(mass - parseFloat(ieState.answers.mass)) / parseFloat(ieState.answers.mass) * 100
+        : 0;
+
+      return {
+        sessionActive,
+        sentinelMode,
+        steps,
+        mass: { current: mass.toFixed(3), declared: ieState.answers.mass || 'unknown', driftPct: massDriftPct.toFixed(1), converged: massConverged },
+        friction: { current: friction.toFixed(4) },
+        residual: { current: res.toFixed(4), trend: resTrend, history: resRecent.map(v=>v.toFixed(3)) },
+        confidence: telemetry.confidence.toFixed(1),
+        variance: telemetry.variance.toFixed(4),
+        isStable, isFaulted,
+        pitch: telemetry.pitch?.toFixed(2) || '0',
+        motorL: telemetry.motor_l?.toFixed(3) || '0',
+        motorR: telemetry.motor_r?.toFixed(3) || '0',
+        phase: telemetry.phase || 'UNKNOWN',
+        altitude: telemetry.altitude || 0,
+        armed: telemetry.armed || false,
+      };
+    }
+
     async function checkTroubleshoot(msg: string) {
       const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
       setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
 
-      // If local tree didn't match, ask Claude for help
-      if (!result) {
-        setIE(s=>({...s, troubleshootResult:{
-          title:'Diagnosing your issue...',
-          steps:[{label:'Thinking', cmd:'Please wait a moment'}]
-        }, phase:'troubleshoot'}));
-        try {
-          const resp = await fetch('https://api.anthropic.com/v1/messages', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({
-              model:'claude-sonnet-4-20250514',
-              max_tokens:600,
-              system:`You are the PhysiCore Integration Engineer troubleshooter.
+      // Always call Claude — either with live session context or static context
+      setIE(s=>({...s, troubleshootResult: result || {
+        title:'Diagnosing...',
+        steps:[{label:'Analysing your session data', cmd:'Please wait'}]
+      }, phase:'troubleshoot'}));
+
+      const snapshot = buildLiveSnapshot();
+      const sessionActive = isControlActive && isSystemConnected;
+
+      try {
+        const systemPrompt = sessionActive && snapshot
+          ? `You are the PhysiCore Integration Engineer. You have LIVE SESSION DATA from the user's running hardware session. Use it to give a precise, specific diagnosis.
+
+HARDWARE SETUP:
+  Type: ${IE_FLOWS[ieState.hw]?.label || ieState.hw || 'unknown'}
+  IMU: ${ieState.answers.imu || 'unknown'}, Motor driver: ${ieState.answers.motor_driver || 'N/A'}
+  Declared mass: ${ieState.answers.mass || 'unknown'}kg, OS: ${ieState.answers.os || 'unknown'}
+
+LIVE SESSION STATE (right now, step ${snapshot.steps}):
+  Sentinel mode: ${snapshot.sentinelMode} ${snapshot.sentinelMode !== 'NOMINAL' ? '⚠' : '✓'}
+  Mass estimate: ${snapshot.mass.current}kg (declared ${snapshot.mass.declared}kg, ${snapshot.mass.driftPct}% drift) ${parseFloat(snapshot.mass.driftPct) > 20 ? '— SIGNIFICANT DRIFT' : ''}
+  Friction estimate: ${snapshot.friction.current}
+  Residual: ${snapshot.residual.current} — trend: ${snapshot.residual.trend} ${snapshot.residual.trend === 'RISING' ? '⚠' : ''}
+  Residual history (last 10): [${snapshot.residual.history.join(', ')}]
+  Ensemble confidence: ${snapshot.confidence}%, variance: ${snapshot.variance}
+  Stable: ${snapshot.isStable}, Faulted: ${snapshot.isFaulted}
+  Pitch: ${snapshot.pitch}°, Motor L: ${snapshot.motorL}, Motor R: ${snapshot.motorR}
+  ${snapshot.phase !== 'UNKNOWN' ? 'Phase: ' + snapshot.phase : ''}
+  ${snapshot.altitude > 0 ? 'Altitude: ' + snapshot.altitude + 'm' : ''}
+
+SENTINEL FAULT SIGNATURES (check these against the data above):
+  BEARING_WEAR: friction rising steadily, friction > 0.4
+  UNEXPECTED_PAYLOAD: mass jumped > 0.5kg suddenly
+  AERO_DAMAGE: drag increase + residual > 5.0
+  MOTOR_DEGRADATION: covariance > 2000 + residual > 8.0
+  SENSOR_DRIFT: residual > 15.0 and rising
+
+Interpret the live data precisely. Explain what the numbers mean physically. Give numbered steps to fix it.
+Be direct — the user is watching a live system. No hedging.`
+          : `You are the PhysiCore Integration Engineer troubleshooter.
 Hardware: ${IE_FLOWS[ieState.hw]?.label || ieState.hw || 'unknown'}
 User answers: ${JSON.stringify(ieState.answers)}
 Files generated: ${ieState.files.map((f:any)=>f.filename).join(', ')}
+Session: not yet live (ACTIVE CONTROL OFF or not connected)
 
-Give a SHORT, PRECISE answer. Format as numbered steps. Each step must have a concrete command or action.
-Never say "it depends" or "you might". Give the exact fix.`,
-              messages:[{role:'user', content:msg}]
-            })
-          });
-          const data = await resp.json();
-          const text = data.content?.[0]?.text || 'Could not get response. Check your connection.';
-          // Parse into steps format
-          const lines = text.split('\n').filter((l:string)=>l.trim());
-          const steps = lines.slice(0,6).map((l:string, i:number)=>({
-            label: l.replace(/^\d+\.\s*/, '').substring(0,60),
-            cmd: l.match(/`([^`]+)`/)?.[1] || l.replace(/^\d+\.\s*/, '')
-          }));
-          setIE(s=>({...s, troubleshootResult:{
-            title:'Diagnosis complete',
-            steps: steps.length ? steps : [{label:text.substring(0,200), cmd:''}]
-          }}));
-        } catch(e) {
-          setIE(s=>({...s, troubleshootResult:{
-            title:'Could not reach AI',
-            steps:[
-              {label:'Check your internet connection', cmd:''},
-              {label:'Or use the quick issue buttons above for instant local fixes', cmd:''},
-            ]
-          }}));
-        }
+Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
+
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            model:'claude-sonnet-4-20250514',
+            max_tokens:800,
+            system: systemPrompt,
+            messages:[{role:'user', content:msg}]
+          })
+        });
+        const data = await resp.json();
+        const text = data.content?.[0]?.text || 'Could not get a response.';
+        setIE(s=>({...s, troubleshootResult:{
+          title: sessionActive ? 'Live diagnosis — based on your actual session data' : 'Diagnosis complete',
+          steps:[{label:text, cmd:''}],
+          rawText: text,
+        }}));
+      } catch(e) {
+        setIE(s=>({...s, troubleshootResult: result || {
+          title:'Could not reach AI',
+          steps:[
+            {label:'Check your internet connection', cmd:''},
+            {label:'Use the quick issue buttons above for instant local fixes', cmd:''},
+          ]
+        }}));
       }
     }
 
@@ -5046,65 +5124,169 @@ Never say "it depends" or "you might". Give the exact fix.`,
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scroll px-6 py-6">
-          <div className="max-w-[680px] mx-auto space-y-6">
+          <div className="max-w-[760px] mx-auto space-y-5">
 
-            {/* Quick issue buttons */}
-            <div className="space-y-2">
-              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Common issues — click to get exact fix</p>
-              <div className="flex flex-wrap gap-2">
-                {[
-                  ['Port not found','port not found serial'],
-                  ['IMU not responding','imu pitch not changing zero'],
-                  ['Bot jittery','bot jittery oscillating'],
-                  ["Bot won't balance",'bot not balancing falling'],
-                  ['Dashboard not connecting','dashboard not connecting ws fail'],
-                  ...(ieState.hw&&['ros2_arm','humanoid','legged','auv'].includes(ieState.hw) ? [['ROS2 topic missing','ros2 topic not found']] : []),
-                  ...(ieState.hw&&['px4','ardupilot','evtol'].includes(ieState.hw) ? [['MAVLink heartbeat timeout','mavlink no heartbeat']] : []),
-                ].map(([label,query])=>(
-                  <button key={label} onClick={()=>checkTroubleshoot(query as string)}
-                    className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim hover:border-amber hover:text-amber uppercase tracking-widest transition-all">
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Result */}
-            {ieState.troubleshootResult && (
-              <div className="border border-green/30 bg-bgRaised p-5 space-y-4">
-                <p className="font-display text-sm font-bold text-green uppercase tracking-widest">{ieState.troubleshootResult.title}</p>
-                {ieState.troubleshootResult.steps.map((s,i)=>(
-                  <div key={i} className="space-y-1.5">
-                    <p className="font-mono text-[10px] text-textSecondary font-bold">{s.label}</p>
-                    <div className="flex items-center gap-2 bg-bg border border-border px-3 py-2">
-                      <code className="font-mono text-[10px] text-cyan flex-1">{s.cmd}</code>
-                      <button onClick={()=>copyText(s.cmd,`ts${i}`)}
-                        className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest flex-shrink-0 transition-colors">
-                        {copiedId===`ts${i}`?'✓':'copy'}
-                      </button>
-                    </div>
+            {/* ── LIVE SESSION PANEL — shown when ACTIVE CONTROL is ON ── */}
+            {isControlActive && isSystemConnected && (
+              <div className="border border-green/40 bg-green/5 p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green animate-pulse" />
+                    <span className="font-mono text-[9px] text-green uppercase tracking-widest">Live session active — step {telemetry.step_count || 0}</span>
                   </div>
-                ))}
+                  <span className={`font-mono text-[9px] uppercase tracking-widest px-2 py-0.5 border ${telemetry.isFaulted ? 'text-red border-red/40 bg-red/10' : !telemetry.isStable ? 'text-amber border-amber/40 bg-amber/10' : 'text-green border-green/40'}`}>
+                    Sentinel: {telemetry.isFaulted ? 'FALLBACK' : !telemetry.isStable ? 'CAUTIOUS' : 'NOMINAL'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-bg border border-border p-3 space-y-1">
+                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Mass estimate</p>
+                    <p className="font-display text-lg font-bold text-white">{telemetry.mass.toFixed(3)} kg</p>
+                    {ieState.answers.mass && (
+                      <p className={`font-mono text-[9px] ${Math.abs(telemetry.mass - parseFloat(ieState.answers.mass)) / parseFloat(ieState.answers.mass) > 0.2 ? 'text-amber' : 'text-textDim'}`}>
+                        declared {ieState.answers.mass}kg · {(Math.abs(telemetry.mass - parseFloat(ieState.answers.mass)) / parseFloat(ieState.answers.mass) * 100).toFixed(0)}% drift
+                      </p>
+                    )}
+                  </div>
+                  <div className="bg-bg border border-border p-3 space-y-1">
+                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Residual</p>
+                    <p className={`font-display text-lg font-bold ${telemetry.residual > 0.8 ? 'text-amber' : telemetry.residual > 2.0 ? 'text-red' : 'text-white'}`}>{telemetry.residual.toFixed(4)}</p>
+                    <p className="font-mono text-[9px] text-textDim">
+                      {(() => {
+                        const h = (telemetry.residualHistory||[]).slice(-6).map((p:any)=>p.y);
+                        if (h.length < 3) return 'collecting...';
+                        const trend = h[h.length-1] - h[0];
+                        return trend > 0.05 ? '↑ rising' : trend < -0.05 ? '↓ falling' : '→ stable';
+                      })()}
+                    </p>
+                  </div>
+                  <div className="bg-bg border border-border p-3 space-y-1">
+                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Friction</p>
+                    <p className="font-display text-lg font-bold text-white">{telemetry.friction.toFixed(4)}</p>
+                    <p className="font-mono text-[9px] text-textDim">confidence {telemetry.confidence.toFixed(0)}%</p>
+                  </div>
+                </div>
+                {/* Live quick diagnose buttons */}
+                <div className="space-y-1.5">
+                  <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Ask about what's happening right now</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      'Why is mass estimate drifting?',
+                      'Is this residual level normal?',
+                      'Why did Sentinel go CAUTIOUS?',
+                      'Is BEARING_WEAR fault real?',
+                      'Bot still jittery after ACTIVE CONTROL ON',
+                      'Why isn't friction converging?',
+                      'What does this Lyapunov reading mean?',
+                    ].map(q=>(
+                      <button key={q} onClick={()=>checkTroubleshoot(q)}
+                        className="px-3 py-1.5 border border-green/30 bg-green/5 font-mono text-[9px] text-green hover:bg-green/15 uppercase tracking-widest transition-all">
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* Freetext */}
+            {/* ── Pre-session quick issue buttons ── */}
+            {(!isControlActive || !isSystemConnected) && (
+              <div className="space-y-2">
+                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Common issues — click to get exact fix</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    ['Port not found','port not found serial'],
+                    ['IMU not responding','imu pitch not changing zero'],
+                    ['Bot jittery','bot jittery oscillating'],
+                    ["Bot won't balance",'bot not balancing falling'],
+                    ['Dashboard not connecting','dashboard not connecting ws fail'],
+                    ...(ieState.hw&&['ros2_arm','humanoid','legged','auv'].includes(ieState.hw) ? [['ROS2 topic missing','ros2 topic not found']] : []),
+                    ...(ieState.hw&&['px4','ardupilot','evtol'].includes(ieState.hw) ? [['MAVLink heartbeat timeout','mavlink no heartbeat']] : []),
+                  ].map(([label,query])=>(
+                    <button key={label} onClick={()=>checkTroubleshoot(query as string)}
+                      className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim hover:border-amber hover:text-amber uppercase tracking-widest transition-all">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Diagnosis result ── */}
+            {ieState.troubleshootResult && (
+              <div className={`border p-5 space-y-3 ${(ieState.troubleshootResult as any).rawText ? 'border-green/30 bg-bgRaised' : 'border-green/20 bg-bgRaised'}`}>
+                <div className="flex items-center gap-2">
+                  {isControlActive && isSystemConnected && <div className="w-1.5 h-1.5 rounded-full bg-green" />}
+                  <p className="font-display text-xs font-bold text-green uppercase tracking-widest">{ieState.troubleshootResult.title}</p>
+                </div>
+                {(ieState.troubleshootResult as any).rawText ? (
+                  // Rich text response from Claude — render as formatted paragraphs
+                  <div className="space-y-3">
+                    {(ieState.troubleshootResult as any).rawText.split('\n').filter((l:string)=>l.trim()).map((line:string, i:number)=>{
+                      const isStep = /^\d+\./.test(line.trim());
+                      const isCode = line.includes('`');
+                      const codeMatch = line.match(/`([^`]+)`/g);
+                      return (
+                        <div key={i} className={isStep ? 'flex gap-3 items-start' : ''}>
+                          {isStep && (
+                            <span className="font-mono text-[9px] text-green shrink-0 mt-0.5 w-5">
+                              {line.trim().match(/^(\d+)\./)?.[1]}.
+                            </span>
+                          )}
+                          <p className={`font-body text-sm leading-relaxed ${isStep ? 'text-textSecondary' : line.startsWith('#') ? 'text-white font-bold' : 'text-textDim'}`}>
+                            {line.trim().replace(/^\d+\.\s*/, '')}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  // Structured steps response
+                  ieState.troubleshootResult.steps.map((s,i)=>(
+                    <div key={i} className="space-y-1.5">
+                      <p className="font-mono text-[10px] text-textSecondary font-bold">{s.label}</p>
+                      {s.cmd && (
+                        <div className="flex items-center gap-2 bg-bg border border-border px-3 py-2">
+                          <code className="font-mono text-[10px] text-cyan flex-1">{s.cmd}</code>
+                          <button onClick={()=>copyText(s.cmd,`ts${i}`)}
+                            className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest flex-shrink-0 transition-colors">
+                            {copiedId===`ts${i}`?'✓':'copy'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* ── Freetext input ── */}
             <div className="space-y-2">
-              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Or describe your problem</p>
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">
+                {isControlActive && isSystemConnected
+                  ? 'Ask anything about your live session — mass drift, Lyapunov, faults, Sentinel mode...'
+                  : 'Describe your problem exactly'}
+              </p>
               <div className="flex gap-3">
                 <input
                   className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
-                  placeholder="Describe exactly what you see — error message, what LED does, what terminal shows..."
+                  placeholder={isControlActive && isSystemConnected
+                    ? 'e.g. mass jumped to 3.2kg, residual is rising, Sentinel went CAUTIOUS...' 
+                    : 'Describe exactly what you see — error message, what LED does, what terminal shows...'}
                   value={tsInput}
                   onChange={e=>setTsInput(e.target.value)}
                   onKeyDown={e=>{if(e.key==='Enter'&&tsInput.trim()){checkTroubleshoot(tsInput);setTsInput('');}}}
                 />
                 <button onClick={()=>{if(tsInput.trim()){checkTroubleshoot(tsInput);setTsInput('');}}}
                   className="px-5 py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
-                  Diagnose
+                  {isControlActive && isSystemConnected ? 'Analyse' : 'Diagnose'}
                 </button>
               </div>
-              <p className="font-mono text-[9px] text-textDim">Hardware context: {flow?.label||'none'} {ieState.answers.imu||ieState.answers.distro||''}</p>
+              <p className="font-mono text-[9px] text-textDim">
+                {isControlActive && isSystemConnected
+                  ? `Reading live data · Sentinel: ${telemetry.isFaulted ? 'FALLBACK' : !telemetry.isStable ? 'CAUTIOUS' : 'NOMINAL'} · Step ${telemetry.step_count || 0} · Residual ${telemetry.residual.toFixed(4)}`
+                  : `Hardware: ${flow?.label||'none'} ${ieState.answers.imu||ieState.answers.distro||''}`}
+              </p>
             </div>
           </div>
         </div>
