@@ -6822,12 +6822,48 @@ max_torque: 2.5`}</Code>
     );
   };
 
-  if (loading || checkingAccess) {
+  if (loading) {
     return (
       <div className="h-screen w-full bg-void flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Cpu className="text-green animate-spin-slow" size={48} />
           <span className="font-mono text-xs text-green uppercase tracking-widest">Verifying Neural Handshake...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // ── ACCESS GATE ────────────────────────────────────────────────────────────
+  // Only users in BETA_TESTERS can access PhysiCore.
+  // Signed-in but not on the list → blocked screen.
+  // Not signed in → only the home page is visible (login required for everything else).
+  if (user && !isAuthorized) {
+    return (
+      <div className="h-screen w-full bg-void flex items-center justify-center px-6">
+        <div className="max-w-md w-full space-y-8 text-center">
+          <div className="w-16 h-16 mx-auto border border-red/30 flex items-center justify-center">
+            <ShieldAlert size={28} className="text-red" />
+          </div>
+          <div className="space-y-3">
+            <h1 className="font-display text-2xl font-bold text-white uppercase tracking-widest">Access Restricted</h1>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              PhysiCore is currently in closed beta. Your account
+              <span className="text-white font-mono text-xs block mt-1">{user.email}</span>
+              is not on the access list.
+            </p>
+          </div>
+          <div className="p-5 border border-border bg-bgRaised space-y-3">
+            <p className="font-mono text-[10px] text-textDim uppercase tracking-widest">Want access?</p>
+            <p className="font-body text-xs text-textSecondary">
+              Contact Prathamesh at <span className="text-green">prathameshshirbhate8anpc@gmail.com</span> to request beta access.
+            </p>
+          </div>
+          <button
+            onClick={() => signOut(auth)}
+            className="px-6 py-3 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:border-red hover:text-red transition-all"
+          >
+            Sign Out
+          </button>
         </div>
       </div>
     );
