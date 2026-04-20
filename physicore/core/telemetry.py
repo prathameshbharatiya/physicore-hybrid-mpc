@@ -1,3 +1,4 @@
+import os
 """
 PhysiCore Telemetry — The Data Flywheel
 ========================================
@@ -164,7 +165,12 @@ class TelemetryManager:
         6. Aggregated data improves platform priors for all users
     """
 
-    ENDPOINT = "https://physicore-telemetry.vercel.app/api/ingest"
+    # Live endpoint — receives opt-in telemetry from all PhysiCore deployments
+    # Set PHYSICORE_TELEMETRY_URL to override (for self-hosted setups)
+    ENDPOINT = os.environ.get(
+        "PHYSICORE_TELEMETRY_URL",
+        "https://api.physicore.ai/telemetry/ingest"
+    )
 
     def __init__(self, enabled: bool = False):
         self.enabled    = enabled

@@ -30,7 +30,9 @@ from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Security
+from fastapi.security import APIKeyHeader
+from physicore.api.auth import require_api_key
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -38,6 +40,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
+from physicore import __version__
 from physicore import PhysiCore, PhysiCoreConfig, PLATFORM_DYNAMICS
 
 # Registry + Sentinel
@@ -87,10 +90,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS — allow physicore.ai domains + localhost for dev
+_ALLOWED_ORIGINS = [
+    "https://physicore.ai",
+    "https://www.physicore.ai",
+    "https://physicore-hybrid-mpc.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8080",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -719,6 +731,140 @@ Give exact numbered steps to fix this."""
 
 
 
+
+# ── Shared Registry endpoints (fleet learning / cross-team priors) ────────────
+# These proxy to the hosted shared registry at api.physicore.ai
+# Local registry is always the source of truth; shared is additive.
+
+SHARED_REGISTRY_URL = os.environ.get(
+    "PHYSICORE_SHARED_REGISTRY_URL",
+    "https://api.physicore.ai/registry"
+)
+
+@app.get("/api/registry/shared/{platform}")
+async def get_shared_prior(platform: str):
+    """
+    Fetch the globally aggregated platform prior from the hosted shared registry.
+    Returns the best starting params learned from all opted-in teams worldwide.
+    Falls back gracefully if shared registry is unreachable.
+    """
+    import urllib.request, urllib.error
+    try:
+        url = f"{SHARED_REGISTRY_URL}/prior/{platform}"
+        req = urllib.request.Request(url, headers={"User-Agent": f"physicore/{__version__}"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {
+            "platform": platform,
+            "params": {},
+            "sessions": 0,
+            "source": "shared_registry_unavailable",
+            "error": str(e),
+        }
+
+
+@app.post("/api/registry/{platform}/snapshot")
+async def create_snapshot(platform: str):
+    """
+    Create a versioned snapshot of the current model state.
+    Snapshots are immutable — you can always roll back to a known-good session.
+    Stored in ~/.physicore/registry/{platform}/snapshots/{timestamp}/
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    engine = require_engine()
+    reg = get_registry()
+
+    import time, shutil
+    snapshot_id = f"snap_{int(time.time())}"
+    platform_dir = reg._platform_dir(platform)
+    snap_dir = platform_dir / "snapshots" / snapshot_id
+    snap_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy current state into snapshot
+    for fname in ["params.json", "ensemble_0.npz", "ensemble_1.npz",
+                  "ensemble_2.npz", "cem_warmstart.npz"]:
+        src = platform_dir / fname
+        if src.exists():
+            shutil.copy2(src, snap_dir / fname)
+
+    # Save snapshot metadata
+    meta = {
+        "snapshot_id": snapshot_id,
+        "platform": platform,
+        "timestamp": time.time(),
+        "step_count": engine._step_count,
+        "params": engine.physics.params.copy(),
+        "residual": engine.diagnostics_full.get("residual_norm", 0),
+    }
+    with open(snap_dir / "meta.json", "w") as f:
+        json.dump(meta, f, indent=2)
+
+    return {"snapshot_id": snapshot_id, "path": str(snap_dir), "meta": meta}
+
+
+@app.get("/api/registry/{platform}/snapshots")
+async def list_snapshots(platform: str):
+    """List all versioned snapshots for a platform."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    reg = get_registry()
+    snap_dir = reg._platform_dir(platform) / "snapshots"
+    if not snap_dir.exists():
+        return {"snapshots": []}
+
+    snaps = []
+    for d in sorted(snap_dir.iterdir()):
+        meta_path = d / "meta.json"
+        if meta_path.exists():
+            with open(meta_path) as f:
+                snaps.append(json.load(f))
+    return {"snapshots": sorted(snaps, key=lambda x: x["timestamp"], reverse=True)}
+
+
+@app.post("/api/registry/{platform}/rollback/{snapshot_id}")
+async def rollback_snapshot(platform: str, snapshot_id: str):
+    """
+    Roll back engine to a previously saved snapshot.
+    This is the safety net — if a session corrupted the model, roll back to last good.
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    engine = require_engine()
+    reg = get_registry()
+
+    snap_dir = reg._platform_dir(platform) / "snapshots" / snapshot_id
+    if not snap_dir.exists():
+        raise HTTPException(404, f"Snapshot {snapshot_id} not found")
+
+    import shutil
+    platform_dir = reg._platform_dir(platform)
+
+    # Restore snapshot files
+    restored = []
+    for fname in ["params.json", "ensemble_0.npz", "ensemble_1.npz",
+                  "ensemble_2.npz", "cem_warmstart.npz"]:
+        src = snap_dir / fname
+        if src.exists():
+            shutil.copy2(src, platform_dir / fname)
+            restored.append(fname)
+
+    # Reload into running engine
+    reg.load(engine, platform)
+
+    with open(snap_dir / "meta.json") as f:
+        meta = json.load(f)
+
+    return {
+        "rolled_back_to": snapshot_id,
+        "restored_files": restored,
+        "params": engine.physics.params,
+        "original_step": meta.get("step_count"),
+    }
+
+
+
 # ── Sentinel endpoints ─────────────────────────────────────────────────────────
 
 class SentinelStepRequest(BaseModel):
@@ -784,3 +930,14 @@ async def sentinel_faults():
         raise HTTPException(400, "Sentinel not configured")
     return {"faults": engine_state.sentinel.fault_log,
             "count": len(engine_state.sentinel.fault_log)}
+
+
+def run():
+    """Entry point for physicore-server console script."""
+    import uvicorn
+    host = os.environ.get("PHYSICORE_HOST", "0.0.0.0")
+    port = int(os.environ.get("PHYSICORE_PORT", "8000"))
+    uvicorn.run("physicore.api.server:app", host=host, port=port, reload=False)
+
+if __name__ == "__main__":
+    run()
