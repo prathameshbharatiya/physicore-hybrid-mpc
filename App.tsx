@@ -51,7 +51,8 @@ const BETA_TESTERS = [
   "aleksaspetro@gmail.com",
   "ammar@purposerobotics.ca",
   "koshmarus@gmail.com",
-  "sudhar@hardlightsim.com"
+  "sudhar@hardlightsim.com",
+  "aman@naveria.space"
 ];
 
 
@@ -2589,7 +2590,8 @@ function AppContent() {
       "work.prateekg@gmail.com",
       "aleksaspetro@gmail.com",
       "ammar@purposerobotics.ca",
-      "sudhar@hardlightsim.com"
+      "sudhar@hardlightsim.com",
+      "aman@naveria.space"
     ];
     
     let addedCount = 0;
