@@ -45,7 +45,6 @@ const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
   "prathameshshirbhate8anpc@gmail.com",
-  "ashwanth123creations@gmail.com",
   "prathameshshirbhate256@gmail.com",
   "work.prateekg@gmail.com",
   "aleksaspetro@gmail.com",
@@ -2585,7 +2584,6 @@ function AppContent() {
       "darisglx@gmail.com",
       "vladimir.robotics@gmail.com",
       "projectauvm@manipal.edu",
-      "ashwanth123creations@gmail.com",
       "prathameshshirbhate256@gmail.com",
       "work.prateekg@gmail.com",
       "aleksaspetro@gmail.com",
