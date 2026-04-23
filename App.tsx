@@ -51,7 +51,8 @@ const BETA_TESTERS = [
   "koshmarus@gmail.com",
   "sudhar@hardlightsim.com",
   "aman@naveria.space",
-  "amanmain3@gmail.com"
+  "amanmain3@gmail.com",
+  "ppareek85@gmail.com"
 ];
 
 
