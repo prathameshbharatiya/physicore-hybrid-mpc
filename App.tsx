@@ -44,7 +44,6 @@ const RKT_P0 = 101325;
 const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
-  "prathameshshirbhate8anpc@gmail.com",
   "prathameshshirbhate256@gmail.com",
   "work.prateekg@gmail.com",
   "aleksaspetro@gmail.com",
@@ -2567,7 +2566,7 @@ function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
-  const isAuthorized = user?.email ? BETA_TESTERS.includes(user.email) : false;
+  const isAuthorized = isAdmin || isBetaTester;
   
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -2590,8 +2589,7 @@ function AppContent() {
       "aleksaspetro@gmail.com",
       "ammar@purposerobotics.ca",
       "sudhar@hardlightsim.com",
-      "aman@naveria.space",
-      "amanmain3@gmail.com"
+      "aman@naveria.space"
     ];
     
     let addedCount = 0;
