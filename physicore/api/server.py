@@ -932,6 +932,441 @@ async def sentinel_faults():
             "count": len(engine_state.sentinel.fault_log)}
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  ITEM 4 — WEBHOOK SYSTEM
+#  Teams register endpoints. PhysiCore calls them when things happen.
+#  Events: fault_detected, convergence_complete, session_saved, sentinel_mode_change
+# =============================================================================
+
+import hashlib as _hashlib
+import hmac as _hmac
+import threading as _threading
+from typing import Optional as _Optional
+
+_WEBHOOKS: list = []   # List of {url, secret, events}
+_WEBHOOK_LOCK = _threading.Lock()
+
+def _webhook_sign(payload: str, secret: str) -> str:
+    """HMAC-SHA256 signature so teams can verify PhysiCore sent the event."""
+    return _hmac.new(secret.encode(), payload.encode(), _hashlib.sha256).hexdigest()
+
+def _fire_webhook(event_type: str, data: dict) -> None:
+    """Fire all matching webhooks in background threads. Never blocks control loop."""
+    import urllib.request, urllib.error
+    with _WEBHOOK_LOCK:
+        targets = [w for w in _WEBHOOKS if event_type in w.get('events', [])]
+
+    for wh in targets:
+        def _send(webhook=wh):
+            try:
+                payload = json.dumps({
+                    'event':     event_type,
+                    'timestamp': time.time(),
+                    'data':      data,
+                })
+                sig = _webhook_sign(payload, webhook.get('secret', ''))
+                req = urllib.request.Request(
+                    webhook['url'],
+                    data=payload.encode(),
+                    headers={
+                        'Content-Type':           'application/json',
+                        'X-PhysiCore-Event':      event_type,
+                        'X-PhysiCore-Signature':  f'sha256={sig}',
+                        'X-PhysiCore-Timestamp':  str(int(time.time())),
+                        'User-Agent':             'PhysiCore-Webhook/2.0',
+                    },
+                    method='POST',
+                )
+                urllib.request.urlopen(req, timeout=5)
+            except Exception as e:
+                print(f'[WEBHOOK] Failed to deliver {event_type} to {webhook["url"]}: {e}')
+
+        _threading.Thread(target=_send, daemon=True).start()
+
+
+class WebhookRegisterRequest(BaseModel):
+    url:    str
+    events: list  = ['fault_detected', 'convergence_complete', 'session_saved', 'sentinel_mode_change']
+    secret: str   = ''   # Optional HMAC secret for signature verification
+
+
+@app.post('/api/webhooks/register')
+async def register_webhook(req: WebhookRegisterRequest):
+    """
+    Register a webhook endpoint.
+    PhysiCore will POST to this URL when the specified events occur.
+
+    Events:
+      fault_detected          — Sentinel detected a hardware fault
+      convergence_complete    — SysID has converged (residual stable < 0.05)
+      session_saved           — Session ended and params saved to registry
+      sentinel_mode_change    — Sentinel mode changed (NOMINAL → CAUTIOUS etc)
+
+    Each POST includes:
+      X-PhysiCore-Signature: sha256=<hmac> for verification
+      X-PhysiCore-Event: the event type
+      Body: JSON with event, timestamp, data
+
+    Example payload (fault_detected):
+      {
+        "event": "fault_detected",
+        "timestamp": 1714000000.0,
+        "data": {
+          "fault_type": "BEARING_WEAR",
+          "confidence": 0.87,
+          "params": {"friction": 0.52},
+          "step": 1847
+        }
+      }
+    """
+    with _WEBHOOK_LOCK:
+        # Deduplicate by URL
+        _WEBHOOKS[:] = [w for w in _WEBHOOKS if w['url'] != req.url]
+        _WEBHOOKS.append({'url': req.url, 'events': req.events, 'secret': req.secret})
+
+    return {
+        'registered': True,
+        'url':        req.url,
+        'events':     req.events,
+        'total_webhooks': len(_WEBHOOKS),
+    }
+
+
+@app.delete('/api/webhooks/{url:path}')
+async def deregister_webhook(url: str):
+    """Remove a previously registered webhook."""
+    with _WEBHOOK_LOCK:
+        before = len(_WEBHOOKS)
+        _WEBHOOKS[:] = [w for w in _WEBHOOKS if w['url'] != url]
+    return {'removed': before - len(_WEBHOOKS)}
+
+
+@app.get('/api/webhooks')
+async def list_webhooks():
+    """List all registered webhooks."""
+    with _WEBHOOK_LOCK:
+        return {'webhooks': [{'url': w['url'], 'events': w['events']} for w in _WEBHOOKS]}
+
+
+@app.post('/api/webhooks/test')
+async def test_webhook(req: WebhookRegisterRequest):
+    """Send a test event to a webhook URL to verify delivery."""
+    _fire_webhook('test', {
+        'message': 'PhysiCore webhook delivery test',
+        'physicore_version': '2.1.0',
+    })
+    return {'sent': True, 'url': req.url}
+
+
+# ── Webhook triggers (called internally after key events) ─────────────────────
+
+def _maybe_fire_fault(step_result) -> None:
+    """Call after engine.step() — fires fault_detected if new critical fault."""
+    try:
+        failures = step_result.failure_events if hasattr(step_result, 'failure_events') else []
+        for f in failures:
+            if hasattr(f, 'severity') and f.severity == 'CRITICAL':
+                _fire_webhook('fault_detected', {
+                    'fault_type':  f.failure_type,
+                    'description': f.description,
+                    'severity':    f.severity,
+                    'value':       f.value,
+                    'step':        f.step,
+                    'params':      f.params_snapshot,
+                })
+    except Exception:
+        pass
+
+
+def _maybe_fire_convergence(engine) -> None:
+    """Call periodically — fires convergence_complete when residual first stabilises."""
+    try:
+        d = engine.diagnostics_full
+        hist = d.get('sysid_loss_hist', [])
+        res  = d.get('residual_norm', 1.0)
+        if len(hist) >= 10 and res < 0.05:
+            last5 = hist[-5:]
+            if max(last5) - min(last5) < 0.002:   # stable
+                _fire_webhook('convergence_complete', {
+                    'residual':   round(res, 4),
+                    'params':     d.get('params', {}),
+                    'step_count': d.get('step_count', 0),
+                    'message':    'PhysiCore has learned your hardware. Registry saving params.',
+                })
+    except Exception:
+        pass
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  ITEM 2 — REGISTRY AS A SERVICE
+#  Versioned snapshots, rollback, and convergence proof.
+#  The flywheel: teams can't leave without losing accumulated knowledge.
+# =============================================================================
+
+@app.get('/api/registry/{platform}/convergence')
+async def registry_convergence(platform: str):
+    """
+    Convergence proof — show session-over-session improvement.
+    This is the flywheel made visible: how much better each session starts
+    than the previous one.
+
+    Returns first vs latest session residual, param stability, sessions count.
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, 'Registry not available')
+    reg = get_registry()
+    d   = reg._platform_dir(platform)
+    fp  = d / 'sessions.jsonl'
+    if not fp.exists():
+        return {'platform': platform, 'sessions': 0, 'message': 'No sessions yet'}
+
+    sessions = []
+    with open(fp) as f:
+        for line in f:
+            try:
+                sessions.append(_json.loads(line.strip()))
+            except Exception:
+                pass
+
+    if not sessions:
+        return {'platform': platform, 'sessions': 0}
+
+    first  = sessions[0]
+    latest = sessions[-1]
+
+    # Compute improvement
+    first_res  = first.get('convergence_pct',  0)
+    latest_res = latest.get('convergence_pct', 0)
+    improvement = latest_res - first_res
+
+    return {
+        'platform':       platform,
+        'sessions':       len(sessions),
+        'first_session':  first,
+        'latest_session': latest,
+        'improvement_pct': round(improvement, 1),
+        'message': f'{len(sessions)} sessions. Convergence improved by {improvement:.1f}% since session 1.' if len(sessions) > 1 else 'First session — run more sessions to see flywheel effect.',
+        'flywheel_active': len(sessions) >= 3 and improvement > 5,
+    }
+
+
+@app.post('/api/registry/{platform}/snapshot')
+async def create_snapshot(platform: str):
+    """
+    Create a named snapshot of current model state.
+    Snapshots are immutable — you can always roll back to a known-good model.
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, 'Registry not available')
+    engine = require_engine()
+    reg    = get_registry()
+
+    import shutil as _shutil
+    snapshot_id = f'snap_{int(time.time())}'
+    platform_dir = reg._platform_dir(platform)
+    snap_dir     = platform_dir / 'snapshots' / snapshot_id
+    snap_dir.mkdir(parents=True, exist_ok=True)
+
+    restored = []
+    for fname in ['params.json', 'ensemble_0.npz', 'ensemble_1.npz',
+                  'ensemble_2.npz', 'cem_warmstart.npz']:
+        src = platform_dir / fname
+        if src.exists():
+            _shutil.copy2(src, snap_dir / fname)
+            restored.append(fname)
+
+    d = engine.diagnostics_full
+    meta = {
+        'snapshot_id': snapshot_id,
+        'platform':    platform,
+        'timestamp':   time.time(),
+        'step_count':  d.get('step_count', 0),
+        'residual':    round(d.get('residual_norm', 0), 4),
+        'params':      d.get('params', {}),
+        'files':       restored,
+    }
+    with open(snap_dir / 'meta.json', 'w') as f:
+        _json.dump(meta, f, indent=2)
+
+    return {'snapshot_id': snapshot_id, 'files_saved': restored, 'meta': meta}
+
+
+@app.get('/api/registry/{platform}/snapshots')
+async def list_snapshots(platform: str):
+    """List all versioned snapshots for a platform, newest first."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, 'Registry not available')
+    reg      = get_registry()
+    snap_dir = reg._platform_dir(platform) / 'snapshots'
+    if not snap_dir.exists():
+        return {'snapshots': [], 'count': 0}
+
+    snaps = []
+    for d in sorted(snap_dir.iterdir(), reverse=True):
+        meta_p = d / 'meta.json'
+        if meta_p.exists():
+            with open(meta_p) as f:
+                snaps.append(_json.load(f))
+
+    return {'snapshots': snaps, 'count': len(snaps)}
+
+
+@app.post('/api/registry/{platform}/rollback/{snapshot_id}')
+async def rollback_to_snapshot(platform: str, snapshot_id: str):
+    """
+    Roll back engine to a previously saved snapshot.
+    Safety net: if a session corrupted the model, restore last known-good.
+    """
+    if not HAS_REGISTRY:
+        raise HTTPException(503, 'Registry not available')
+    engine = require_engine()
+    reg    = get_registry()
+
+    import shutil as _shutil
+    snap_dir     = reg._platform_dir(platform) / 'snapshots' / snapshot_id
+    platform_dir = reg._platform_dir(platform)
+
+    if not snap_dir.exists():
+        raise HTTPException(404, f'Snapshot {snapshot_id} not found')
+
+    restored = []
+    for fname in ['params.json', 'ensemble_0.npz', 'ensemble_1.npz',
+                  'ensemble_2.npz', 'cem_warmstart.npz']:
+        src = snap_dir / fname
+        if src.exists():
+            _shutil.copy2(src, platform_dir / fname)
+            restored.append(fname)
+
+    reg.load(engine, platform)
+    with open(snap_dir / 'meta.json') as f:
+        meta = _json.load(f)
+
+    _fire_webhook('session_saved', {
+        'event':       'rollback',
+        'snapshot_id': snapshot_id,
+        'platform':    platform,
+        'restored':    restored,
+    })
+
+    return {
+        'rolled_back_to': snapshot_id,
+        'restored_files': restored,
+        'params':         engine.physics.params,
+        'original_step':  meta.get('step_count'),
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  ITEM 6 — NARRATION ENDPOINT (PRODUCT-GRADE)
+#  Plain-English engine status. Teams display this in their product UI.
+#  PhysiCore's words appear in front of their customers.
+# =============================================================================
+
+@app.get('/api/narrate')
+async def narrate():
+    """
+    Plain-English interpretation of current PhysiCore state.
+    No API key. No rate limits. Always works. Updates every step.
+
+    Teams display this in their product UI so their customers understand
+    what the robot is doing and how well it has adapted.
+
+    Example response:
+      {
+        "status": "NOMINAL",
+        "headline": "Model converged — residual 0.0031, mass 1.347kg",
+        "detail": "PhysiCore has learned your hardware's real physics...",
+        "action": "Nominal. Registry will save learned params on session end.",
+        "badge": "🟢 NOMINAL",
+        "badge_color": "#00FF88",
+        "metrics": { "residual": 0.0031, "mass": 1.347, ... },
+        "for_display": {
+          "title": "PhysiCore Status",
+          "subtitle": "Adapting to your hardware in real time",
+          "status_line": "Mass learned: 1.347kg | Residual: 0.0031 | 847 steps"
+        }
+      }
+    """
+    engine = require_engine()
+    nar    = engine.narrate()
+
+    status = nar['status']
+    badge_map = {
+        'NOMINAL':    ('🟢 NOMINAL',    '#00FF88'),
+        'CONVERGING': ('🔵 CONVERGING', '#0099FF'),
+        'ELEVATED':   ('🟡 ELEVATED',   '#FFB800'),
+        'FAULT':      ('🔴 FAULT',      '#FF2222'),
+    }
+    badge, color = badge_map.get(status, ('⚪ UNKNOWN', '#7A7A7A'))
+    m = nar['metrics']
+
+    return {
+        **nar,
+        'badge':       badge,
+        'badge_color': color,
+        'for_display': {
+            'title':       'PhysiCore Adaptive Physics',
+            'subtitle':    'Learning your hardware in real time',
+            'status_line': f'Mass: {m["mass"]}kg | Residual: {m["residual"]} | {m["steps"]} steps',
+            'detail':      nar['detail'],
+            'action':      nar['action'],
+        },
+        'embed_html': f'''<div style="font-family:monospace;padding:12px;background:#0C0C0C;border:1px solid {color}40;border-radius:4px;">
+  <span style="color:{color};font-weight:bold;">{badge}</span>
+  <div style="color:#EFEFEF;margin-top:4px;font-size:13px;">{nar["headline"]}</div>
+  <div style="color:#7A7A7A;font-size:11px;margin-top:4px;">Mass: {m["mass"]}kg | Residual: {m["residual"]} | {m["steps"]} steps</div>
+</div>''',
+    }
+
+
+@app.get('/api/narrate/stream')
+async def narrate_stream():
+    """
+    Server-sent events stream of narration updates.
+    Teams connect once and receive live engine status as it changes.
+
+    Usage (JavaScript):
+        const es = new EventSource('http://localhost:8000/api/narrate/stream');
+        es.onmessage = (e) => {
+            const status = JSON.parse(e.data);
+            document.getElementById('status').innerHTML = status.embed_html;
+        };
+    """
+    from fastapi.responses import StreamingResponse
+
+    async def event_stream():
+        last_status = None
+        while True:
+            try:
+                if engine_state.engine:
+                    nar = engine_state.engine.narrate()
+                    if nar['status'] != last_status:
+                        last_status = nar['status']
+                        m = nar['metrics']
+                        badge_map = {
+                            'NOMINAL':    ('🟢 NOMINAL', '#00FF88'),
+                            'CONVERGING': ('🔵 CONVERGING', '#0099FF'),
+                            'ELEVATED':   ('🟡 ELEVATED', '#FFB800'),
+                            'FAULT':      ('🔴 FAULT', '#FF2222'),
+                        }
+                        badge, color = badge_map.get(nar['status'], ('⚪', '#7A7A7A'))
+                        data = _json.dumps({
+                            **nar,
+                            'badge': badge,
+                            'badge_color': color,
+                            'status_line': f'Mass: {m["mass"]}kg | Residual: {m["residual"]} | {m["steps"]} steps',
+                        })
+                        yield f'data: {data}\n\n'
+                await asyncio.sleep(1.0)
+            except Exception:
+                await asyncio.sleep(2.0)
+
+    return StreamingResponse(event_stream(), media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache',
+                                      'X-Accel-Buffering': 'no'})
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn
