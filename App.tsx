@@ -5306,14 +5306,48 @@ Be direct, technical, confident. You are the world's best robotics integration e
     }
 
     async function checkTroubleshoot(msg: string) {
-      const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
-      setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
+      // Step 1: Local decision tree — INSTANT, always works, no API needed
+      const localResult = ie_troubleshoot(msg, ieState.hw, ieState.answers);
 
-      // Always call Claude — either with live session context or static context
-      setIE(s=>({...s, troubleshootResult: result || {
-        title:'Diagnosing...',
-        steps:[{label:'Analysing your session data', cmd:'Please wait'}]
+      if (localResult) {
+        // Local tree matched — show answer immediately
+        setIE(s=>({...s, troubleshootResult: localResult, phase:'troubleshoot'}));
+        // Then try to enhance with AI in the background (silently, no spinner)
+        try {
+          const ai = getAI();
+          if (!ai) return; // No key — local answer is enough
+          const snapshot = buildLiveSnapshot();
+          const sessionActive = isControlActive && isSystemConnected;
+          const extraCtx = sessionActive && snapshot
+            ? `LIVE DATA: mass=${snapshot.mass.current}kg drift=${snapshot.mass.driftPct}% residual=${snapshot.residual.current} trend=${snapshot.residual.trend} sentinel=${snapshot.sentinelMode}`
+            : '';
+          const enhResp = await ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents: `PhysiCore ${IE_FLOWS[ieState.hw]?.label||ieState.hw} troubleshooter.
+User problem: ${msg}
+${extraCtx}
+Add 1-2 specific insights beyond the basic answer. Be concise.`,
+          });
+          const extra = enhResp.text?.trim();
+          if (extra) {
+            setIE(s=>({...s, troubleshootResult:{
+              ...localResult,
+              title: sessionActive ? 'Live diagnosis' : localResult.title,
+              aiInsight: extra,
+            }}));
+          }
+        } catch(_) {} // Enhancement failed silently — local answer still shown
+        return;
+      }
+
+      // Step 2: No local match — need AI for novel/custom problem
+      setIE(s=>({...s, troubleshootResult:{
+        title:'Diagnosing your problem...',
+        steps:[{label:'Analysing...', cmd:'One moment'}]
       }, phase:'troubleshoot'}));
+
+      const snapshot = buildLiveSnapshot();
+      const sessionActive = isControlActive && isSystemConnected;
 
       const snapshot = buildLiveSnapshot();
       const sessionActive = isControlActive && isSystemConnected;
@@ -5390,7 +5424,24 @@ PROBLEM: ${msg}`,
             }
           } catch (_ae) {}
         }
-        if (!text) text = 'Could not reach AI. Use the quick fix buttons above for instant answers.';
+        if (!text) {
+          // AI unavailable — generate a local fallback from what we know
+          const hw = IE_FLOWS[ieState.hw]?.label || ieState.hw || 'your hardware';
+          const m = msg.toLowerCase();
+          if (m.includes('balanc') || m.includes('fall') || m.includes('tip')) {
+            text = `Balancing issue checklist:\n1. Verify BALANCE_POINT: hold upright → Serial Monitor → read pitch → set that value → re-upload\n2. Check MAX_TORQUE = 2.5 in firmware (not 100 or 255)\n3. Confirm ACTIVE CONTROL ON (LED must be ON)\n4. Verify IMU data changing: tilt robot → pitch must move in Serial Monitor`;
+          } else if (m.includes('imu') || m.includes('sensor') || m.includes('zero') || m.includes('pitch')) {
+            text = `IMU troubleshooting:\n1. Check wiring: SDA→A4, SCL→A5, VCC→3.3V (NOT 5V), GND→GND\n2. Run I2C scanner: File→Examples→Wire→i2c_scanner — your IMU address must appear\n3. Install IMU library: Library Manager → search "${ieState.answers.imu || 'MPU6050'}"\n4. Re-upload firmware after library install`;
+          } else if (m.includes('connect') || m.includes('dashboard') || m.includes('bridge')) {
+            text = `Connection troubleshooting:\n1. Endpoint must be exactly: ws://localhost:8765\n2. Close Arduino IDE (it holds the serial port)\n3. Run: python physicore/bridge/physicore_bridge.py --test\n4. Check firewall — allow port 8765`;
+          } else if (m.includes('ros2') || m.includes('topic') || m.includes('rclpy')) {
+            text = `ROS2 troubleshooting:\n1. source /opt/ros/${(ieState.answers.distro||'humble').toLowerCase()}/setup.bash (every terminal)\n2. ros2 topic list — your topics must appear\n3. ros2 topic echo ${ieState.answers.topic||'/joint_states'} --once — data must flow`;
+          } else if (m.includes('rocket') || m.includes('altitude') || m.includes('pressure') || m.includes('baro')) {
+            text = `Rocket/barometer troubleshooting:\n1. Check I2C wiring: ${ieState.answers.baro||'BMP388'} SDA→A4, SCL→A5, VCC→3.3V\n2. Run I2C scanner — address ${ieState.answers.baro==='BMP280'?'0x76':'0x77'} must appear\n3. Install library: "${ieState.answers.baro||'BMP388'}" in Library Manager\n4. Check altitude_raw vs altitude fields — if altitude_raw is 0, sensor not initialized`;
+          } else {
+            text = `Diagnosis for ${hw}:\n1. Verify hardware wiring and power (3.3V not 5V for most sensors)\n2. Check serial port: python physicore/bridge/physicore_bridge.py --test\n3. Verify firmware is sending real sensor data (not zeros)\n4. Dashboard endpoint must be exactly ws://localhost:8765\n\nDescribe your specific error and I will give a more precise answer.`;
+          }
+        }
         setIE(s=>({...s, troubleshootResult:{
           title: sessionActive ? 'Live diagnosis — based on your actual session data' : 'Diagnosis complete',
           steps:[{label:text, cmd:''}],
