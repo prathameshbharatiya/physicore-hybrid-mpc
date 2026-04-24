@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "physicore"
+version = "2.1.0"
+description = "Hybrid Uncertainty-Aware Sim-to-Real Engine — close the reality gap at 60 Hz on any hardware"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Prathamesh Shirbhate", email = "prathamesh@physicore.ai" }]
+requires-python = ">=3.9"
+keywords = ["robotics", "sim-to-real", "mpc", "system-identification", "real-time-control"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pyyaml>=6.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+bridge = [
+    "pymavlink>=2.4.0",
+    "websockets>=12.0",
+    "aiohttp>=3.9.0",
+    "pyserial>=3.5",
+]
+api = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib>=1.7.4",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "httpx>=0.24.0",
+    "matplotlib>=3.7.0",
+]
+all = [
+    "pymavlink>=2.4.0",
+    "websockets>=12.0",
+    "aiohttp>=3.9.0",
+    "pyserial>=3.5",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib>=1.7.4",
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://physicore.ai"
+Documentation = "https://docs.physicore.ai"
+Repository = "https://github.com/prathameshbharatiya/physicore-hybrid-mpc"
+"Bug Tracker" = "https://github.com/prathameshbharatiya/physicore-hybrid-mpc/issues"
+
+[project.scripts]
+physicore-bridge = "physicore.bridge.physicore_bridge:main"
+physicore-server = "physicore.api.server:run"
+physicore-install = "physicore.install:main"
+
+[tool.setuptools.packages.find]
+include = ["physicore*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["physicore"]
+omit = ["tests/*", "demos/*"]
