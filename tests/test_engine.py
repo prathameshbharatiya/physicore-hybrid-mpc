@@ -278,7 +278,7 @@ class TestRegistry:
             engine.observe(state, step.action, state)
 
         original_mass = engine.physics.params["mass"]
-        tmp_registry.save(engine, "balancing_bot", steps=10, convergence_pct=40.0)
+        tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 10, "convergence_pct": 40.0})
 
         # Modify params then reload
         engine.physics.params["mass"] = 99.0
@@ -289,18 +289,20 @@ class TestRegistry:
 
     def test_session_log_appends(self, balancing_bot_engine, tmp_registry):
         engine = balancing_bot_engine
-        tmp_registry.save(engine, "balancing_bot", steps=100, convergence_pct=60.0)
-        tmp_registry.save(engine, "balancing_bot", steps=200, convergence_pct=80.0)
+        tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 100, "convergence_pct": 60.0})
+        tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 200, "convergence_pct": 80.0})
 
-        sessions = tmp_registry.list_sessions("balancing_bot")
+        sessions_file = tmp_registry._platform_dir("balancing_bot") / "sessions.jsonl"
+        sessions = [l for l in sessions_file.read_text().splitlines() if l.strip()] if sessions_file.exists() else []
         assert len(sessions) == 2
 
     def test_prior_updates_with_quality(self, balancing_bot_engine, tmp_registry):
         engine = balancing_bot_engine
         engine.physics.params["mass"] = 1.3
-        tmp_registry.save(engine, "balancing_bot", steps=500, convergence_pct=85.0)
+        tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 500, "convergence_pct": 85.0})
 
-        prior = tmp_registry.load_prior("balancing_bot")
+        prior_file = tmp_registry._platform_dir("balancing_bot") / "platform_prior.json"
+        prior = json.loads(prior_file.read_text()) if prior_file.exists() else None
         assert prior is not None
         assert "mass" in prior.get("params", {})
 
