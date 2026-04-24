@@ -5316,10 +5316,10 @@ Be direct, technical, confident. You are the world's best robotics integration e
         try {
           const ai = getAI();
           if (!ai) return; // No key — local answer is enough
-          const snapshot = buildLiveSnapshot();
-          const sessionActive = isControlActive && isSystemConnected;
-          const extraCtx = sessionActive && snapshot
-            ? `LIVE DATA: mass=${snapshot.mass.current}kg drift=${snapshot.mass.driftPct}% residual=${snapshot.residual.current} trend=${snapshot.residual.trend} sentinel=${snapshot.sentinelMode}`
+          const enhSnapshot = buildLiveSnapshot();
+          const enhSessionActive = isControlActive && isSystemConnected;
+          const extraCtx = enhSessionActive && enhSnapshot
+            ? `LIVE DATA: mass=${enhSnapshot.mass.current}kg drift=${enhSnapshot.mass.driftPct}% residual=${enhSnapshot.residual.current} trend=${enhSnapshot.residual.trend} sentinel=${enhSnapshot.sentinelMode}`
             : '';
           const enhResp = await ai.models.generateContent({
             model: 'gemini-2.0-flash',
@@ -5332,7 +5332,7 @@ Add 1-2 specific insights beyond the basic answer. Be concise.`,
           if (extra) {
             setIE(s=>({...s, troubleshootResult:{
               ...localResult,
-              title: sessionActive ? 'Live diagnosis' : localResult.title,
+              title: enhSessionActive ? 'Live diagnosis' : localResult.title,
               aiInsight: extra,
             }}));
           }
@@ -5345,9 +5345,6 @@ Add 1-2 specific insights beyond the basic answer. Be concise.`,
         title:'Diagnosing your problem...',
         steps:[{label:'Analysing...', cmd:'One moment'}]
       }, phase:'troubleshoot'}));
-
-      const snapshot = buildLiveSnapshot();
-      const sessionActive = isControlActive && isSystemConnected;
 
       const snapshot = buildLiveSnapshot();
       const sessionActive = isControlActive && isSystemConnected;
@@ -5392,10 +5389,10 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
 
         let text = '';
         // Tier 1: Gemini direct — available on Vercel with VITE_GEMINI_API_KEY
-        const ai = getAI();
-        if (ai) {
+        const mainAI = getAI();
+        if (mainAI) {
           try {
-            const gemResp = await ai.models.generateContent({
+            const gemResp = await mainAI.models.generateContent({
               model: 'gemini-2.0-flash',
               contents: `${systemPrompt}
 
