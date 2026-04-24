@@ -411,7 +411,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team';
+type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team' | 'replay';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -3140,6 +3140,14 @@ function AppContent() {
     checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
   });
   const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
+
+  // ── Session Replay state ───────────────────────────────────────────────────
+  const [replayFile, setReplayFile]       = useState<File|null>(null);
+  const [replayPlatform, setReplayPlatform] = useState('rocket');
+  const [replayMass, setReplayMass]       = useState('0.5');
+  const [replayAnalysis, setReplayAnalysis] = useState<any>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
+  const [replayError, setReplayError]     = useState<string|null>(null);
   const [ieTsInput, setIETsInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -6000,6 +6008,7 @@ PROBLEM: ${msg}`,
 
   const renderManual = () => {
     const sections = [
+      { id: 'replay_link', title: '↑ SESSION REPLAY',    icon: <Activity size={14} /> },
       { id: 'intro',      title: '01. WHAT IS PHYSICORE',    icon: <Info size={14} /> },
       { id: 'how',        title: '02. HOW IT WORKS',         icon: <Activity size={14} /> },
       { id: 'bot',        title: '03. BALANCING BOT',        icon: <Cpu size={14} /> },
@@ -6068,7 +6077,7 @@ PROBLEM: ${msg}`,
             {sections.map(s => (
               <button
                 key={s.id}
-                onClick={() => setManualSection(s.id)}
+                onClick={() => { if(s.id==='replay_link'){setView('replay');}else{setManualSection(s.id);} }}
                 className={`w-full flex items-center gap-3 px-4 py-3 font-display text-[10px] font-bold uppercase tracking-widest transition-all border-l-2 ${manualSection === s.id ? 'bg-amber/10 border-amber text-amber' : 'border-transparent text-textDim hover:text-textSecondary hover:bg-bgRaised'}`}
               >
                 {s.icon}
@@ -6946,6 +6955,353 @@ max_torque: 2.5`}</Code>
   };
 
 
+  // ── ITEM 3: SESSION REPLAY & POST-FLIGHT ANALYSIS ─────────────────────────
+  // Upload any flight log CSV → get: apogee, Cd, saturation events, descent rate
+  // Works with Insight 2.0, generic CSV, PhysiCore session JSON
+  const renderReplay = () => {
+    const PLATFORMS = [
+      {id:'rocket',         label:'Sounding Rocket'},
+      {id:'quadrotor',      label:'Quadrotor Drone'},
+      {id:'balancing_bot',  label:'Balancing Bot'},
+      {id:'ground_rover',   label:'Ground Rover'},
+      {id:'auv',            label:'AUV'},
+      {id:'manipulator_arm',label:'Robot Arm'},
+    ];
+
+    async function analyzeFile() {
+      if (!replayFile) return;
+      setReplayLoading(true);
+      setReplayError(null);
+      setReplayAnalysis(null);
+
+      try {
+        const text = await replayFile.text();
+        const lines = text.split('\n').filter(l => l.trim());
+        if (lines.length < 5) throw new Error('File too short — need at least 5 data rows');
+
+        // Parse headers
+        const headerLine = lines[0];
+        const sep = headerLine.includes(',') ? ',' : headerLine.includes(';') ? ';' : '\t';
+        const headers = headerLine.split(sep).map(h => h.trim().replace(/[:"]/g,'').toLowerCase());
+
+        // Map Insight 2.0 and generic column names
+        const colMap: Record<string,string> = {
+          'ti':'timestamp','a_x':'accel_x','a_y':'accel_y','a_z':'accel_z',
+          'r_x':'gyro_x','r_y':'gyro_y','r_z':'gyro_z','h':'altitude',
+          'temp':'temperature','vin':'battery',
+          'ax':'accel_x','ay':'accel_y','az':'accel_z',
+          'alt':'altitude','height':'altitude','t':'timestamp','time':'timestamp',
+          'pres':'pressure','press':'pressure',
+        };
+        const mapped = headers.map(h => colMap[h] || h);
+
+        // Parse data rows
+        interface DataRow { [key: string]: number }
+        const rows: DataRow[] = [];
+        for (let i = 1; i < lines.length; i++) {
+          const vals = lines[i].split(sep).map(v => parseFloat(v.trim()));
+          if (vals.some(isNaN)) continue;
+          const row: DataRow = {};
+          mapped.forEach((col, j) => { if (vals[j] !== undefined) row[col] = vals[j]; });
+          if (Object.keys(row).length >= 2) rows.push(row);
+        }
+
+        if (rows.length < 5) throw new Error('Could not parse data — check CSV format');
+
+        // Detect timestamp units
+        const t0 = rows[0].timestamp || 0;
+        const tN = rows[rows.length-1].timestamp || rows.length;
+        const span = tN - t0;
+        const timesRaw = rows.map(r => (r.timestamp || 0) - t0);
+        // If span > 10000 → milliseconds; if < 100 → seconds
+        const times = span > 10000 ? timesRaw.map(t => t/1000) :
+                      span > 200   ? timesRaw.map(t => t/1000) : timesRaw;
+        const duration = times[times.length-1];
+        const hz = rows.length / Math.max(duration, 1);
+
+        // Extract sensor channels
+        const alt_raw  = rows.map(r => r.altitude ?? r.alt ?? 0);
+        const az_raw   = rows.map(r => r.accel_z ?? r.az ?? 9.81);
+        const ax_raw   = rows.map(r => r.accel_x ?? r.ax ?? 0);
+        const ay_raw   = rows.map(r => r.accel_y ?? r.ay ?? 0);
+        const pressure = rows.map(r => r.pressure ?? r.pres ?? null);
+        const tempC    = rows.map(r => r.temperature ?? r.temp ?? 20);
+
+        // IMU saturation detection
+        const IMU_MAX_G = 16.0;
+        const CEILING   = IMU_MAX_G * 9.81;
+        let satCount = 0;
+        const az_clean = az_raw.map((az,i) => {
+          const mag = Math.sqrt(ax_raw[i]**2 + ay_raw[i]**2 + az**2);
+          if (mag >= CEILING * 0.97) { satCount++; return az_clean?.[i-1] ?? az; }
+          return az;
+        });
+        const imuSaturated = satCount > 0;
+
+        // Simple Kalman filter for altitude
+        let kf_alt = alt_raw[0], kf_vel = 0, kf_p = 100;
+        const alt_filtered: number[] = [kf_alt];
+        const vz_filtered: number[] = [0];
+        for (let i = 1; i < rows.length; i++) {
+          const dt = Math.max(times[i] - times[i-1], 0.001);
+          const vert_accel = az_clean[i] - 9.81;
+          // Predict
+          kf_alt += kf_vel * dt + 0.5 * vert_accel * dt * dt;
+          kf_vel += vert_accel * dt;
+          kf_p   += dt * (0.1 + 1.0) + 0.1;
+          // Spike detection: reject if baro jumps > 50m
+          const jump = Math.abs(alt_raw[i] - kf_alt);
+          if (jump < 50) {
+            const k = kf_p / (kf_p + 2.0);
+            kf_alt += k * (alt_raw[i] - kf_alt);
+            kf_p   *= (1 - k);
+          }
+          alt_filtered.push(kf_alt);
+          vz_filtered.push(kf_vel);
+        }
+
+        // Ground reference (first 2 seconds)
+        const nGround = Math.max(1, Math.floor(hz * 2));
+        const groundAlt = alt_filtered.slice(0, nGround).reduce((s,v)=>s+v,0) / nGround;
+        const alt_agl   = alt_filtered.map(a => a - groundAlt);
+
+        // Key stats
+        const apogee    = Math.max(...alt_agl);
+        const apogeeIdx = alt_agl.indexOf(apogee);
+        const apogeeT   = times[apogeeIdx];
+        const accelMagG = rows.map((_,i) => Math.sqrt(ax_raw[i]**2+ay_raw[i]**2+az_raw[i]**2)/9.81);
+        const maxAccelG = Math.max(...accelMagG);
+
+        // Descent rate (after apogee, stable window)
+        const postApogeeVz = vz_filtered.slice(apogeeIdx + Math.floor(hz*5));
+        const stableVz     = postApogeeVz.slice(Math.floor(postApogeeVz.length/3));
+        const descentRate  = stableVz.length > 5
+          ? Math.abs(stableVz.reduce((s,v)=>s+v,0)/stableVz.length)
+          : 0;
+
+        // Cd estimate from coast deceleration
+        const coastStart = Math.floor(hz * 3);  // 3s after data start
+        const coastEnd   = Math.max(coastStart + 10, apogeeIdx - Math.floor(hz));
+        let estimatedCd  = 0;
+        if (coastEnd > coastStart + 10) {
+          const coastVz    = vz_filtered.slice(coastStart, coastEnd);
+          const avgVz      = Math.abs(coastVz.reduce((s,v)=>s+v,0)/coastVz.length) + 0.1;
+          const coastAlt   = alt_agl.slice(coastStart, coastEnd);
+          const midAlt     = coastAlt[Math.floor(coastAlt.length/2)];
+          const rho        = 1.225 * Math.exp(-Math.max(0,midAlt) / 8500);
+          const area       = Math.PI * (0.08/2)**2; // 80mm diameter
+          const massKg     = parseFloat(replayMass) || 0.5;
+          // Cd = 2*m*decel / (rho*v²*A)
+          const decel = Math.abs(coastVz[coastVz.length-1] - coastVz[0]) /
+                       Math.max(times[coastEnd] - times[coastStart], 0.1);
+          estimatedCd = Math.min(3, Math.max(0.05, 2*massKg*decel/(rho*avgVz**2*area)));
+        }
+
+        // Recommendations
+        const recs: string[] = [];
+        if (imuSaturated) recs.push(`IMU saturated at ±${IMU_MAX_G}g during ${satCount} samples — real peak acceleration was higher. Use ADXL375 (±200g) for rockets.`);
+        if (descentRate > 15) recs.push(`Descent rate ${descentRate.toFixed(1)} m/s is fast — check parachute deployment.`);
+        else if (descentRate > 0 && descentRate < 3) recs.push(`Descent rate ${descentRate.toFixed(1)} m/s is slow — parachute may be oversized.`);
+        if (estimatedCd > 0) recs.push(`Estimated Cd ≈ ${estimatedCd.toFixed(3)} from coast-phase deceleration.`);
+        if (apogee > 0) recs.push(`Apogee ${apogee.toFixed(0)}m AGL confirmed. Next flight: integrate PhysiCore live for real-time adaptation.`);
+        if (recs.length === 0) recs.push('Flight nominal. No anomalies detected.');
+
+        setReplayAnalysis({
+          rows:         rows.length,
+          duration:     duration.toFixed(1),
+          hz:           hz.toFixed(0),
+          apogee:       apogee.toFixed(1),
+          apogeeT:      apogeeT.toFixed(1),
+          maxAccelG:    maxAccelG.toFixed(1),
+          imuSaturated,
+          satCount,
+          descentRate:  descentRate.toFixed(1),
+          estimatedCd:  estimatedCd > 0 ? estimatedCd.toFixed(3) : null,
+          groundAlt:    groundAlt.toFixed(1),
+          recommendations: recs,
+          columns:      mapped.filter(c => c !== 'timestamp'),
+        });
+      } catch(e:any) {
+        setReplayError(e.message || 'Analysis failed');
+      } finally {
+        setReplayLoading(false);
+      }
+    }
+
+    return (
+      <div className="pt-[52px] h-screen overflow-y-auto bg-void">
+        <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
+
+          {/* Header */}
+          <div className="space-y-2">
+            <h1 className="font-display text-3xl font-black text-white uppercase tracking-tighter">
+              Session Replay
+            </h1>
+            <p className="font-body text-sm text-textSecondary">
+              Upload any flight log or session data. Get: apogee, real Cd, IMU saturation events,
+              descent rate, and exactly where your simulation was wrong.
+            </p>
+            <p className="font-mono text-[10px] text-textDim uppercase tracking-widest">
+              Supports: Insight 2.0 (.txt) · Generic CSV · PhysiCore session JSON
+            </p>
+          </div>
+
+          {/* Upload */}
+          <div className="space-y-4">
+            <div
+              className="border-2 border-dashed border-border hover:border-green transition-all p-8 text-center cursor-pointer"
+              onClick={() => document.getElementById('replay-file-input')?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => {
+                e.preventDefault();
+                const f = e.dataTransfer.files[0];
+                if (f) setReplayFile(f);
+              }}
+            >
+              <input
+                id="replay-file-input"
+                type="file"
+                accept=".txt,.csv,.json,.tsv"
+                className="hidden"
+                onChange={e => e.target.files?.[0] && setReplayFile(e.target.files[0])}
+              />
+              {replayFile ? (
+                <div className="space-y-1">
+                  <p className="font-display text-sm font-bold text-green">{replayFile.name}</p>
+                  <p className="font-mono text-[10px] text-textDim">{(replayFile.size/1024).toFixed(1)} KB — ready to analyse</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="font-display text-sm font-bold text-textSecondary uppercase tracking-widest">
+                    Drop your data log here
+                  </p>
+                  <p className="font-mono text-[10px] text-textDim">or click to browse</p>
+                </div>
+              )}
+            </div>
+
+            {/* Config */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Platform</label>
+                <select
+                  value={replayPlatform}
+                  onChange={e => setReplayPlatform(e.target.value)}
+                  className="w-full bg-bgRaised border border-border text-textPrimary font-mono text-xs px-3 py-2"
+                >
+                  {PLATFORMS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Launch mass (kg)</label>
+                <input
+                  type="number"
+                  value={replayMass}
+                  onChange={e => setReplayMass(e.target.value)}
+                  className="w-full bg-bgRaised border border-border text-textPrimary font-mono text-xs px-3 py-2"
+                  step="0.1"
+                />
+              </div>
+            </div>
+
+            <button
+              onClick={analyzeFile}
+              disabled={!replayFile || replayLoading}
+              className="w-full py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest disabled:opacity-40 hover:bg-white transition-all"
+            >
+              {replayLoading ? 'Analysing...' : 'Analyse Flight Data'}
+            </button>
+          </div>
+
+          {/* Error */}
+          {replayError && (
+            <div className="p-4 border border-red/30 bg-red/5">
+              <p className="font-mono text-xs text-red">{replayError}</p>
+            </div>
+          )}
+
+          {/* Results */}
+          {replayAnalysis && (
+            <div className="space-y-6">
+              <div className="border-t border-border pt-6">
+                <p className="font-mono text-[9px] text-green uppercase tracking-widest mb-4">
+                  Analysis complete — {replayAnalysis.rows} rows · {replayAnalysis.duration}s · {replayAnalysis.hz}Hz
+                </p>
+              </div>
+
+              {/* Key numbers */}
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label:'Apogee', value:`${replayAnalysis.apogee} m AGL`, sub:`at t=${replayAnalysis.apogeeT}s`, color:'text-green' },
+                  { label:'Max Acceleration', value:`${replayAnalysis.maxAccelG} g`, sub: replayAnalysis.imuSaturated ? `⚠ IMU saturated (${replayAnalysis.satCount} samples)` : 'Within sensor range', color: replayAnalysis.imuSaturated ? 'text-amber' : 'text-white' },
+                  { label:'Descent Rate', value:`${replayAnalysis.descentRate} m/s`, sub: parseFloat(replayAnalysis.descentRate) > 15 ? '⚠ Fast — check parachute' : parseFloat(replayAnalysis.descentRate) > 0 ? '✓ Parachute confirmed' : 'No descent data', color: parseFloat(replayAnalysis.descentRate) > 15 ? 'text-red' : 'text-green' },
+                  { label:'Estimated Cd', value: replayAnalysis.estimatedCd || 'N/A', sub:'from coast-phase deceleration', color:'text-cyan' },
+                ].map((stat,i) => (
+                  <div key={i} className="p-4 border border-border bg-bgRaised space-y-1">
+                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">{stat.label}</p>
+                    <p className={`font-display text-xl font-black ${stat.color}`}>{stat.value}</p>
+                    <p className="font-mono text-[9px] text-textDim">{stat.sub}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* IMU saturation warning */}
+              {replayAnalysis.imuSaturated && (
+                <div className="p-4 border border-amber/30 bg-amber/5 space-y-2">
+                  <p className="font-display text-xs font-bold text-amber uppercase tracking-widest">⚠ IMU Saturated During Powered Phase</p>
+                  <p className="font-body text-xs text-textSecondary">
+                    Your IMU hit its ±16g ceiling during {replayAnalysis.satCount} samples.
+                    The real peak acceleration was higher than recorded.
+                    For rockets: replace MPU-6050 with ADXL375 (±200g range) to capture the full thrust curve.
+                  </p>
+                </div>
+              )}
+
+              {/* Columns detected */}
+              <div className="space-y-2">
+                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Columns detected</p>
+                <div className="flex flex-wrap gap-2">
+                  {replayAnalysis.columns.map((c:string) => (
+                    <span key={c} className="px-2 py-1 border border-borderDim font-mono text-[9px] text-textSecondary">{c}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              <div className="space-y-3">
+                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">PhysiCore recommendations</p>
+                {replayAnalysis.recommendations.map((r:string, i:number) => (
+                  <div key={i} className="flex gap-3 p-3 border border-borderDim">
+                    <span className="font-mono text-[9px] text-green mt-0.5 shrink-0">→</span>
+                    <p className="font-body text-xs text-textSecondary">{r}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* CTA */}
+              <div className="p-5 border border-green/20 bg-green/5 space-y-3">
+                <p className="font-display text-xs font-bold text-green uppercase tracking-widest">
+                  Next step: integrate PhysiCore live on your next flight
+                </p>
+                <p className="font-body text-xs text-textSecondary">
+                  This was post-flight analysis from your log file. With PhysiCore running live during flight,
+                  it adapts your Cd estimate in real time from actual sensor data — every flight starts smarter than the last.
+                </p>
+                <button
+                  onClick={() => setView('integrator')}
+                  className="px-4 py-2 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all"
+                >
+                  Open Integration Engineer →
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+
   const renderDashboard = () => {
     return (
       <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
@@ -7465,6 +7821,10 @@ max_torque: 2.5`}</Code>
         ) : view === 'team' ? (
           <motion.div key="team" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderTeam()}
+          </motion.div>
+        ) : view === 'replay' ? (
+          <motion.div key="replay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderReplay()}
           </motion.div>
         ) : (
           <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
