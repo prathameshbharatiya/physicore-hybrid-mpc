@@ -164,7 +164,8 @@ class TestSystemID:
         for _ in range(300):
             step = engine.step(state, x_ref)
             # Simulate true next state with real params
-            next_state = engine.physics.step(state, step.action, true_params, engine.cfg.dt)
+            engine.physics.update_params(true_params)
+            next_state = engine.physics.step(state, step.action, engine.cfg.dt)
             # Add small noise
             next_state += np.random.randn(len(next_state)) * 0.001
             engine.observe(state, step.action, next_state)
@@ -186,7 +187,8 @@ class TestSystemID:
 
         for i in range(200):
             step = engine.step(state, x_ref)
-            next_state = engine.physics.step(state, step.action, true_params, engine.cfg.dt)
+            engine.physics.update_params(true_params)
+            next_state = engine.physics.step(state, step.action, engine.cfg.dt)
             engine.observe(state, step.action, next_state)
             state = next_state
             if i < 20:
@@ -299,11 +301,14 @@ class TestRegistry:
     def test_prior_updates_with_quality(self, balancing_bot_engine, tmp_registry):
         engine = balancing_bot_engine
         engine.physics.params["mass"] = 1.3
-        tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 500, "convergence_pct": 85.0})
+        # Save multiple sessions so prior accumulates
+        for _ in range(4):
+            tmp_registry.save(engine, "balancing_bot", session_meta={"steps": 500, "convergence_pct": 85.0})
 
         prior_file = tmp_registry._platform_dir("balancing_bot") / "platform_prior.json"
-        prior = json.loads(prior_file.read_text()) if prior_file.exists() else None
-        assert prior is not None
+        assert prior_file.exists(), "platform_prior.json should exist after saves"
+        prior = json.loads(prior_file.read_text())
+        assert "params" in prior
         assert "mass" in prior.get("params", {})
 
     def test_platform_key_is_specific(self, tmp_registry, balancing_bot_engine):
