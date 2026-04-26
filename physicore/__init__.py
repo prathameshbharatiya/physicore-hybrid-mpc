@@ -23,9 +23,3 @@ __all__ = [
     "rover_dynamics", "auv_dynamics", "satellite_dynamics",
     "PLATFORM_DYNAMICS",
 ]
-
-
-# ── Three-line SDK ────────────────────────────────────────────────────────────
-from physicore.__init__connect import connect, PhysicoreRobot
-
-__all__ += ['connect', 'PhysicoreRobot']

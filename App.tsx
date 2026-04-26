@@ -52,7 +52,8 @@ const BETA_TESTERS = [
   "sudhar@hardlightsim.com",
   "aman@naveria.space",
   "amanmain3@gmail.com",
-  "ppareek85@gmail.com"
+  "ppareek85@gmail.com",
+  "ramishan0300@gmail.com"
 ];
 
 
@@ -1882,76 +1883,13 @@ interface IEQuestion { key: string; q: string; opts?: string[]; }
 interface IEFlow { label: string; icon: string; questions: IEQuestion[]; }
 
 // ── Hardware flows ─────────────────────────────────────────────────────────────
-// ═════════════════════════════════════════════════════════════════════════════
-//  PHYSICORE INTEGRATION ENGINEER — WORLD CLASS
-//  Layer 1: Hardware Knowledge Base (deterministic lookup, zero API)
-//  Layer 2: Code Generator (compilable firmware for every combination)
-//  Layer 3: AI Reasoning (Gemini for ambiguous/novel cases)
-//  Layer 4: Active Debugger (live session diagnosis with code fixes)
-// ═════════════════════════════════════════════════════════════════════════════
-
-// ── Hardware Knowledge Base ───────────────────────────────────────────────────
-// Every MCU, sensor, motor driver, protocol. Never hallucinated — looked up.
-
-const HW_KNOWLEDGE = {
-  mcu: {
-    'Arduino Uno':       { arch:'avr', wire:'Wire',  uart:'Serial',  timer:'Timer1', i2c_sda:'A4', i2c_scl:'A5', max_baud:115200 },
-    'Arduino Nano':      { arch:'avr', wire:'Wire',  uart:'Serial',  timer:'Timer1', i2c_sda:'A4', i2c_scl:'A5', max_baud:115200 },
-    'Arduino Mega':      { arch:'avr', wire:'Wire',  uart:'Serial',  timer:'Timer1', i2c_sda:'20', i2c_scl:'21', max_baud:115200 },
-    'ATmega328PB':       { arch:'avr', wire:'Wire',  uart:'Serial',  timer:'Timer1', i2c_sda:'PC4/SDA0', i2c_scl:'PC5/SCL0', i2c2_sda:'PE0/SDA1', i2c2_scl:'PE1/SCL1', uart1:'Serial1', note:'Two I2C buses (TWI0+TWI1), two UARTs. Wire.h uses TWI0. Wire1.h uses TWI1 on PE0/PE1 pins.', max_baud:115200 },
-    'ESP32':             { arch:'xtensa', wire:'Wire', uart:'Serial', timer:'ledc',  i2c_sda:'21', i2c_scl:'22', max_baud:921600 },
-    'Teensy 4.1':        { arch:'arm-m7', wire:'Wire', uart:'Serial1', timer:'IntervalTimer', i2c_sda:'18', i2c_scl:'19', note:'600MHz ARM Cortex-M7. Use analogWriteFrequency() not Timer1. Serial1 for hardware serial.', max_baud:2000000 },
-    'Raspberry Pi Pico': { arch:'arm-m0', wire:'Wire', uart:'Serial1', timer:'timerAlarm', i2c_sda:'4', i2c_scl:'5', max_baud:921600 },
-    'Raspberry Pi':      { arch:'arm', wire:'smbus2', uart:'serial', i2c_sda:'GPIO2', i2c_scl:'GPIO3', note:'Use python. smbus2 for I2C.' },
-    'Jetson Nano':       { arch:'arm', wire:'smbus2', uart:'serial', note:'Use python. I2C on bus 1 typically.' },
-    'Jetson Orin':       { arch:'arm', wire:'smbus2', uart:'serial', note:'Use python. I2C via /dev/i2c-* devices.' },
-  },
-  imu: {
-    'MPU6050':   { lib:'MPU6050_light by rfetick', addr:'0x68', range_accel:'±2/4/8/16g', range_gyro:'±250/500/1000/2000°/s', max_accel_g:16, init:'mpu.begin(); mpu.calcOffsets();', read_pitch:'mpu.update(); pitch=mpu.getAngleX();', read_gyro:'gyro_x=mpu.getGyroX();', read_accel_z:'accel_z=mpu.getAccZ();', note:'Most common IMU. ±16g max. Will saturate at >16g (rocket burn). I2C address 0x68 (AD0 LOW) or 0x69 (AD0 HIGH).' },
-    'BNO055':    { lib:'Adafruit BNO055', addr:'0x28', range_accel:'±2/4/8/16g', range_gyro:'±125/250/500/1000/2000°/s', max_accel_g:16, init:'bno.begin(); bno.setExtCrystalUse(true);', read_pitch:'imu::Vector<3> e=bno.getVector(Adafruit_BNO055::VECTOR_EULER); pitch=e.x();', read_gyro:'imu::Vector<3> g=bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE); gyro_x=g.y();', note:'Has onboard fusion. Outputs Euler angles directly. No need for Madgwick filter.' },
-    'MPU9250':   { lib:'MPU9250_asukiaaa', addr:'0x68', max_accel_g:16, init:'Wire.begin(); mpu.setup(0x68);', read_pitch:'mpu.accelUpdate(); mpu.gyroUpdate(); pitch=mpu.accelX()*57.2958;', read_gyro:'gyro_x=mpu.gyroY();', note:'MPU6050 + magnetometer. Addr 0x68 or 0x69.' },
-    'ICM-42688': { lib:'SparkFun ICM-42688-P', addr:'0x68', max_accel_g:16, init:'IMU.begin();', read_pitch:'IMU.getAGT(); pitch=IMU.accX()*57.2958;', read_gyro:'gyro_x=IMU.gyrY();', note:'Modern high-performance IMU. Used in recent FCs. SPI or I2C.' },
-    'LSM6DSO':   { lib:'STM32duino LSM6DSO', addr:'0x6A', max_accel_g:16, init:'AccGyr.begin();', read_pitch:'AccGyr.readAcceleration(x,y,z); pitch=x*57.2958;', read_gyro:'AccGyr.readGyroscope(gx,gy,gz); gyro_x=gy;', note:'Used in STM32-based FCs. Addr 0x6A or 0x6B.' },
-    'ADXL375':   { lib:'Adafruit ADXL375', addr:'0x53', max_accel_g:200, init:'accel.begin();', read_pitch:'sensors_event_t ev; accel.getEvent(&ev); pitch=ev.acceleration.x/9.81*57.2958;', read_gyro:'// No gyro — add MPU6050 for gyro', note:'±200g range. Purpose-built for high-G applications. Use for rockets — MPU6050 saturates.' },
-    'BMI088':    { lib:'BMI088 by Seeed', addr:'0x18', max_accel_g:24, init:'bmi.initialize();', read_pitch:'bmi.readAccelerometer(x,y,z); pitch=x*57.2958;', read_gyro:'bmi.readGyroscope(gx,gy,gz); gyro_x=gy;', note:'Used in Pixhawk 6. Separate accel (0x18/0x19) and gyro (0x68/0x69) I2C addresses.' },
-  },
-  baro: {
-    'BMP280':    { lib:'Adafruit BMP280', addr:'0x76', alt_range:'0-9000m', precision:'±1m', note:'Pressure only. No temperature compensation for altitude by default. I2C addr 0x76 (SDO low) or 0x77 (SDO high). CONFLICTS with MS5611 at 0x77.' },
-    'BMP388':    { lib:'Adafruit BMP3XX', addr:'0x77', alt_range:'0-12000m', precision:'±0.5m', rate:'200Hz', note:'Vasily uses this. Better than BMP280. Temperature compensation built in. 200Hz output rate. CONFLICTS with BMP280 alt addr at 0x77.' },
-    'MS5611':    { lib:'MS5xxx by Joe', addr:'0x77', alt_range:'0-10000m', precision:'±0.25m', note:'Higher precision than BMP280. Used in serious rocketry. Addr 0x77 by default — CONFLICTS with BMP388.' },
-    'MS5607':    { lib:'MS5xxx by Joe', addr:'0x77', alt_range:'0-30000m', precision:'±0.25m', note:'Higher altitude rating than MS5611. Use for high-power rocketry. Same library as MS5611.' },
-    'DPS310':    { lib:'Infineon DPS310', addr:'0x77', alt_range:'0-9000m', precision:'±0.5m', note:'Used in newer FCs. Infineon library. I2C or SPI.' },
-    'MPL3115A2': { lib:'Adafruit MPL3115A2', addr:'0x60', alt_range:'0-11000m', precision:'±0.3m', note:'Different I2C address (0x60) — no conflict with most sensors.' },
-  },
-  motor_driver: {
-    'L298N':     { type:'serial_pwm', max_current:'2A', max_voltage:'46V', interface:'IN1/IN2+PWM', note:'Most common beginner driver. Heat dissipation poor — add heatsink.' },
-    'TB6612FNG': { type:'serial_pwm', max_current:'1.2A', max_voltage:'15V', interface:'AIN1/AIN2+PWMA', note:'Better efficiency than L298N. Lower voltage limit.' },
-    'DRV8833':   { type:'serial_pwm', max_current:'1.5A', max_voltage:'11V', interface:'AIN1/AIN2 direct PWM', note:'Tiny footprint. Dual H-bridge. Good for small robots.' },
-    'BTS7960':   { type:'serial_pwm', max_current:'43A', max_voltage:'27V', interface:'RPWM/LPWM', note:'High current. For large robots. Only one direction per IC — need two for bidirectional.' },
-    'ODrive':    { type:'can_uart', interface:'CAN or UART ASCII', note:'VESC-like. Precision FOC. Requires ODrive configuration tool first. UART protocol: ASCII commands e.g. "v 0 1.5\\n". CAN requires CAN bus wiring and node ID assignment.' },
-    'VESC':      { type:'uart_packet', interface:'UART custom packet or CAN', note:'Open source FOC driver. UART protocol: specific packet format with start byte, length, payload, CRC. Use pyvesc Python library for easy interface. CANNOT use analogWrite.' },
-    'Dynamixel': { type:'ttl_rs485', interface:'DYNAMIXEL Protocol 1.0/2.0', note:'Smart servo by Robotis. Daisy-chained. Each has unique ID. Requires Dynamixel SDK. Not compatible with analogWrite.' },
-    'PWM ESC':   { type:'pwm_1000_2000', interface:'Standard PWM 1000-2000μs', note:'For brushless motors/drones. Use Servo.h or direct PWM at 50Hz. Needs calibration (arm sequence). CANNOT use analogWrite directly.' },
-  },
-};
-
-// ── I2C conflict checker ──────────────────────────────────────────────────────
-function checkI2CConflict(imu: string, baro: string): string | null {
-  const imuAddr = (HW_KNOWLEDGE.imu as any)[imu]?.addr || '';
-  const baroAddr = (HW_KNOWLEDGE.baro as any)[baro]?.addr || '';
-  if (imuAddr && baroAddr && imuAddr === baroAddr) {
-    return `⚠️ I2C ADDRESS CONFLICT: ${imu} (${imuAddr}) and ${baro} (${baroAddr}) share the same address. Fix: change ${baro} address by pulling SDO/CSB pin HIGH, or use a different barometer.`;
-  }
-  return null;
-}
-
 const IE_FLOWS: Record<string, IEFlow> = {
   balancing_bot: {
     label: 'Self-balancing robot', icon: '⚖',
     questions: [
-      { key:'imu',          q:'IMU sensor?',                 opts:['MPU6050','BNO055','MPU9250','ICM-42688','LSM6DSO','ADXL375','Other'] },
-      { key:'mcu',          q:'Microcontroller?',            opts:['Arduino Uno','Arduino Nano','Arduino Mega','ATmega328PB','ESP32','Teensy 4.1','Raspberry Pi Pico','Other'] },
-      { key:'motor_driver', q:'Motor driver?',               opts:['L298N','TB6612FNG','DRV8833','BTS7960','ODrive','VESC','Other'] },
+      { key:'imu',          q:'IMU sensor?',                 opts:['MPU6050','BNO055','MPU9250','ICM20689'] },
+      { key:'mcu',          q:'Microcontroller?',            opts:['Arduino Uno','Arduino Nano','Arduino Mega','ESP32','Raspberry Pi Pico'] },
+      { key:'motor_driver', q:'Motor driver?',               opts:['L298N','TB6612FNG','DRV8833','BTS7960'] },
       { key:'mass',         q:'Robot mass in kg? (e.g. 1.2)', opts:undefined },
       { key:'com_height',   q:'CoM height from wheel axle in meters? (e.g. 0.15)', opts:undefined },
       { key:'os',           q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
@@ -1979,9 +1917,9 @@ const IE_FLOWS: Record<string, IEFlow> = {
     label: 'ROS2 robot arm', icon: '🦾',
     questions: [
       { key:'distro',    q:'ROS2 distribution?',         opts:['Humble','Jazzy','Iron','Rolling'] },
-      { key:'brand',     q:'Arm brand/model?',           opts:['Universal Robots UR5/UR10','KUKA','Fanuc','ABB','Franka','Dynamixel-based','Custom'] },
-      { key:'dof',       q:'Number of joints (DOF)?',    opts:['4','6','7','Other'] },
-      { key:'topic',     q:'Joint states topic?',        opts:['/joint_states','/robot/joint_states','/arm/joint_states','Custom — I will type it'] },
+      { key:'brand',     q:'Arm brand/model?',           opts:['Universal Robots UR5/UR10','KUKA','Fanuc','ABB','Franka','Custom'] },
+      { key:'dof',       q:'Number of joints (DOF)?',    opts:['4','6','7'] },
+      { key:'topic',     q:'Joint states topic?',        opts:['/joint_states','/robot/joint_states','/arm/joint_states'] },
       { key:'ft_sensor', q:'Force-torque sensor?',       opts:['Yes','No'] },
       { key:'mass',      q:'End-effector + payload (kg)?', opts:undefined },
     ],
@@ -1989,7 +1927,7 @@ const IE_FLOWS: Record<string, IEFlow> = {
   humanoid: {
     label: 'Humanoid robot', icon: '🤖',
     questions: [
-      { key:'brand',     q:'Which humanoid?',            opts:['Unitree G1','Unitree H1','Figure AI Apollo','Boston Dynamics Spot','1X Technologies Neo','Custom/Other'] },
+      { key:'brand',     q:'Which humanoid?',            opts:['Unitree G1','Unitree H1','Figure AI Apollo','Boston Dynamics Spot','Custom'] },
       { key:'interface', q:'Control interface?',         opts:['ROS2','Unitree SDK','Boston Dynamics SDK','Custom'] },
       { key:'distro',    q:'ROS2 distribution?',         opts:['Humble','Jazzy','Not using ROS2'] },
       { key:'mass',      q:'Robot mass (kg)?',           opts:undefined },
@@ -1998,7 +1936,7 @@ const IE_FLOWS: Record<string, IEFlow> = {
   legged: {
     label: 'Legged / quadruped', icon: '🐕',
     questions: [
-      { key:'brand',   q:'Platform?',             opts:['Unitree Go1','Unitree Go2','ANYmal','MIT Mini Cheetah','Spot','Custom'] },
+      { key:'brand',   q:'Platform?',             opts:['Unitree Go1','Unitree Go2','ANYmal','MIT Mini Cheetah','Custom'] },
       { key:'distro',  q:'ROS2 distribution?',    opts:['Humble','Jazzy','Iron'] },
       { key:'terrain', q:'Primary terrain?',      opts:['Flat indoor','Outdoor grass/gravel','Stairs','Unknown/varied'] },
       { key:'mass',    q:'Robot mass (kg)?',      opts:undefined },
@@ -2007,9 +1945,8 @@ const IE_FLOWS: Record<string, IEFlow> = {
   rocket: {
     label: 'Sounding rocket', icon: '🚀',
     questions: [
-      { key:'fc',       q:'Flight computer?',            opts:['Arduino Mega','ATmega328PB','Teensy 4.1','ESP32','Custom FC'] },
-      { key:'baro',     q:'Barometer/altimeter?',        opts:['BMP388','MS5611','MS5607','BMP280','DPS310','MPL3115A2'] },
-      { key:'imu',      q:'IMU for acceleration?',       opts:['MPU6050 (±16g — will saturate at peak)','ADXL375 (±200g — recommended for rocketry)','BNO055','None — barometer only'] },
+      { key:'fc',       q:'Flight computer?',            opts:['Arduino Mega','Teensy 4.1','ESP32','Custom FC'] },
+      { key:'baro',     q:'Barometer/altimeter?',        opts:['BMP280','MS5611','BMP388','MPL3115A2'] },
       { key:'baud',     q:'Serial baud rate?',           opts:['115200','57600','9600'] },
       { key:'os',       q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
       { key:'dry_mass', q:'Rocket dry mass (kg)?',       opts:undefined },
@@ -2045,7 +1982,7 @@ const IE_FLOWS: Record<string, IEFlow> = {
   rover: {
     label: 'Ground rover / AMR', icon: '🚗',
     questions: [
-      { key:'interface',  q:'Communication?',                opts:['ROS2','Arduino serial','ESP32 serial','Custom serial'] },
+      { key:'interface',  q:'Communication?',                opts:['ROS2','Arduino serial','ESP32 serial'] },
       { key:'distro',     q:'ROS2 distribution?',            opts:['Humble','Iron','N/A'] },
       { key:'mass',       q:'Robot mass (kg)?',              opts:undefined },
       { key:'wheel_base', q:'Wheel separation (m)?',         opts:undefined },
@@ -2065,9 +2002,9 @@ const IE_FLOWS: Record<string, IEFlow> = {
     label: 'Custom hardware', icon: '🔧',
     questions: [
       { key:'type',      q:'What type of system?',        opts:['Ground robot','Aerial vehicle','Manipulator arm','Underwater vehicle','Spacecraft','Other'] },
-      { key:'interface', q:'How does it communicate?',    opts:['Arduino/ESP32 serial JSON','ROS2','MAVLink','Custom serial protocol'] },
+      { key:'interface', q:'How does it communicate?',    opts:['Arduino/ESP32 serial','ROS2','MAVLink','Custom serial'] },
       { key:'sensors',   q:'Primary sensors?',            opts:['IMU only','IMU + encoders','IMU + GPS','IMU + barometer','IMU + vision'] },
-      { key:'mcu',       q:'Compute hardware?',           opts:['Arduino Uno/Nano','Arduino Mega','ATmega328PB','ESP32','Raspberry Pi','Jetson Nano','Jetson Orin','Laptop only'] },
+      { key:'mcu',       q:'Compute hardware?',           opts:['Arduino Uno/Nano/Mega','ESP32','Raspberry Pi','Jetson Nano','Jetson Orin','Laptop only'] },
       { key:'os',        q:'Your laptop OS?',             opts:['Windows','Mac','Linux'] },
       { key:'mass',      q:'System mass (kg)?',           opts:undefined },
     ],
@@ -2087,7 +2024,7 @@ function ie_detect(s: string): string {
   if (t.match(/\bauv\b|underwater|subsea|bluerov|\bdvl\b/)) return 'auv';
   if (t.match(/surgical|medical.?robot|endoscop/)) return 'surgical';
   if (t.match(/satellite|spacecraft|orbital|cubesat/)) return 'satellite';
-  if (t.match(/rocket|sounding.?rocket|flight.?computer|328pb|atmega|bmp388|ms5611|ms5607/)) return 'rocket';
+  if (t.match(/rocket|sounding.?rocket|flight.?computer/)) return 'rocket';
   if (t.match(/rover|ground.?robot|\bamr\b|warehouse.?robot/)) return 'rover';
   if (t.match(/drone|quadrotor|fpv|multirotor/)) return 'px4';
   if (t.match(/esp32|esp8266|arduino/)) return 'balancing_bot';
@@ -2102,7 +2039,7 @@ function ie_port(os: string): string {
   return '/dev/ttyUSB0';
 }
 
-// ── Code generation — world class, every combination ─────────────────────────
+// ── Code generation ───────────────────────────────────────────────────────────
 function ie_generateCode(hw: string, answers: Record<string,string>): {filename:string; content:string}[] {
   const mass = answers.mass || answers.dry_mass || '1.0';
   const os = answers.os || 'Linux';
@@ -2112,154 +2049,61 @@ function ie_generateCode(hw: string, answers: Record<string,string>): {filename:
   const dof = parseInt(answers.dof || '6');
   const imu = answers.imu || 'MPU6050';
   const driver = answers.motor_driver || 'L298N';
-  const mcu = answers.mcu || 'Arduino Uno';
-  const isWin = os.toLowerCase().includes('win');
 
   if (hw === 'balancing_bot') {
-    const mcuInfo = (HW_KNOWLEDGE.mcu as any)[mcu] || (HW_KNOWLEDGE.mcu as any)['Arduino Uno'];
-    const imuInfo = (HW_KNOWLEDGE.imu as any)[imu] || (HW_KNOWLEDGE.imu as any)['MPU6050'];
-    const drvInfo = (HW_KNOWLEDGE.motor_driver as any)[driver] || (HW_KNOWLEDGE.motor_driver as any)['L298N'];
-
-    // Check for unsupported motor drivers (VESC/ODrive need special handling)
-    const needsSpecialDriver = driver === 'ODrive' || driver === 'VESC' || driver === 'Dynamixel';
-
+    const imuLib: Record<string,string> = { MPU6050:'MPU6050_light by rfetick', BNO055:'Adafruit BNO055', MPU9250:'MPU9250_asukiaaa', ICM20689:'ICM42688 by Sparkfun' };
     const imuInc: Record<string,string> = {
-      'MPU6050':'#include <MPU6050_light.h>\nMPU6050 mpu(Wire);',
-      'BNO055':'#include <Adafruit_BNO055.h>\nAdafruit_BNO055 bno(55, 0x28);',
-      'MPU9250':'#include <MPU9250_asukiaaa.h>\nMPU9250_asukiaaa imuSensor;',
-      'ICM-42688':'#include <ICM42688.h>\nICM42688 imuSensor(SPI, 10);',
-      'LSM6DSO':'#include <LSM6DSO.h>\nLSM6DSO AccGyr;',
-      'ADXL375':'#include <Adafruit_ADXL375.h>\nAdafruit_ADXL375 accel(12345);',
+      MPU6050:'#include <MPU6050_light.h>\nMPU6050 mpu(Wire);',
+      BNO055:'#include <Adafruit_BNO055.h>\nAdafruit_BNO055 bno(55, 0x28);',
+      MPU9250:'#include <MPU9250_asukiaaa.h>\nMPU9250_asukiaaa mpu;',
+      ICM20689:'#include <ICM42688.h>\nICM42688 imuSensor(SPI,10);',
     };
     const imuSetup: Record<string,string> = {
-      'MPU6050':`  // MPU6050 on I2C (SDA=${mcuInfo.i2c_sda}, SCL=${mcuInfo.i2c_scl})\n  Wire.begin();\n  byte s=mpu.begin();\n  while(s!=0){Serial.println("{\\\"error\\\":\\\"MPU6050 not found — check SDA/SCL wiring\\\"}");delay(500);s=mpu.begin();}\n  mpu.calcOffsets(true,true);  // Calibrate offsets — hold still during this`,
-      'BNO055':'  bno.begin();\n  bno.setExtCrystalUse(true);',
-      'MPU9250':'  Wire.begin(); imuSensor.setup(0x68);',
-      'ICM-42688':'  imuSensor.begin();',
-      'LSM6DSO':'  AccGyr.begin(i2c_Address, WIRE_PORT, 400000);',
-      'ADXL375':'  accel.begin();',
+      MPU6050:'  Wire.begin();\n  byte s=mpu.begin();\n  while(s!=0){Serial.println("{\\"error\\":\\"MPU6050 not found\\"}");delay(500);s=mpu.begin();}\n  mpu.calcOffsets(true,true);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      BNO055:'  bno.begin(); bno.setExtCrystalUse(true);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      MPU9250:'  Wire.begin(); mpu.setup(0x68);\n  Serial.println("{\\"status\\":\\"ready\\"}");',
+      ICM20689:'  imuSensor.begin();\n  Serial.println("{\\"status\\":\\"ready\\"}");',
     };
     const imuRead: Record<string,string> = {
-      'MPU6050':'  mpu.update();\n  pitch=mpu.getAngleX()-BALANCE_POINT;\n  gyro_x=mpu.getGyroX();',
-      'BNO055':'  imu::Vector<3> e=bno.getVector(Adafruit_BNO055::VECTOR_EULER);\n  imu::Vector<3> g=bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);\n  pitch=e.x()-BALANCE_POINT; gyro_x=g.y();',
-      'MPU9250':'  imuSensor.accelUpdate(); imuSensor.gyroUpdate();\n  pitch=imuSensor.accelX()*57.2958-BALANCE_POINT; gyro_x=imuSensor.gyroY();',
-      'ICM-42688':'  imuSensor.readSensor();\n  pitch=imuSensor.getAccelX_g()*57.2958-BALANCE_POINT; gyro_x=imuSensor.getGyroY_dps();',
-      'LSM6DSO':'  AccGyr.readAcceleration(ax,ay,az); AccGyr.readGyroscope(gx,gy,gz);\n  pitch=ax*57.2958-BALANCE_POINT; gyro_x=gy;',
-      'ADXL375':'  sensors_event_t ev; accel.getEvent(&ev);\n  pitch=ev.acceleration.x/9.81*57.2958-BALANCE_POINT;\n  gyro_x=0; // ADXL375 has no gyro — add separate gyro sensor',
+      MPU6050:'  mpu.update();\n  pitch=mpu.getAngleX()-BALANCE_POINT;\n  gyro_x=mpu.getGyroX();',
+      BNO055:'  imu::Vector<3> e=bno.getVector(Adafruit_BNO055::VECTOR_EULER);\n  imu::Vector<3> g=bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);\n  pitch=e.x()-BALANCE_POINT; gyro_x=g.y();',
+      MPU9250:'  mpu.accelUpdate(); mpu.gyroUpdate();\n  pitch=mpu.accelX()*57.2958-BALANCE_POINT; gyro_x=mpu.gyroY();',
+      ICM20689:'  imuSensor.readSensor();\n  pitch=imuSensor.getAccelX_g()*57.2958-BALANCE_POINT; gyro_x=imuSensor.getGyroY_dps();',
     };
     const mPins: Record<string,string> = {
-      'L298N':'const int L_EN=5,L_IN1=4,L_IN2=3,R_EN=6,R_IN1=7,R_IN2=8;',
-      'TB6612FNG':'const int PWMA=5,AIN1=4,AIN2=3,PWMB=6,BIN1=7,BIN2=8,STBY=9;',
-      'DRV8833':'const int AIN1=4,AIN2=3,BIN1=7,BIN2=8;',
-      'BTS7960':'const int L_RPWM=5,L_LPWM=6,R_RPWM=9,R_LPWM=10;',
+      L298N:'const int L_EN=5,L_IN1=4,L_IN2=3,R_EN=6,R_IN1=7,R_IN2=8;',
+      TB6612FNG:'const int PWMA=5,AIN1=4,AIN2=3,PWMB=6,BIN1=7,BIN2=8,STBY=9;',
+      DRV8833:'const int AIN1=4,AIN2=3,BIN1=7,BIN2=8;',
+      BTS7960:'const int L_RPWM=5,L_LPWM=6,R_RPWM=9,R_LPWM=10;',
     };
     const mApply: Record<string,string> = {
-      'L298N':'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(L_IN1,f);digitalWrite(L_IN2,!f);analogWrite(L_EN,p);\n  digitalWrite(R_IN1,f);digitalWrite(R_IN2,!f);analogWrite(R_EN,p);',
-      'TB6612FNG':'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(AIN1,f);digitalWrite(AIN2,!f);analogWrite(PWMA,p);\n  digitalWrite(BIN1,f);digitalWrite(BIN2,!f);analogWrite(PWMB,p);digitalWrite(STBY,HIGH);',
-      'DRV8833':'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(AIN1,v>0?p:0);analogWrite(AIN2,v<=0?p:0);\n  analogWrite(BIN1,v>0?p:0);analogWrite(BIN2,v<=0?p:0);',
-      'BTS7960':'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(v>=0?L_RPWM:L_LPWM,p);analogWrite(v>=0?R_RPWM:R_LPWM,p);',
+      L298N:'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(L_IN1,f);digitalWrite(L_IN2,!f);analogWrite(L_EN,p);\n  digitalWrite(R_IN1,f);digitalWrite(R_IN2,!f);analogWrite(R_EN,p);',
+      TB6612FNG:'  int p=constrain((int)(abs(v)*255),0,255);bool f=(v>=0);\n  digitalWrite(AIN1,f);digitalWrite(AIN2,!f);analogWrite(PWMA,p);\n  digitalWrite(BIN1,f);digitalWrite(BIN2,!f);analogWrite(PWMB,p);digitalWrite(STBY,HIGH);',
+      DRV8833:'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(AIN1,v>0?p:0);analogWrite(AIN2,v<=0?p:0);\n  analogWrite(BIN1,v>0?p:0);analogWrite(BIN2,v<=0?p:0);',
+      BTS7960:'  int p=constrain((int)(abs(v)*255),0,255);\n  analogWrite(v>=0?L_RPWM:L_LPWM,p);analogWrite(v>=0?R_RPWM:R_LPWM,p);',
     };
 
-    // ATmega328PB special note
-    const mcuNote = mcu === 'ATmega328PB'
-      ? `\n * ATmega328PB NOTES:\n * - Wire.h uses TWI0 (SDA=PC4/A4, SCL=PC5/A5) — same as Arduino Uno\n * - Wire1.h uses TWI1 (SDA=PE0, SCL=PE1) — 328PB only, for second I2C bus\n * - Serial1 available on PD2/PD3 — 328PB only\n * - Timer1 config identical to 328P — Arduino core works directly\n * - Use Arduino Uno board in IDE — select "ATmega328PB" if your board definition supports it`
-      : mcu === 'Teensy 4.1'
-      ? `\n * Teensy 4.1 NOTES:\n * - Use analogWriteFrequency(pin, freq) instead of Timer1\n * - Serial1 for hardware serial (not Serial)\n * - I2C on pins 18(SDA), 19(SCL)\n * - 600MHz ARM — much faster than Uno, higher baud rates supported`
-      : '';
-
-    // VESC/ODrive guide instead of .ino
-    if (needsSpecialDriver) {
-      const drvGuide = driver === 'VESC'
-        ? `# PhysiCore + VESC Motor Driver Guide
-
-VESC uses a custom UART packet protocol — NOT analogWrite.
-
-## Required: pyvesc library
-pip install pyvesc
-
-## Python bridge (run on laptop or Raspberry Pi connected to VESC):
-import pyvesc
-import serial
-import json
-
-VESC_PORT = '/dev/ttyUSB0'   # Your VESC serial port
-BAUD = 115200
-
-ser = serial.Serial(VESC_PORT, BAUD, timeout=0.1)
-
-def apply_vesc(current_amps):
-    """Send current command to VESC"""
-    msg = pyvesc.SetCurrent(current_amps)
-    ser.write(pyvesc.encode(msg))
-
-def read_vesc_telemetry():
-    """Read VESC state"""
-    msg = pyvesc.GetValues()
-    ser.write(pyvesc.encode_request(type(msg)))
-    # parse response...
-
-# For PhysiCore: receive torque command from bridge,
-# convert to VESC current command (torque_Nm / motor_kt = amps)
-# motor_kt is your motor's torque constant in Nm/A
-
-## Bridge command
-python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection ${port} --baud 115200
-# But output from bridge goes to your Python VESC script, not directly to VESC`
-        : `# PhysiCore + ODrive Motor Driver Guide
-
-ODrive uses ASCII UART or CAN — NOT analogWrite.
-
-## ODrive UART ASCII commands:
-- Set position: "p 0 <position>\\n"
-- Set velocity: "v 0 <velocity>\\n"
-- Set current: "c 0 <current>\\n"
-
-## Connection:
-- ODrive UART TX → Arduino/MCU RX
-- ODrive UART RX → Arduino/MCU TX
-- Baud: 115200
-
-## Arduino code to relay PhysiCore commands to ODrive:
-// In your Arduino sketch:
-void applyODrive(float torque_nm) {
-  float current = torque_nm / MOTOR_KT;  // your motor's Nm/A constant
-  Serial1.print("c 0 "); Serial1.print(current); Serial1.println();
-}
-
-## Full ODrive setup docs: docs.odriverobotics.com`;
-
-      return [
-        { filename:`${driver.toLowerCase()}_physicore_guide.md`, content:drvGuide },
-      ];
-    }
-
     const ino = `/*
- * PhysiCore Balancing Bot — ${imu} + ${driver} + ${mcu}
+ * PhysiCore Balancing Bot — ${imu} + ${driver} + ${answers.mcu||'Arduino'}
  * Mass: ${mass}kg  CoM height: ${answers.com_height||'0.15'}m
- * Generated by PhysiCore Integration Engineer${mcuNote}
  *
  * INSTALL (Sketch → Include Library → Manage Libraries):
- *   ${imuInfo?.lib || imu}
+ *   ${imuLib[imu]||imu}
  *   ArduinoJson by Benoit Blanchon (v6.x)
  *
- * WIRING: ${imu} SDA→${mcuInfo?.i2c_sda||'A4'}  SCL→${mcuInfo?.i2c_scl||'A5'}  VCC→3.3V  GND→GND
- * ${imuInfo?.note || ''}
+ * WIRING: ${imu} SDA→A4  SCL→A5  VCC→3.3V  GND→GND
  */
 #include <Wire.h>
 #include <ArduinoJson.h>
-${imuInc[imu]||imuInc['MPU6050']}
-${mPins[driver]||mPins['L298N']}
+${imuInc[imu]||imuInc.MPU6050}
+${mPins[driver]||mPins.L298N}
 
-// ── CALIBRATION ───────────────────────────────────────────────────────────────
-// 1. Upload this firmware
-// 2. Open Serial Monitor at 115200 baud
-// 3. Hold robot PERFECTLY UPRIGHT → note pitch value
-// 4. Set BALANCE_POINT = that value → re-upload
+// ── CALIBRATION ─────────────────────────────────────────────────────────────
+// Hold robot UPRIGHT → Open Serial Monitor at 115200 → read pitch
+// Set BALANCE_POINT to that value → re-upload
 const float BALANCE_POINT = 0.0;
-// MAX_TORQUE: DO NOT change. Matches PhysiCore engine.
-const float MAX_TORQUE    = 2.5;  // N·m
-// ─────────────────────────────────────────────────────────────────────────────
-
+const float MAX_TORQUE    = 2.5;  // N·m — DO NOT change
+// ────────────────────────────────────────────────────────────────────────────
 const float KP=35.0, KI=0.5, KD=1.2;
 const int   LOOP_MS=20;
 
@@ -2271,65 +2115,49 @@ float pid_i=0, prev_err=0;
 void setup(){
   Serial.begin(115200);
   pinMode(LED_BUILTIN,OUTPUT);
-${imuSetup[imu]||imuSetup['MPU6050']}
+${imuSetup[imu]||imuSetup.MPU6050}
   applyMotors(0);
-  Serial.println("{\\"status\\":\\"ready\\",\\"hw\\":\\"${imu}+${driver}+${mcu}\\"}");
 }
 
 void loop(){
   unsigned long now=millis();
+${imuRead[imu]||imuRead.MPU6050}
 
-  // 1. READ REAL IMU
-${imuRead[imu]||imuRead['MPU6050']}
-
-  // 2. RECEIVE PHYSICORE COMMAND
   while(Serial.available()>0){
     StaticJsonDocument<256> cmd;
     if(deserializeJson(cmd,Serial)==DeserializationError::Ok){
       if(strcmp(cmd["op"],"command")==0){
-        float torque=cmd["action"][0].as<float>();
-        motor_l=constrain(torque/MAX_TORQUE,-1.0f,1.0f);
-        motor_r=motor_l;
-        physicore_active=true;
-        last_cmd=now;
+        motor_l=constrain(cmd["action"][0].as<float>()/MAX_TORQUE,-1.0f,1.0f);
+        motor_r=motor_l; physicore_active=true; last_cmd=now;
         digitalWrite(LED_BUILTIN,HIGH);
       }
     }
   }
-  if(now-last_cmd>500){physicore_active=false;digitalWrite(LED_BUILTIN,LOW);}
 
-  // 3. APPLY CONTROL
-  float v;
-  if(physicore_active){
-    v=motor_l;
-  } else {
-    // Safety fallback PID (runs when PhysiCore not connected)
+  if(now-last_cmd>500){ physicore_active=false; digitalWrite(LED_BUILTIN,LOW); }
+
+  if(physicore_active){ applyMotors(motor_l); }
+  else{
     float e=-pitch;
     pid_i=constrain(pid_i+e*(LOOP_MS/1000.0f),-50,50);
     float d=(e-prev_err)/(LOOP_MS/1000.0f);
-    v=constrain((KP*e+KI*pid_i+KD*d)/255.0f,-1,1);
-    prev_err=e; motor_l=motor_r=v;
+    float v=constrain((KP*e+KI*pid_i+KD*d)/255.0f,-1,1);
+    prev_err=e; motor_l=motor_r=v; applyMotors(v);
   }
-  applyMotors(v);
 
-  // 4. SEND TELEMETRY AT 50Hz
   if(now-last_tx>=LOOP_MS){
     last_tx=now;
     StaticJsonDocument<256> doc;
-    doc["pitch"]=pitch;
-    doc["gyro_x"]=gyro_x;
-    doc["motor_l"]=motor_l*MAX_TORQUE;
-    doc["motor_r"]=motor_r*MAX_TORQUE;
-    doc["active"]=physicore_active;
-    doc["timestamp"]=now;
-    serializeJson(doc,Serial);
-    Serial.println();
+    doc["pitch"]=pitch; doc["gyro_x"]=gyro_x;
+    doc["motor_l"]=motor_l*MAX_TORQUE; doc["motor_r"]=motor_r*MAX_TORQUE;
+    doc["active"]=physicore_active; doc["timestamp"]=now;
+    serializeJson(doc,Serial); Serial.println();
   }
-  while(millis()-now<LOOP_MS);  // Maintain exact 50Hz
+  while(millis()-now<LOOP_MS);
 }
 
 void applyMotors(float v){
-${mApply[driver]||mApply['L298N']}
+${mApply[driver]||mApply.L298N}
 }`;
 
     const yaml = `name: My Balancing Bot
@@ -2338,50 +2166,46 @@ connection: ${port}
 baud: 115200
 mass: ${mass}
 friction: 0.15
-inertia: ${(parseFloat(mass||'1')*parseFloat(answers.com_height||'0.15')*parseFloat(answers.com_height||'0.15')*0.3).toFixed(4)}
+inertia: ${(parseFloat(mass)*parseFloat(answers.com_height||'0.15')*parseFloat(answers.com_height||'0.15')*0.3).toFixed(4)}
 imu: ${imu}
 motor_driver: ${driver}
-mcu: "${mcu}"
+mcu: "${answers.mcu||'Arduino Uno'}"
 control_hz: 60.0
 use_registry: true
 sentinel_enabled: true
 max_torque: 2.5`;
 
-    const bridge = isWin
+    const bridge = os.toLowerCase().includes('win')
       ? `@echo off\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore\\bridge\\physicore_bridge.py --config balancing_bot.yaml`
       : `#!/bin/bash\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore/bridge/physicore_bridge.py --config balancing_bot.yaml`;
 
     return [
       { filename:'physicore_balancing_bot.ino', content:ino },
       { filename:'balancing_bot.yaml', content:yaml },
-      { filename: isWin ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
     ];
   }
 
   if (hw==='px4'||hw==='ardupilot'||hw==='evtol') {
     const conn = (answers.connection||'').toLowerCase().includes('usb') ? '/dev/ttyACM0' : 'udp:14550';
-    const platform = hw==='evtol' ? 'evtol' : hw==='ardupilot'
-      ? `ardupilot_${(answers.frame||'').toLowerCase().includes('wing')?'plane':'quadrotor'}`
-      : 'px4_quadrotor';
+    const platform = hw==='evtol' ? 'evtol' : hw==='ardupilot' ? `ardupilot_${(answers.frame||'').toLowerCase().includes('wing')?'plane':'quadrotor'}` : 'px4_quadrotor';
     const yaml = `name: My ${hw.toUpperCase()} ${answers.frame||'Drone'}\nplatform: ${hw}\nconnection: ${conn}\nmass: ${mass}\nfriction: 0.1\ninertia: 0.05\ncontrol_hz: 60.0\nuse_registry: true`;
-    const bridge = isWin
+    const bridge = os.toLowerCase().includes('win')
       ? `@echo off\npip install pymavlink websockets aiohttp pyyaml\npython physicore\\bridge\\physicore_bridge.py --config drone.yaml`
       : `#!/bin/bash\npip install pymavlink websockets aiohttp pyyaml\npython physicore/bridge/physicore_bridge.py --config drone.yaml`;
     return [
       { filename:'drone.yaml', content:yaml },
-      { filename: isWin ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
     ];
   }
 
-  if (['ros2_arm','humanoid','legged','auv','surgical','rover'].includes(hw)) {
+  if (hw==='ros2_arm'||hw==='humanoid'||hw==='legged'||hw==='auv'||hw==='surgical'||hw==='rover') {
     const hasFT = answers.ft_sensor==='Yes';
-    const platform = hw==='ros2_arm'||hw==='surgical' ? 'ros2_manipulator'
-      : hw==='humanoid'||hw==='legged' ? 'ros2_legged'
-      : hw==='auv' ? 'ros2_auv'
-      : 'ros2_ground_rover';
+    const platform = hw==='ros2_arm'||hw==='surgical' ? 'ros2_manipulator' : hw==='humanoid'||hw==='legged' ? 'ros2_legged' : hw==='auv' ? 'ros2_auv' : 'ros2_ground_rover';
     const node = `#!/usr/bin/env python3
 """PhysiCore ROS2 Bridge — ${answers.brand||hw} ${dof}-DOF
 ROS2 ${distro} | Topic: ${topic}
+Run: python3 physicore_ros2_bridge.py
 """
 import rclpy
 from rclpy.node import Node
@@ -2395,7 +2219,7 @@ class Bridge(Node):
         self.j=[0.0]*${dof}; self.v=[0.0]*${dof}; self.e=[0.0]*${dof}; self.f=[0.0,0.0,0.0]
         self.create_subscription(JointState,'${topic}',self.jcb,10)
         ${hasFT ? "self.create_subscription(WrenchStamped,'/ft_sensor/wrench',self.fcb,10)" : ''}
-        self.get_logger().info('PhysiCore ROS2 bridge ready — connecting to ws://localhost:8765')
+        self.get_logger().info('PhysiCore ROS2 bridge ready')
 
     def jcb(self,msg):
         n=min(len(msg.position),${dof})
@@ -2435,309 +2259,124 @@ if __name__=='__main__': main()`;
     ];
   }
 
-  if (hw === 'rocket') {
-    const baroInfo = (HW_KNOWLEDGE.baro as any)[answers.baro||'BMP388'] || {};
-    const imuUsed = answers.imu || 'MPU6050';
-    const imuInfo = (HW_KNOWLEDGE.imu as any)[imuUsed] || {};
-    const mcuUsed = answers.fc || 'Arduino Mega';
-    const mcuInfo = (HW_KNOWLEDGE.mcu as any)[mcuUsed] || (HW_KNOWLEDGE.mcu as any)['Arduino Mega'];
-
-    // I2C conflict check
-    const i2cConflict = checkI2CConflict(imuUsed, answers.baro||'BMP388');
-    const conflictWarning = i2cConflict ? `\n * ⚠️ ${i2cConflict}` : '';
-
-    const baroLib: Record<string,string> = {
-      'BMP388':'Adafruit BMP3XX', 'BMP280':'Adafruit BMP280',
-      'MS5611':'MS5xxx by Joe', 'MS5607':'MS5xxx by Joe',
-      'DPS310':'Infineon DPS310', 'MPL3115A2':'Adafruit MPL3115A2',
-    };
-    const baroInit: Record<string,string> = {
-      'BMP388':`  if(!bmp.begin_I2C(0x77)){if(!bmp.begin_I2C(0x76)){halt("BMP388 not found");}}\n  bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_8X);\n  bmp.setPressureOversampling(BMP3_OVERSAMPLING_4X);\n  bmp.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);\n  // Measure ground pressure (average 10 readings)\n  float sum=0; for(int i=0;i<10;i++){bmp.performReading();sum+=bmp.pressure/100.0;delay(100);}\n  ground_pressure=sum/10.0;`,
-      'BMP280':`  if(!bmp.begin(0x77)){if(!bmp.begin(0x76)){halt("BMP280 not found");}}\n  bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,Adafruit_BMP280::SAMPLING_X2,Adafruit_BMP280::SAMPLING_X16,Adafruit_BMP280::FILTER_X4);\n  float sum=0; for(int i=0;i<10;i++){sum+=bmp.readPressure()/100.0;delay(100);}\n  ground_pressure=sum/10.0;`,
-      'MS5611':`  baro.init(); baro.reset(); baro.readProm();\n  // MS5611/MS5607 requires oversampling ratio\n  // Read 10 samples and average for ground reference\n  float sum=0; for(int i=0;i<10;i++){baro.convert(MS5xxx_CMD_CONV_D1_4096);delay(10);baro.convert(MS5xxx_CMD_CONV_D2_4096);delay(10);baro.readADC();sum+=baro.GetPres()/100.0;}\n  ground_pressure=sum/10.0;`,
-      'MS5607':`  baro.init(); baro.reset(); baro.readProm();\n  float sum=0; for(int i=0;i<10;i++){baro.convert(MS5xxx_CMD_CONV_D1_4096);delay(10);baro.convert(MS5xxx_CMD_CONV_D2_4096);delay(10);baro.readADC();sum+=baro.GetPres()/100.0;}\n  ground_pressure=sum/10.0;`,
-      'MPL3115A2':`  baro.begin(); baro.setMode(MPL3115A2_ALTIMETER); baro.setOversampleRate(7);`,
-    };
-    const baroRead: Record<string,string> = {
-      'BMP388':`  if(bmp.performReading()){pressure_hpa=bmp.pressure/100.0;temperature_c=bmp.temperature;\n    // Temperature-compensated altitude (more accurate than ISA-assumed)\n    altitude=hypsometric_altitude(pressure_hpa,temperature_c,ground_pressure);}`,
-      'BMP280':`  pressure_hpa=bmp.readPressure()/100.0; temperature_c=bmp.readTemperature();\n  altitude=hypsometric_altitude(pressure_hpa,temperature_c,ground_pressure);`,
-      'MS5611':`  baro.convert(MS5xxx_CMD_CONV_D1_4096); delay(10);\n  baro.convert(MS5xxx_CMD_CONV_D2_4096); delay(10);\n  baro.readADC();\n  pressure_hpa=baro.GetPres()/100.0; temperature_c=baro.GetTemp()/100.0;\n  altitude=hypsometric_altitude(pressure_hpa,temperature_c,ground_pressure);`,
-      'MS5607':`  baro.convert(MS5xxx_CMD_CONV_D1_4096); delay(10);\n  baro.convert(MS5xxx_CMD_CONV_D2_4096); delay(10);\n  baro.readADC();\n  pressure_hpa=baro.GetPres()/100.0; temperature_c=baro.GetTemp()/100.0;\n  altitude=hypsometric_altitude(pressure_hpa,temperature_c,ground_pressure);`,
-      'MPL3115A2':`  altitude=baro.getAltitude(); temperature_c=baro.getTemperature(); pressure_hpa=0;`,
-    };
-
-    const hasIMU = !imuUsed.includes('None') && !imuUsed.includes('barometer only');
-    const isHighG = imuUsed.includes('ADXL375');
-
-    const mcuNote328PB = mcuUsed === 'ATmega328PB'
-      ? `\n * ATmega328PB: Wire.h uses TWI0 (A4/A5). Wire1.h uses TWI1 (PE0/PE1).\n * Serial1 available on PD2/PD3 for second serial channel.\n * Use Arduino Uno board definition in Arduino IDE.`
-      : '';
-
+  if (hw==='rocket') {
     const ino = `/*
- * PhysiCore Rocket Flight Computer
- * FC: ${mcuUsed} | Baro: ${answers.baro||'BMP388'} | IMU: ${imuUsed}
+ * PhysiCore Rocket Flight Computer — ${answers.fc||'Arduino Mega'} + ${answers.baro||'BMP280'}
  * Dry mass: ${mass}kg | Baud: ${answers.baud||'115200'}
- *
- * INSTALL (Library Manager):
- *   ${baroLib[answers.baro||'BMP388']||'BMP3XX'}
- *   ${hasIMU ? (HW_KNOWLEDGE.imu as any)[imuUsed]?.lib || imuUsed : '// No IMU library needed'}
- *   ArduinoJson by Benoit Blanchon (v6.x)
- *${mcuNote328PB}
- * WIRING:
- *   ${answers.baro||'BMP388'}: SDA→${mcuInfo?.i2c_sda||'A4'}, SCL→${mcuInfo?.i2c_scl||'A5'}, VCC→3.3V, GND→GND (addr: ${baroInfo?.addr||'0x77'})
- *   ${hasIMU ? `${imuUsed}: SDA→${mcuInfo?.i2c_sda||'A4'}, SCL→${mcuInfo?.i2c_scl||'A5'}, VCC→3.3V, GND→GND` : '// No IMU'}${conflictWarning}
- *
- * NOTE: ${baroInfo?.note || 'Check I2C address and wiring.'}
- * IMU NOTE: ${imuInfo?.note || ''}
+ * INSTALL: ${answers.baro||'BMP280'} library + ArduinoJson v6.x
  */
 #include <Wire.h>
 #include <ArduinoJson.h>
-// Barometer
-${answers.baro==='BMP388'?'#include <Adafruit_BMP3XX.h>\nAdafruit_BMP3XX bmp;':answers.baro==='BMP280'?'#include <Adafruit_BMP280.h>\nAdafruit_BMP280 bmp;':answers.baro==='MS5611'||answers.baro==='MS5607'?'#include <MS5xxx.h>\nMS5xxx baro(&Wire);':'#include <Adafruit_MPL3115A2.h>\nAdafruit_MPL3115A2 baro;'}
-${hasIMU ? (imuUsed==='MPU6050'?'// IMU\n#include <MPU6050_light.h>\nMPU6050 imu(Wire);':imuUsed==='ADXL375'?'// High-G IMU (±200g)\n#include <Adafruit_ADXL375.h>\nAdafruit_ADXL375 imu(12345);':imuUsed==='BNO055'?'#include <Adafruit_BNO055.h>\nAdafruit_BNO055 imu(55,0x28);':'// IMU include here') : ''}
+// TODO: add your ${answers.baro||'BMP280'} include here
 
-// ── Flight state ───────────────────────────────────────────────────────────────
-float altitude=0, pressure_hpa=0, temperature_c=20;
-float accel_x=0, accel_y=0, accel_z=9.81;
-float pitch=0;
-float mass_kg=${mass};      // Updated as propellant burns
-float ground_pressure=1013.25;  // Set at initialization
-const float EJECTION_LOCKOUT_MS=500;  // Ignore baro for 500ms after drogue
-
-// ── Kalman filter (simple 1D for altitude) ────────────────────────────────────
-float kf_alt=0, kf_vel=0, kf_p=100;
-const float KF_Q_ALT=0.1, KF_Q_VEL=1.0, KF_R_BARO=2.0;
-float kf_t_prev=0;
-
-float kalman_update(float baro_alt, float vert_accel, float dt){
-  // Predict
-  kf_alt += kf_vel*dt + 0.5*vert_accel*dt*dt;
-  kf_vel += vert_accel*dt;
-  float p11=kf_p+dt*(0+0+KF_Q_ALT); // simplified
-  // Update
-  float k=p11/(p11+KF_R_BARO);
-  kf_alt += k*(baro_alt-kf_alt);
-  kf_p = (1-k)*p11;
-  return kf_alt;
-}
-
-// ── Hypsometric altitude (temperature-compensated) ────────────────────────────
-float hypsometric_altitude(float pres, float temp_c, float ground_pres){
-  float T=temp_c+273.15;
-  return (8.31432*T/(0.0289644*9.80665))*log(ground_pres/pres);
-}
-
-// ── Phase detection with filtering ────────────────────────────────────────────
+float altitude=0, prev_alt=0, velocity=0, mass_kg=${mass};
 String phase="IDLE";
-float accel_mag_g=1.0;
-unsigned long phase_entry=0;
-bool ejection_lockout=false;
-unsigned long ejection_time=0;
-
-void halt(const char* msg){
-  Serial.println(msg); while(1){delay(1000);}
-}
-
-void updatePhase(){
-  unsigned long now=millis();
-  // After ejection charge: ignore baro for 500ms
-  if(ejection_lockout && now-ejection_time<EJECTION_LOCKOUT_MS) return;
-  ejection_lockout=false;
-
-  String prev=phase;
-  if(phase=="IDLE"){
-    // Launch detection: net accel > 2.5g AND sustained for 100ms
-    if(accel_mag_g>2.5 && now-phase_entry>100) phase="POWERED";
-  } else if(phase=="POWERED"){
-    // Burnout: accel drops back to ~1g AND sustained
-    if(accel_mag_g<1.3 && now-phase_entry>300) phase="COAST";
-  } else if(phase=="COAST"){
-    // Apogee: velocity goes negative AND altitude confirmed decreasing
-    if(kf_vel<-0.5 && now-phase_entry>1000) phase="APOGEE";
-  } else if(phase=="APOGEE"){
-    // Drogue fires — set lockout so pressure spike doesn't confuse us
-    if(now-phase_entry>300){
-      ejection_lockout=true; ejection_time=now;
-      phase="DROGUE";
-    }
-  } else if(phase=="DROGUE"){
-    if(kf_alt<200 && kf_vel<-1) phase="MAIN";
-  } else if(phase=="MAIN"){
-    if(kf_alt<10 && abs(kf_vel)<1.0) phase="LANDED";
-  }
-  if(phase!=prev) phase_entry=now;
-}
+unsigned long last_tx=0;
 
 void setup(){
-  Serial.begin(${answers.baud||'115200'});
-  Wire.begin();
-  Wire.setClock(400000);  // Fast I2C
-
-  Serial.println("{\\"status\\":\\"initializing\\"}");
-
-  // Init barometer
-${baroInit[answers.baro||'BMP388']||'  // TODO: init barometer'}
-
-  // Init IMU
-${hasIMU ? (imuUsed==='MPU6050'?'  byte s=imu.begin();\n  while(s!=0){Serial.println("{\\"error\\":\\"MPU6050 not found\\"}");delay(500);s=imu.begin();}\n  imu.calcOffsets();':imuUsed==='ADXL375'?'  imu.begin();  // ADXL375 — ±200g range, no saturation during burn':imuUsed==='BNO055'?'  imu.begin(); imu.setExtCrystalUse(true);':'  // TODO: init IMU') : '  // No IMU selected'}
-
-  kf_alt=altitude; kf_t_prev=millis();
-  Serial.println("{\\"status\\":\\"ready\\",\\"ground_pressure\\":"+String(ground_pressure)+"\\"}");
+  Serial.begin(${answers.baud||'115200'}); Wire.begin();
+  // TODO: init your ${answers.baro||'BMP280'} sensor here
+  Serial.println("{\\"status\\":\\"ready\\"}");
 }
-
-unsigned long last_baro=0, last_tx=0;
 
 void loop(){
   unsigned long now=millis();
-  float dt=(now-kf_t_prev)/1000.0; kf_t_prev=now;
+  // TODO: read altitude from ${answers.baro||'BMP280'}
+  // altitude = baro.readAltitude(1013.25);
 
-  // Read baro at 32Hz (BMP388 rate)
-  if(now-last_baro>31){
-    last_baro=now;
-${baroRead[answers.baro||'BMP388']||'    // TODO: read barometer'}
-  }
+  velocity=(altitude-prev_alt)/0.02; prev_alt=altitude;
+  if(velocity>2.0) phase="POWERED";
+  else if(altitude>50&&velocity<0) phase="COAST";
+  else if(altitude<50&&velocity<-0.5) phase="RECOVERY";
+  else phase="IDLE";
 
-  // Read IMU
-${hasIMU ? (imuUsed==='MPU6050'?'  imu.update();\n  accel_x=imu.getAccX(); accel_y=imu.getAccY(); accel_z=imu.getAccZ();\n  pitch=imu.getAngleX();\n  // Check saturation (MPU6050 max ±16g = ±156.96 m/s²)\n  accel_mag_g=sqrt(accel_x*accel_x+accel_y*accel_y+accel_z*accel_z)/9.81;\n  if(accel_mag_g>15.5) accel_mag_g=15.5; // Saturated — cap at 15.5g':imuUsed==='ADXL375'?'  sensors_event_t ev; imu.getEvent(&ev);\n  accel_x=ev.acceleration.x; accel_y=ev.acceleration.y; accel_z=ev.acceleration.z;\n  accel_mag_g=sqrt(accel_x*accel_x+accel_y*accel_y+accel_z*accel_z)/9.81;\n  // ADXL375: ±200g — no saturation issue during burn\n  pitch=atan2(accel_x,accel_z)*57.2958;':'  // Read IMU here') : '  accel_z=9.81; accel_mag_g=1.0; // No IMU — using barometer only'}
-
-  // Kalman filter: fuse baro altitude with vertical acceleration
-  float vert_accel=(accel_z-9.81); // Subtract gravity
-  float filtered_alt=kalman_update(altitude, vert_accel, dt>0?dt:0.02);
-  // Update velocity from Kalman (available in kf_vel)
-
-  updatePhase();
-
-  // Send telemetry at 50Hz
   if(now-last_tx>=20){
     last_tx=now;
-    StaticJsonDocument<512> doc;
-    doc["altitude"]=filtered_alt;    // Filtered altitude — what PhysiCore reads
-    doc["altitude_raw"]=altitude;    // Raw baro — for comparison
-    doc["velocity"]=kf_vel;          // Kalman-filtered vertical velocity
-    doc["accel_x"]=accel_x;
-    doc["accel_y"]=accel_y;
-    doc["accel_z"]=accel_z;
-    doc["pressure"]=pressure_hpa;
-    doc["temperature"]=temperature_c;
-    doc["pitch"]=pitch;
-    doc["mass"]=mass_kg;
-    doc["phase"]=phase;
-    doc["accel_g"]=accel_mag_g;
-    doc["timestamp"]=now;
-    serializeJson(doc,Serial);
-    Serial.println();
+    StaticJsonDocument<256> doc;
+    doc["altitude"]=altitude; doc["velocity"]=velocity;
+    doc["mass"]=mass_kg; doc["phase"]=phase; doc["timestamp"]=now;
+    serializeJson(doc,Serial); Serial.println();
   }
   delay(1);
 }`;
-
-    const yaml = `name: My Rocket
-platform: rocket
-connection: ${port}
-baud: ${answers.baud||'115200'}
-mass: ${mass}
-friction: 0.45
-inertia: 220
-imu: ${imuUsed}
-baro: ${answers.baro||'BMP388'}
-control_hz: 60.0
-use_registry: true`;
-
-    const bridge = isWin
-      ? `@echo off\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore\\bridge\\physicore_bridge.py --config rocket.yaml --imu-max-g ${isHighG ? '200' : '16'}`
-      : `#!/bin/bash\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore/bridge/physicore_bridge.py --config rocket.yaml --imu-max-g ${isHighG ? '200' : '16'}`;
-
-    const files = [
+    const yaml = `name: My Rocket\nplatform: rocket\nconnection: ${port}\nbaud: ${answers.baud||'115200'}\nmass: ${mass}\nfriction: 0.45\ninertia: 220\ncontrol_hz: 60.0\nuse_registry: true`;
+    const bridge = os.toLowerCase().includes('win')
+      ? `@echo off\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore\\bridge\\physicore_bridge.py --config rocket.yaml`
+      : `#!/bin/bash\npip install pymavlink websockets aiohttp pyserial pyyaml\npython physicore/bridge/physicore_bridge.py --config rocket.yaml`;
+    return [
       { filename:'physicore_rocket_fc.ino', content:ino },
       { filename:'rocket.yaml', content:yaml },
-      { filename: isWin ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
+      { filename: os.toLowerCase().includes('win') ? 'run_bridge.bat' : 'run_bridge.sh', content:bridge },
     ];
-
-    if (conflictWarning) {
-      files.push({ filename:'I2C_CONFLICT_WARNING.txt', content:`${i2cConflict}\n\nFix options:\n1. Pull the SDO pin of ${answers.baro} HIGH to change its address\n2. Use a barometer with a different default address (MPL3115A2 uses 0x60)\n3. Use Wire1 (second I2C bus) if your MCU has one (ATmega328PB, Teensy 4.1, Arduino Mega)` });
-    }
-    return files;
   }
 
   if (hw === 'custom') {
-    const iface = answers.interface || 'Arduino/ESP32 serial JSON';
+    const iface = answers.interface || 'Arduino/ESP32 serial';
     const sensors = answers.sensors || 'IMU only';
-    const mcuUsed = answers.mcu || 'Arduino Uno/Nano';
+    const mcu = answers.mcu || 'Arduino Uno/Nano/Mega';
     const sysType = answers.type || 'Ground robot';
     const isSerial = iface.toLowerCase().includes('arduino') || iface.toLowerCase().includes('serial');
     const isROS2 = iface.toLowerCase().includes('ros2');
     const isMAV = iface.toLowerCase().includes('mavlink');
-    const isCustomProto = iface.toLowerCase().includes('custom');
+
     const platform = isMAV ? 'px4_quadrotor' : isROS2 ? 'ros2_ground_rover' : 'ground_rover_serial';
 
     const guide = `# PhysiCore Custom Hardware Integration
-# System: ${sysType} | Interface: ${iface} | Sensors: ${sensors}
-# Compute: ${mcuUsed} | Mass: ${mass}kg
+# System type: ${sysType} | Interface: ${iface} | Sensors: ${sensors}
+# Compute: ${mcu} | Mass: ${mass}kg
 
-## What PhysiCore needs
+## What PhysiCore needs from your hardware
 
-Send JSON over serial at 20-50 Hz. PhysiCore uses whatever fields you send.
-Minimum: {"pitch":0.0,"gyro_x":0.0,"timestamp":0}
-Full:     {"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,
-           "accel_x":0.0,"accel_y":0.0,"accel_z":9.81,
-           "altitude":0.0,"motor_l":0.0,"motor_r":0.0,"timestamp":0}
+Your hardware must send JSON over serial (or ROS2/MAVLink) at 20-50 Hz.
+Minimum required fields — send whatever you have, PhysiCore uses what it gets:
 
-Fields PhysiCore uses:
-  pitch (deg)     — primary attitude signal
-  gyro_x (deg/s)  — angular rate
-  accel_z (m/s²)  — vertical acceleration (9.81 when stationary upright)
-  altitude (m)    — height AGL
-  motor_l/r       — feedback from actuators
+{"pitch":0.0,"roll":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,
+ "accel_x":0.0,"accel_y":0.0,"accel_z":9.81,
+ "motor_l":0.0,"motor_r":0.0,"timestamp":0}
 
-PhysiCore sends back every control cycle:
-  {"op":"command","action":[TORQUE_VALUE]}
-  → Apply this to your actuators
+## Arduino/ESP32 serial template
 
-## Arduino/ESP32 template (add to your sketch)
+Add this to your existing sketch:
 
-#include <ArduinoJson.h>
-
-void send_physicore_telemetry(float pitch, float gyro_x, float accel_z) {
   StaticJsonDocument<256> doc;
-  doc["pitch"]     = pitch;      // degrees
-  doc["gyro_x"]    = gyro_x;     // degrees/second
-  doc["accel_z"]   = accel_z;    // m/s² (9.81 when still and upright)
+  doc["pitch"]   = YOUR_PITCH_VALUE;     // angle in degrees
+  doc["gyro_x"]  = YOUR_GYRO_VALUE;      // angular velocity deg/s
+  doc["accel_z"] = YOUR_ACCEL_Z;         // m/s^2
+  doc["motor_l"] = YOUR_LEFT_MOTOR;      // -1.0 to 1.0 or N*m
+  doc["motor_r"] = YOUR_RIGHT_MOTOR;
   doc["timestamp"] = millis();
   serializeJson(doc, Serial);
   Serial.println();
-}
 
-void receive_physicore_command(float &output_torque) {
-  if (Serial.available()) {
-    StaticJsonDocument<128> cmd;
-    if (deserializeJson(cmd, Serial) == DeserializationError::Ok) {
-      if (strcmp(cmd["op"], "command") == 0) {
-        output_torque = cmd["action"][0].as<float>();
-      }
-    }
-  }
-}
+PhysiCore sends back:
+  {"op":"command","action":[TORQUE_VALUE]}
 
-${isCustomProto ? `## Custom serial protocol
-If you cannot output JSON, you need a small parser in the bridge.
-Contact physicore.ai with your protocol specification — we will add support.
-Common formats we can add: CSV, NMEA-style, binary packed structs.` : ''}
+Apply that torque to your actuators.
 
-## Run bridge
+## Run the bridge
 
-${isSerial
-  ? `python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection ${port} --baud 115200`
-  : isROS2
-  ? `source /opt/ros/humble/setup.bash\npython physicore/bridge/physicore_bridge.py --platform ros2_ground_rover`
-  : `python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550`}
+${isSerial ? `python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection ${port} --baud 115200` :
+  isROS2 ? `source /opt/ros/humble/setup.bash
+python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` :
+  `python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550`}
 
-## Dashboard
+## Connect dashboard
 MAVLINK → ws://localhost:8765 → Connect → ACTIVE CONTROL ON
 
 ## PhysiCore adapts
-Within 30 seconds it learns your system's real mass and friction.
-The registry saves learned parameters — each session starts smarter than the last.`;
+Within 30 seconds it will learn your system's real mass and friction.
+No manual tuning required.`;
 
-    const yaml = `name: My Custom ${sysType}\nplatform: ground_rover\nconnection: ${port}\nbaud: 115200\nmass: ${mass}\nfriction: 0.3\ninertia: 0.1\ncontrol_hz: 60.0\nuse_registry: true\nopt_in_telemetry: false`;
+    const yaml = `name: My Custom ${sysType}
+platform: ground_rover
+connection: ${port}
+baud: 115200
+mass: ${mass}
+friction: 0.3
+inertia: 0.1
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false`;
 
     return [
       { filename:'custom_integration_guide.md', content:guide },
@@ -2745,7 +2384,8 @@ The registry saves learned parameters — each session starts smarter than the l
     ];
   }
 
-  return [{ filename:'run_bridge.sh', content:`#!/bin/bash\npython physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` }];
+  return [{ filename:'run_bridge.sh', content:`#!/bin/bash
+python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover` }];
 }
 
 // ── Steps per hardware ────────────────────────────────────────────────────────
@@ -2754,232 +2394,128 @@ function ie_getSteps(hw: string, answers: Record<string,string>): {id:string; la
   const port = ie_port(os);
   const distro = (answers.distro||'humble').toLowerCase();
   const topic = answers.topic||'/joint_states';
-  const imu = answers.imu || 'MPU6050';
-  const driver = answers.motor_driver || 'L298N';
-  const imuInfo = (HW_KNOWLEDGE.imu as any)[imu] || {};
   const isWin = os.toLowerCase().includes('win');
 
   if (hw==='balancing_bot') return [
-    { id:'lib',    label:'Install Arduino libraries',
-      detail:`Arduino IDE → Sketch → Include Library → Manage Libraries\nInstall: ${imuInfo.lib||imu}\nInstall: ArduinoJson by Benoit Blanchon (v6.x)\n\nMax IMU range: ±${imuInfo.max_accel_g||16}g\n${imuInfo.note||''}` },
-    { id:'flash',  label:'Flash firmware',
-      detail:`Open physicore_balancing_bot.ino in Arduino IDE\nTools → Board → select your board (${answers.mcu||'Arduino Uno'})\nTools → Port → select your port\nClick Upload (→)` },
-    { id:'calib',  label:'Calibrate BALANCE_POINT',
-      detail:`Open Serial Monitor at 115200 baud\nHold robot PERFECTLY UPRIGHT → read pitch value from output\nClose Serial Monitor\nEdit firmware line: const float BALANCE_POINT = <your value>;\nRe-upload firmware` },
-    { id:'imu',    label:'Verify IMU data',
-      detail:`Open Serial Monitor at 115200 baud\nTilt robot forward then back — pitch value MUST change\nGood: {"pitch":8.4,"gyro_x":-2.1,...}\nBad: all zeros → check SDA→A4, SCL→A5, VCC→3.3V (not 5V!)` },
-    { id:'bridge', label:'Run the bridge',
-      detail:`FIRST: Close Arduino IDE (it holds the serial port)\nEdit balancing_bot.yaml: set connection: ${port}\n${isWin ? 'Find port: Device Manager → Ports (COM & LPT)' : 'Find port: ls /dev/ttyUSB* or ls /dev/cu.*'}`,
-      cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
-    { id:'connect', label:'Connect dashboard',
-      detail:`Click MAVLINK → endpoint: ws://localhost:8765 → Connect\nLive pitch data must appear within 2 seconds` },
-    { id:'activate', label:'Activate PhysiCore',
-      detail:`Click ACTIVE CONTROL ON\nLED_BUILTIN turns ON = PhysiCore is sending motor commands\nWatch mass estimate adapt — that is SystemID learning your real hardware\nExpect 30-60 seconds to converge` },
+    { id:'lib',      label:'Install Arduino libraries', detail:`Arduino IDE → Sketch → Include Library → Manage Libraries\nInstall: ${answers.imu||'MPU6050'} library\nInstall: ArduinoJson by Benoit Blanchon (v6.x)` },
+    { id:'flash',    label:'Flash firmware', detail:`Open physicore_balancing_bot.ino\nTools → Board → select ${answers.mcu||'your board'}\nTools → Port → select your port → click Upload` },
+    { id:'calib',    label:'Calibrate BALANCE_POINT', detail:`Open Serial Monitor at 115200 baud\nHold robot perfectly upright → read pitch value\nEdit firmware: const float BALANCE_POINT = <that value>;\nRe-upload firmware` },
+    { id:'imu',      label:'Verify IMU is working', detail:`Tilt robot forward/back → pitch value must change\nGood: {"pitch":8.4,"gyro_x":-2.1,...}\nBad: all zeros → check SDA/SCL wiring` },
+    { id:'bridge',   label:'Run the bridge', detail:`Close Arduino IDE first (locks the serial port)\nEdit balancing_bot.yaml: change connection: ${port} to your actual port\n${isWin ? 'Find port: Device Manager → Ports' : 'Find port: ls /dev/ttyUSB* or ls /dev/cu.*'}`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → endpoint: ws://localhost:8765 → Connect\nLive pitch data appears immediately` },
+    { id:'activate', label:'Activate PhysiCore', detail:`Click ACTIVE CONTROL ON\nLED turns ON = PhysiCore is sending commands\nWatch mass estimate adapt in sidebar — that is SystemID learning your robot` },
   ];
 
   if (hw==='px4'||hw==='ardupilot'||hw==='evtol') return [
-    { id:'telemetry', label:'Enable MAVLink telemetry',
-      detail:`QGroundControl → Application Settings → Comm Links → UDP port 14550\nOr connect USB cable directly to Pixhawk` },
-    { id:'bridge', label:'Run the bridge',
-      detail:`Installs pymavlink, websockets, aiohttp\nExpect: "MAVLink connected. Vehicle: QUADROTOR"`,
-      cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
-    { id:'connect', label:'Connect dashboard',
-      detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive telemetry: altitude, pitch, roll, yaw appear` },
-    { id:'activate', label:'Arm and activate',
-      detail:`Arm vehicle normally in QGC\nClick ACTIVE CONTROL ON in PhysiCore\nPhysiCore reads real telemetry at 60 Hz, adapts mass and aerodynamics live` },
+    { id:'telemetry', label:'Enable MAVLink telemetry', detail:`QGroundControl → Application Settings → Telemetry → enable UDP port 14550\n${(answers.connection||'').toLowerCase().includes('usb') ? 'Or: connect USB cable directly to Pixhawk' : 'Laptop and drone must be on same WiFi'}` },
+    { id:'bridge',    label:'Run the bridge', detail:`Installs pymavlink, websockets, aiohttp\nYou should see: "MAVLink connected"`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',   label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive telemetry: altitude, pitch, roll, yaw` },
+    { id:'activate',  label:'Arm and activate', detail:`Arm vehicle normally\nClick ACTIVE CONTROL ON\nPhysiCore reads telemetry at 60 Hz, adapts mass/friction live` },
   ];
 
   if (['ros2_arm','humanoid','legged','auv','surgical','rover'].includes(hw)) return [
-    { id:'source', label:'Source ROS2',
-      detail:`Must run in EVERY terminal before using ROS2 commands`,
-      cmd:`source /opt/ros/${distro}/setup.bash` },
-    { id:'topics', label:'Verify joint states topic',
-      detail:`Joint data must appear. If not: your robot driver is not running`,
-      cmd:`ros2 topic echo ${topic} --once` },
-    { id:'bridge', label:'Run the bridge',
-      detail:`Starts PhysiCore bridge on port 8765 + ROS2 bridge node\nExpect: "PhysiCore ROS2 bridge ready"`,
-      cmd:'bash run_bridge.sh' },
-    { id:'connect', label:'Connect dashboard',
-      detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
-    { id:'activate', label:'Activate control',
-      detail:`Click ACTIVE CONTROL ON\nMove your robot — PhysiCore adapts from live joint data` },
+    { id:'source',   label:'Source ROS2', detail:`Must run in every terminal before using ROS2`, cmd:`source /opt/ros/${distro}/setup.bash` },
+    { id:'topics',   label:'Verify joint states topic', detail:`Joint data must appear — if not, your robot driver is not running`, cmd:`ros2 topic echo ${topic} --once` },
+    { id:'bridge',   label:'Run the bridge', detail:`Starts PhysiCore bridge on port 8765 + ROS2 bridge node`, cmd:'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
+    { id:'activate', label:'Activate control', detail:`Click ACTIVE CONTROL ON\nPhysiCore adapts your robot's physics from live joint data` },
   ];
 
   if (hw==='rocket') return [
-    { id:'i2c', label:'Check I2C wiring',
-      detail:`${answers.baro||'BMP388'}: SDA→A4, SCL→A5, VCC→3.3V, GND→GND\n${(answers.imu||'').includes('None')?'No IMU':'IMU: same I2C bus, VCC→3.3V'}\n⚠️ Both sensors share I2C — run I2C scanner sketch to confirm both detected` },
-    { id:'libs', label:'Install libraries',
-      detail:`Arduino Library Manager → search and install:\n- ${(HW_KNOWLEDGE.baro as any)[answers.baro||'BMP388']?.lib || 'BMP3XX'}\n- ${(HW_KNOWLEDGE.imu as any)[answers.imu||'MPU6050']?.lib || 'MPU6050'}\n- ArduinoJson by Benoit Blanchon v6.x` },
-    { id:'flash', label:'Flash and verify on ground',
-      detail:`Serial Monitor at ${answers.baud||'115200'} baud\nExpect: {"altitude":0.2,"phase":"IDLE","accel_g":1.0,...}\nLift rocket → altitude must increase\nShake → accel_g must change` },
-    { id:'bridge', label:'Run the bridge',
-      detail:`Edit rocket.yaml: set connection to your serial port\n${isWin?'Find port: Device Manager → Ports':'Find port: ls /dev/ttyUSB* or ls /dev/cu.*'}`,
-      cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
-    { id:'connect', label:'Connect dashboard',
-      detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive altitude and phase appear` },
-    { id:'postflight', label:'Post-flight analysis',
-      detail:`After landing: pull data log from SD card\nRun: python -c "from physicore.sdk.analyze import PhysicoreAnalyzer; a=PhysicoreAnalyzer.from_log_file('your_log.txt'); print(a.summary())"\nShows: real Cd, IMU saturation events, descent rate, apogee` },
+    { id:'firmware', label:'Complete and flash firmware', detail:`Add ${answers.baro||'BMP280'} library include + initialization\nFlash to ${answers.fc||'Arduino Mega'}` },
+    { id:'verify',   label:'Verify telemetry on ground', detail:`Serial Monitor at ${answers.baud||'115200'} baud\nSee: {"altitude":0.2,"phase":"IDLE",...}` },
+    { id:'bridge',   label:'Run the bridge', detail:`Edit rocket.yaml: change connection to your port\n${isWin ? 'Find port: Device Manager → Ports' : 'Find port: ls /dev/ttyUSB*'}`, cmd: isWin ? 'run_bridge.bat' : 'bash run_bridge.sh' },
+    { id:'connect',  label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect\nLive altitude and phase appear` },
   ];
 
-  if (hw === 'custom') return [
-    { id:'read',    label:'Read the integration guide',
-      detail:`Open custom_integration_guide.md — exact JSON format and bridge command for your system` },
-    { id:'serial',  label:'Add telemetry output to your code',
-      detail:`Send JSON at 20-50 Hz:\n{"pitch":0,"gyro_x":0,"accel_z":9.81,"timestamp":0}\nInclude whatever sensor fields you have` },
-    { id:'bridge',  label:'Run the bridge',
-      detail:`Edit custom.yaml: set connection to your serial port\n${isWin?'Find port: Device Manager → Ports':'Find port: ls /dev/ttyUSB* or ls /dev/cu.*'}`,
-      cmd:'bash run_bridge.sh' },
-    { id:'connect', label:'Connect dashboard',
-      detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
-    { id:'activate', label:'Activate and adapt',
-      detail:`Click ACTIVE CONTROL ON\nPhysiCore starts learning your system's real physics from live data` },
-  ];
+  if (hw === 'custom') {
+    const iface = answers.interface || '';
+    const isSerial = iface.toLowerCase().includes('arduino') || iface.toLowerCase().includes('serial');
+    return [
+      { id:'read',    label:'Read the integration guide', detail:`Open custom_integration_guide.md — it has the exact JSON format your hardware needs to send and the command to receive` },
+      { id:'serial',  label:'Add serial output to your code', detail:`Send JSON at 20-50 Hz: {"pitch":0,"gyro_x":0,"accel_z":9.81,"motor_l":0,"motor_r":0,"timestamp":0}
+Include whatever sensor fields you have` },
+      { id:'bridge',  label:'Run the bridge', detail:`Edit custom.yaml with your actual serial port
+${isSerial ? 'Find port: Device Manager (Win) / ls /dev/cu.* (Mac) / ls /dev/ttyUSB* (Linux)' : 'Use --platform that matches your interface'}`, cmd:'bash run_bridge.sh' },
+      { id:'connect', label:'Connect dashboard', detail:`Click MAVLINK → ws://localhost:8765 → Connect` },
+      { id:'activate',label:'Activate and adapt', detail:`Click ACTIVE CONTROL ON
+PhysiCore starts learning your system's real mass and friction from live data` },
+    ];
+  }
 
   return [];
 }
 
-// ── Active Troubleshooter — live session-aware diagnosis with code fixes ───────
+// ── Troubleshoot tree ─────────────────────────────────────────────────────────
 function ie_troubleshoot(msg: string, hw: string, answers: Record<string,string>): {title:string; steps:{label:string; cmd:string}[]} | null {
   const m = msg.toLowerCase();
   const os = answers.os||'Linux';
   const distro = (answers.distro||'humble').toLowerCase();
   const topic = answers.topic||'/joint_states';
-  const imu = answers.imu || 'MPU6050';
-  const imuInfo = (HW_KNOWLEDGE.imu as any)[imu] || {};
 
-  // ── Serial / connection ───────────────────────────────────────────────────
-  if (m.match(/port|com\d|\btty\b|which.*port|can.t find.*serial|device not found/)) return {
+  if (m.match(/port|com\d|\btty\b|which.*port|can't find.*serial/)) return {
     title:'Finding your serial port',
     steps:[
-      { label:'Windows: open Device Manager', cmd:'Start → Device Manager → Ports (COM & LPT) → note COMx number' },
-      { label:'Mac: list serial ports', cmd:'ls /dev/cu.*  (look for usbserial or usbmodem)' },
-      { label:'Linux: list serial ports', cmd:'ls /dev/ttyUSB*  or  ls /dev/ttyACM*' },
-      { label:'Update your YAML config', cmd:`Open your .yaml file → change: connection: YOUR_PORT` },
-      { label:'Test connection', cmd:'python -c "import serial; s=serial.Serial(\'YOUR_PORT\', 115200, timeout=2); print(s.readline())"' },
+      { label:'Windows', cmd:'Device Manager → Ports (COM & LPT) → note COMx' },
+      { label:'Mac', cmd:'ls /dev/cu.*' },
+      { label:'Linux', cmd:'ls /dev/ttyUSB*  or  ls /dev/ttyACM*' },
+      { label:'Then update yaml', cmd:`connection: YOUR_PORT in ${hw==='rocket'?'rocket':'balancing_bot'}.yaml` },
     ],
   };
-
-  // ── IMU not responding ────────────────────────────────────────────────────
-  if (m.match(/imu|pitch.*zero|pitch.*not.*chang|mpu.*not|bno.*not|sensor.*not.*found|no.*imu/)) return {
-    title:`${imu} not responding`,
+  if (m.match(/imu|pitch.*zero|pitch.*not.*chang|mpu.*not|bno.*not/)) return {
+    title:'IMU not responding',
     steps:[
-      { label:'Check wiring', cmd:`${imu}: SDA→${(HW_KNOWLEDGE.mcu as any)[answers.mcu||'Arduino Uno']?.i2c_sda||'A4'}, SCL→${(HW_KNOWLEDGE.mcu as any)[answers.mcu||'Arduino Uno']?.i2c_scl||'A5'}, VCC→3.3V (NOT 5V!), GND→GND` },
-      { label:'I2C address check', cmd:`${imu} I2C address: ${imuInfo.addr||'0x68'}. Run I2C scanner sketch to confirm it appears on the bus` },
-      { label:'Library installed?', cmd:`Arduino IDE → Sketch → Include Library → Manage Libraries → search "${imuInfo.lib||imu}" → install` },
-      { label:'Test with I2C scanner', cmd:`Load example: File → Examples → Wire → i2c_scanner → upload → Serial Monitor` },
-      { label:'ATmega328PB note', cmd:answers.mcu==='ATmega328PB'?'Wire.h uses TWI0 (A4/A5). If sensors on TWI1 (PE0/PE1) use Wire1.begin() instead of Wire.begin()':'N/A' },
+      { label:'Check wiring', cmd:`${answers.imu||'MPU6050'}: SDA → A4, SCL → A5, VCC → 3.3V (NOT 5V), GND → GND` },
+      { label:'Verify in Serial Monitor', cmd:'Tilt robot — pitch value must change. If stays at 0: wiring error' },
+      { label:'Check library', cmd:`Sketch → Include Library → Manage Libraries → search ${answers.imu||'MPU6050'}` },
     ],
   };
-
-  // ── Jitter / oscillation ──────────────────────────────────────────────────
-  if (m.match(/jitter|jittery|vibrat|shak|oscillat|not.*smooth|back.*forth/)) return {
+  if (m.match(/jitter|jittery|vibrat|shak|oscillat|not.*smooth/)) return {
     title:'Jittery / oscillating robot',
     steps:[
-      { label:'BALANCE_POINT wrong — most common cause', cmd:'Hold robot upright → Serial Monitor → read pitch → set BALANCE_POINT = that value → re-upload' },
-      { label:'MAX_TORQUE check', cmd:'Firmware must have: const float MAX_TORQUE = 2.5;  NOT 100, NOT 255' },
-      { label:'IMU calibration', cmd:`${imu}: call mpu.calcOffsets(true,true) in setup() → hold still for 3 seconds during boot` },
-      { label:'Reduce action smoothing', cmd:'In PhysiCore dashboard: increase action_smooth_alpha toward 0.5' },
+      { label:'BALANCE_POINT wrong', cmd:'Hold upright → read pitch in Serial Monitor → set BALANCE_POINT to that value → re-upload' },
+      { label:'MAX_TORQUE check', cmd:'Must be 2.5 in firmware — not 100, not 255' },
+      { label:'IMU noise', cmd:'Run mpu.calcOffsets() in setup() to calibrate offsets' },
     ],
   };
-
-  // ── Not balancing ─────────────────────────────────────────────────────────
-  if (m.match(/not.*balanc|fall|tip.*over|won.t.*stand|can.t.*stay|keeps.*falling/)) return {
+  if (m.match(/not.*balanc|fall|tip.*over|won't.*stand|can't.*stay/)) return {
     title:'Robot won\'t balance',
     steps:[
-      { label:'Is ACTIVE CONTROL ON?', cmd:'Dashboard must show "ACTIVE CONTROL ON" — LED_BUILTIN must be ON in firmware' },
-      { label:'Redo BALANCE_POINT calibration', cmd:'Upright → Serial Monitor → read pitch → set BALANCE_POINT → re-upload' },
-      { label:'Verify mass in YAML', cmd:`Your YAML: mass: ${answers.mass||'?'} — measure actual robot mass in kg` },
-      { label:'Check motor direction', cmd:'Positive torque should push robot FORWARD (if falling forward). If opposite: swap motor wire polarity' },
-      { label:'Bridge connected?', cmd:'Dashboard shows live pitch data and "Connected" indicator' },
+      { label:'Is PhysiCore active?', cmd:'Click ACTIVE CONTROL ON — LED_BUILTIN must turn ON' },
+      { label:'BALANCE_POINT calibrated?', cmd:'Redo calibration: upright → Serial Monitor → read pitch → set BALANCE_POINT' },
+      { label:'Mass correct?', cmd:`YAML mass: ${answers.mass||'?'} kg — measure your actual robot mass` },
+      { label:'Bridge connected?', cmd:'Dashboard must show "Connected" and live pitch data' },
     ],
   };
-
-  // ── Dashboard connection ──────────────────────────────────────────────────
-  if (m.match(/not.*connect|can.t.*connect|dashboard.*not|no.*data|ws.*fail|websocket/)) return {
+  if (m.match(/not.*connect|can't.*connect|dashboard.*not|no.*data|ws.*fail/)) return {
     title:'Dashboard not connecting',
     steps:[
-      { label:'Exact endpoint required', cmd:'Must be exactly: ws://localhost:8765  (not https, not http, no trailing slash)' },
-      { label:'Bridge running?', cmd:'Terminal must show "PhysiCore bridge started" — not crashed' },
-      { label:'Arduino IDE closed?', cmd:'Close Arduino IDE — it locks the serial port and blocks the bridge' },
-      { label:'Firewall check', cmd:'Allow port 8765 inbound in Windows Defender / firewall settings' },
-      { label:'Test bridge', cmd:'python physicore/bridge/physicore_bridge.py --test' },
+      { label:'Endpoint', cmd:'Must be exactly: ws://localhost:8765 (not https, not http)' },
+      { label:'Bridge running?', cmd:'Terminal must show "PhysiCore bridge started" — not closed' },
+      { label:'Arduino IDE closed?', cmd:'Close it — it locks the serial port' },
+      { label:'Firewall?', cmd:'Allow port 8765 in firewall / Windows Defender' },
     ],
   };
-
-  // ── ROS2 issues ───────────────────────────────────────────────────────────
-  if (m.match(/ros2.*not|topic.*not.*found|rclpy|no.*topic|source|not.*publish/)) return {
+  if (m.match(/ros2.*not|topic.*not.*found|rclpy|no.*topic|source/)) return {
     title:'ROS2 / topics not found',
     steps:[
-      { label:'Source ROS2 in every terminal', cmd:`source /opt/ros/${distro}/setup.bash` },
-      { label:'List available topics', cmd:'ros2 topic list' },
+      { label:'Source first', cmd:`source /opt/ros/${distro}/setup.bash` },
+      { label:'List topics', cmd:'ros2 topic list' },
       { label:'Check joint states', cmd:`ros2 topic echo ${topic} --once` },
       { label:'rclpy missing?', cmd:`sudo apt install ros-${distro}-rclpy` },
-      { label:'Topic name wrong?', cmd:'Run: ros2 topic list | grep joint  — find your exact topic name' },
     ],
   };
-
-  // ── MAVLink ───────────────────────────────────────────────────────────────
   if (m.match(/mavlink|heartbeat|qground|mission.*planner|no.*heartbeat/)) return {
     title:'MAVLink not connecting',
     steps:[
-      { label:'Enable telemetry in QGC', cmd:'QGC: Application Settings → Comm Links → Add → UDP port 14550' },
-      { label:'Same network?', cmd:'Laptop and flight controller must be on same WiFi for UDP' },
-      { label:'USB connection?', cmd:'Use: --connection /dev/ttyACM0 (Linux) or --connection COM3 (Windows)' },
+      { label:'Enable telemetry', cmd:'QGC: Application Settings → Telemetry → UDP port 14550' },
+      { label:'Same network?', cmd:'Laptop and drone must be on same WiFi for UDP' },
+      { label:'USB connection?', cmd:'connection: /dev/ttyACM0 (Linux) or COM3 (Windows)' },
       { label:'pymavlink installed?', cmd:'pip install pymavlink' },
-      { label:'Test MAVLink', cmd:'mavproxy.py --master=udp:localhost:14550' },
     ],
   };
-
-  // ── Rocket: pressure spikes ───────────────────────────────────────────────
-  if (m.match(/pressure.*spike|altitude.*jump|false.*apogee|apogee.*detect|ejection|baro.*noise/)) return {
-    title:'Barometric pressure anomaly / false apogee',
-    steps:[
-      { label:'This is normal — ejection charge pressure', cmd:'The Kalman filter in the generated firmware handles this — uses 500ms lockout after drogue fires' },
-      { label:'Verify EJECTION_LOCKOUT_MS in firmware', cmd:'const float EJECTION_LOCKOUT_MS=500; — increase to 750 if still triggering' },
-      { label:'Check baro vent hole location', cmd:'BMP388 pressure vent must not face motor exhaust or be inside an airtight compartment' },
-      { label:'Verify Kalman filter output', cmd:'Serial Monitor: watch "altitude" field (Kalman) vs "altitude_raw" (raw baro) — they should diverge at ejection then reconverge' },
-      { label:'Increase Kalman R parameter', cmd:'In firmware: const float KF_R_BARO=2.0; → increase to 10.0 to trust baro less during noisy periods' },
-    ],
-  };
-
-  // ── IMU saturation ────────────────────────────────────────────────────────
-  if (m.match(/saturat|max.*g|16g|clamp|imu.*limit|ceiling/)) return {
-    title:`IMU saturation — ${imu} has ±${imuInfo.max_accel_g||16}g limit`,
-    steps:[
-      { label:'What saturation means', cmd:`${imu} stops recording above ${imuInfo.max_accel_g||16}g. Peak burn acceleration is above this — data is clipped.` },
-      { label:'For rocketry: use ADXL375', cmd:'Replace MPU6050 with ADXL375 (±200g range). Same I2C wiring. PhysiCore handles ADXL375 directly.' },
-      { label:'Saturation detection', cmd:'In firmware: if(accel_mag_g>15.5) — flag is set. Check "accel_g" field in telemetry.' },
-      { label:'Post-flight analysis', cmd:`Run: python -c "from physicore.sdk.analyze import PhysicoreAnalyzer; a=PhysicoreAnalyzer.from_log_file('your_log.txt', imu_max_g=${imuInfo.max_accel_g||16}); print(a.summary())"` },
-    ],
-  };
-
-  // ── Mass drifting ─────────────────────────────────────────────────────────
-  if (m.match(/mass.*drift|mass.*wrong|mass.*not.*converg|mass.*too.*high|mass.*too.*low/)) return {
-    title:'Mass estimate drifting or wrong',
-    steps:[
-      { label:'What mass drift means', cmd:'SystemID adjusts mass estimate from real sensor data. Drift means actual hardware differs from your initial guess.' },
-      { label:'Check initial mass in YAML', cmd:`Your YAML: mass: ${answers.mass||'1.0'} — is this accurate? Weigh your robot.` },
-      { label:'Let it converge', cmd:'Mass convergence takes ~300 steps (~5 seconds at 60Hz). Watch the sidebar — it should stabilize.' },
-      { label:'Large drift = payload change', cmd:'If mass jumped suddenly: something changed (picked up an object, fuel burned, battery shifted)' },
-      { label:'Save good session', cmd:'When mass converges: registry saves it. Next session starts from converged value.' },
-    ],
-  };
-
-  // ── Residual high ─────────────────────────────────────────────────────────
-  if (m.match(/residual.*high|residual.*not.*drop|residual.*increas|gap.*not.*clos/)) return {
-    title:'High residual — model not matching hardware',
-    steps:[
-      { label:'What residual means', cmd:'Residual = gap between PhysiCore prediction and what your hardware actually did. High = model learning, low = converged.' },
-      { label:'Normal for first 30 seconds', cmd:'Residual starts high and drops. If still high after 60 seconds: check sensor data quality.' },
-      { label:'Check pitch data quality', cmd:'Serial Monitor: tilt robot → pitch must change smoothly. Noise/spikes → IMU calibration issue.' },
-      { label:'Check mass estimate', cmd:'If mass estimate is 10x wrong: residual stays high. Verify mass in YAML.' },
-      { label:'BALANCE_POINT issue', cmd:'For balancing bot: wrong BALANCE_POINT keeps residual perpetually high. Recalibrate.' },
-    ],
-  };
-
   return null;
 }
-
 
 // ── IEState type for the new button-driven UI ─────────────────────────────────
 interface IEState {
@@ -4588,7 +4124,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
       {view !== 'dashboard' && (
         <div className="hidden lg:flex items-center gap-8">
-          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'GET STARTED', 'WHITEPAPER', 'MANUAL', 'TEAM'].map(item => {
+          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
             if (item === 'TEAM' && !isAdmin) return null;
             return (
               <a 
@@ -4600,14 +4136,13 @@ Be direct, technical, confident. You are the world's best robotics integration e
                   if (item === 'MANUAL') setView('manual');
                   else if (item === 'TEAM') setView('team');
                   else {
-                    const sectionId = item === 'GET STARTED' ? 'get-started' : item.toLowerCase();
                     if (view !== 'home') {
                       setView('home');
                       setTimeout(() => {
-                        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+                        document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
                       }, 100);
                     } else {
-                      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+                      document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
                     }
                   }
                 }}
@@ -4680,17 +4215,6 @@ Be direct, technical, confident. You are the world's best robotics integration e
       </div>
     </nav>
   );
-
-  const SENTINEL_LAYERS_WP = [
-    { layer: 'L0', name: 'Preflight Check', desc: 'Verifies all subsystems initialized correctly before any motion begins. Fails hard if physics kernel, ensemble, or SysID are not ready.' },
-    { layer: 'L1', name: 'Intent Coherence', desc: 'Checks that the commanded action is consistent with the current state and declared goal. Rejects nonsensical commands.' },
-    { layer: 'L2', name: 'Physics Consistency', desc: 'The commanded action must be explainable by the physics model within uncertainty bounds. Actions that defy physics are rejected.' },
-    { layer: 'L3', name: 'Lyapunov Projection', desc: 'Verifies that the action reduces system energy V. If the action would increase instability, it is scaled down or rejected.' },
-    { layer: 'L4', name: 'Actuator Envelope', desc: 'Hard clamps on actuator commands. No matter what the optimizer produces, motors never receive commands outside physical limits.' },
-    { layer: 'L5', name: 'Fault Signatures', desc: 'Classifies 5 fault types: BEARING_WEAR, UNEXPECTED_PAYLOAD, AERO_DAMAGE, MOTOR_DEGRADATION, SENSOR_DRIFT. Detected from parameter trends.' },
-    { layer: 'L6', name: 'Jerk Limiting', desc: 'Limits rate of change of action. Prevents actuator shock loads from sudden large commands.' },
-    { layer: 'L7', name: 'SHA-256 Forensic Chain', desc: 'Every control command is hashed. Each hash includes the previous hash forming a chain. Tamper-evident. Any modification breaks the chain.' },
-  ];
 
   const renderHome = () => {
   // Convergence animation data — real numbers from actual hardware test
@@ -5201,480 +4725,6 @@ Be direct, technical, confident. You are the world's best robotics integration e
         </div>
       </section>
 
-      {/* ══════════════════════════════════════════════════════════════════
-           GET STARTED — 5-STEP JOURNEY (no login required to read this)
-           ══════════════════════════════════════════════════════════════ */}
-      <section id="get-started" className="bg-bg py-32 px-6 border-t border-border">
-        <div className="max-w-[1100px] mx-auto space-y-16">
-          <div className="text-center space-y-4">
-            <span className="micro-label text-green">Get Started</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">From zero to adapted hardware in 30 minutes.</h2>
-            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
-              No manual calibration. No weeks of tuning. PhysiCore does the physics learning — you just connect it.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            {[
-              {
-                n: '01',
-                title: 'Request access',
-                time: '2 minutes',
-                color: COLORS.green,
-                desc: 'PhysiCore is in closed beta. Email prathamesh@physicore.ai with your hardware type and use case. You will receive access within 24 hours.',
-                detail: 'Why closed beta: We integrate with every team personally to understand their hardware and make sure PhysiCore actually works before they deploy it.',
-                action: null,
-                code: null,
-              },
-              {
-                n: '02',
-                title: 'Open the Integration Engineer',
-                time: '2 minutes',
-                color: COLORS.cyan,
-                desc: 'Once you have access, open the Integration Engineer from the top navigation. It asks you 5–6 questions about your hardware — MCU, sensors, motor drivers, mass.',
-                detail: 'No code required yet. The IE knows the difference between an ATmega328PB and an Arduino Uno, between a BMP388 and an MS5607, between an L298N and a VESC. It generates the right code for your exact combination.',
-                action: 'Open Integration Engineer',
-                code: null,
-              },
-              {
-                n: '03',
-                title: 'Flash the generated firmware',
-                time: '10 minutes',
-                color: COLORS.cyan,
-                desc: 'The IE generates a complete .ino firmware file for your MCU and sensors. It includes IMU initialization, barometric pressure reading with temperature compensation, Kalman-filtered altitude for rockets, and the JSON serial protocol PhysiCore speaks.',
-                detail: 'Open the file in Arduino IDE, select your board, click Upload. The firmware sends real sensor data over serial and receives torque commands back from PhysiCore.',
-                action: null,
-                code: '// Generated firmware sends this every 20ms:\n{pitch:5.2, gyro_x:12.4, accel_z:9.81, motor_l:0.0, timestamp:12400}\n\n// PhysiCore sends this back:\n{op: command, action: [-0.460]}',
-              },
-              {
-                n: '04',
-                title: 'Run the bridge',
-                time: '5 minutes',
-                color: COLORS.blue,
-                desc: 'One command starts the bridge that connects your hardware to PhysiCore. It reads the YAML config the IE generated, opens the serial port, and exposes the WebSocket on port 8765 for the dashboard.',
-                detail: 'The bridge handles MAVLink for PX4/ArduPilot drones, ROS2 topics for robot arms, and JSON serial for everything else. Same dashboard, same adaptation engine, any hardware.',
-                action: null,
-                code: '# Mac/Linux:\nbash run_bridge.sh\n\n# Windows:\nrun_bridge.bat\n\n# Output:\n[BRIDGE] Serial connected: /dev/cu.usbserial-0001\n[ENGINE] Initialized for balancing_bot | mass=1.0\n[TELEM] pitch=0.2 | residual=0.8541 | mass=1.000',
-              },
-              {
-                n: '05',
-                title: 'Connect and activate',
-                time: '2 minutes',
-                color: COLORS.green,
-                desc: 'Open the PhysiCore dashboard, click MAVLINK, enter ws://localhost:8765, click Connect. Your live telemetry appears. Click ACTIVE CONTROL ON. PhysiCore starts adapting to your hardware immediately.',
-                detail: 'Watch the mass estimate converge. Watch the residual drop. Within 30 seconds, PhysiCore knows your robot better than your simulation did. The registry saves these learned parameters — your next session starts from here.',
-                action: null,
-                code: '// What happens in the first 30 seconds:\nStep    1: residual=0.854 mass=1.000 (starting fresh)\nStep  300: residual=0.312 mass=1.147 (adapting)\nStep  900: residual=0.089 mass=1.312 (converging)\nStep 1800: residual=0.031 mass=1.347 (converged)\n\n// PhysiCore now knows your hardware physics.\n// Registry saved. Next session starts from 1.347kg.',
-              },
-            ].map((step, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -20 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.1 }}
-                className="reveal flex gap-8 p-8 border border-border bg-bgRaised group hover:border-borderActive transition-all"
-              >
-                <div className="shrink-0 flex flex-col items-center gap-2">
-                  <div className="w-12 h-12 border-2 flex items-center justify-center font-display text-lg font-bold" style={{ borderColor: step.color, color: step.color }}>
-                    {step.n}
-                  </div>
-                  {i < 4 && <div className="w-px flex-1 bg-border mt-2" />}
-                </div>
-                <div className="flex-1 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-display text-xl font-bold text-white uppercase tracking-widest">{step.title}</h3>
-                    <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">{step.time}</span>
-                  </div>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">{step.desc}</p>
-                  <p className="font-body text-xs text-textDim leading-relaxed italic">{step.detail}</p>
-                  {step.code && (
-                    <pre className="bg-void border border-borderDim p-4 font-mono text-[10px] text-green overflow-x-auto leading-relaxed whitespace-pre">
-                      {step.code}
-                    </pre>
-                  )}
-                  {step.action && (
-                    <button
-                      onClick={handleSetIntegratorView}
-                      className="px-4 py-2 border border-green text-green font-display text-[10px] font-bold uppercase tracking-widest hover:bg-green hover:text-black transition-all"
-                    >
-                      {step.action} →
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-
-          <div className="border border-green/20 bg-green/5 p-8 text-center space-y-4">
-            <p className="font-display text-lg font-bold text-white">Ready to close the reality gap?</p>
-            <p className="font-body text-sm text-textSecondary">Email <span className="text-green font-mono">prathamesh@physicore.ai</span> with your hardware type. Or open the Integration Engineer if you already have access.</p>
-            <button onClick={handleSetIntegratorView} className="btn-primary h-12 px-8 text-sm">
-              {user ? 'Open Integration Engineer →' : 'Get Access →'}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      {/* ══════════════════════════════════════════════════════════════════
-           WHITEPAPER — Deep technical reference, no login required
-           Covers every platform: physics, adaptation, what PhysiCore learns
-           ══════════════════════════════════════════════════════════════ */}
-      <section id="whitepaper" className="bg-void py-32 px-6 border-t border-border">
-        <div className="max-w-[1100px] mx-auto space-y-20">
-
-          {/* Header */}
-          <div className="space-y-6">
-            <div className="border-l-2 border-green pl-4">
-              <span className="micro-label text-green">Technical Reference</span>
-            </div>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white leading-tight">
-              PhysiCore Whitepaper
-            </h2>
-            <p className="font-body text-lg text-textSecondary max-w-[720px] leading-relaxed">
-              Everything PhysiCore does, explained precisely. How the physics works, what it learns from your hardware, and why the sim-to-real gap closes. No login required to read this.
-            </p>
-            <div className="flex gap-6 flex-wrap">
-              {['Physics Kernel', 'SystemID', 'Residual Learning', 'Sentinel OS', 'All 12 Platforms', 'The Registry Flywheel'].map((t,i) => (
-                <span key={i} className="font-mono text-[10px] text-textDim border border-borderDim px-3 py-1">{t}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* ── SECTION 1: The Core Problem ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-green pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">1. The Sim-to-Real Problem</h3>
-              <p className="font-mono text-[10px] text-green uppercase tracking-widest">Why simulation always fails on real hardware</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Simulation assumes a perfect world. Your physics model has exact mass, exact friction, exact aerodynamic coefficients. The simulation runs and the robot works. You deploy to hardware and it breaks.</p>
-              <p>The gap comes from three sources. <strong className="text-white">Parametric error</strong>: your model's mass is 1.0kg, the real robot is 1.35kg because the motor mounts weigh more than the CAD said. <strong className="text-white">Structural error</strong>: your friction model is Coulomb (constant), real friction is velocity-dependent and surface-dependent. <strong className="text-white">Unmodelled dynamics</strong>: backlash in the gearbox, motor current lag, sensor noise, flex in the frame.</p>
-              <p>Traditional approaches: manually measure everything (takes weeks), add noise to simulation (doesn't fix structural gaps), re-tune in hardware (takes months, doesn't transfer to a different unit of the same robot).</p>
-              <p>PhysiCore's approach: start with an approximate model, run it on real hardware, measure what the model got wrong, learn the correction, repeat 60 times per second. The model converges on the real physics while the hardware is running.</p>
-            </div>
-          </div>
-
-          {/* ── SECTION 2: Physics Kernel ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-cyan pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">2. Physics Kernel</h3>
-              <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">RK4 integration · ISA atmosphere · platform dynamics</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>The physics kernel is the prior — what PhysiCore knows before it sees any real data. It integrates the equations of motion forward in time using 4th-order Runge-Kutta:</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto whitespace-pre leading-loose">{"k1 = f(xn,        un)              # derivative at step start\nk2 = f(xn + k1*h/2, un)           # derivative at midpoint (first estimate)\nk3 = f(xn + k2*h/2, un)           # derivative at midpoint (refined)\nk4 = f(xn + k3*h,   un)            # derivative at step end\n\nxn₊1 = xn + (k1 + 2k2 + 2k3 + k4) * h/6    h = 1/60 s"}</div>
-            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
-              <p>RK4 matters because robot dynamics are stiff — small integration errors amplify quickly under nonlinear control. Euler integration (the simplest method) diverges under high-gain control at 60Hz. RK4 stays stable.</p>
-              <p>Every platform has its own dynamics function f(x, u). The balancing bot uses Newton-Euler with gravity compensation. The quadrotor uses thrust-torque quaternion dynamics. The rocket uses Tsiolkovsky mass depletion with ISA atmosphere and Mach-dependent drag rise. The satellite uses J2 orbital perturbation. These are not toy models — they are the equations used in real aerospace and robotics engineering.</p>
-            </div>
-          </div>
-
-          {/* ── SECTION 3: Online SystemID ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-blue pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">3. Online System Identification</h3>
-              <p className="font-mono text-[10px] text-blue uppercase tracking-widest">How PhysiCore learns your real mass, friction, and drag</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>After every control step, PhysiCore has three pieces of information: the state before the action, the action it took, and the state that actually resulted. It uses these to update its physics parameter estimates.</p>
-              <p>The learning is numerical gradient descent on the physics parameters:</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto whitespace-pre leading-loose">{"# Every step:\nx_pred   = physics(x_prev, action, params)    # what model predicted\nx_real   = sensor_reading                     # what actually happened\nerror    = ||x_real - x_pred||²               # prediction error\n\n# Gradient of error with respect to params (numerical):\nderror/dmass     ~= (error(mass+d) - error(mass-d)) / 2d\nderror/dfriction ~= (error(friction+d) - error(friction-d)) / 2d\n\n# Innovation-driven adaptive learning rate:\ninnovation_ema = 0.95 * innovation_ema + 0.05 * ||x_real - x_pred||\nlr = base_lr * (innovation / innovation_ema)  # fast when things change\n\n# Parameter update:\nmass     -= lr * derror/dmass\nfriction -= lr * derror/dfriction"}</div>
-            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
-              <p>The innovation-driven learning rate is key. When the robot picks up a payload, the prediction error spikes. The innovation rises. The learning rate increases. Parameters update faster. When the model has converged and the robot is behaving predictably, the learning rate decreases — avoiding noise fitting.</p>
-              <p>Parameters are bounded to physical ranges. Mass cannot go below 10g or above 500kg. Friction cannot go negative. This prevents the optimization from diverging to nonsensical values when sensor noise causes temporary spikes.</p>
-            </div>
-          </div>
-
-          {/* ── SECTION 4: Residual Ensemble ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-blue pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">4. Residual Ensemble</h3>
-              <p className="font-mono text-[10px] text-blue uppercase tracking-widest">What SystemID can't capture — learned by neural networks</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>SystemID adjusts parameters, but parameters can only fix parametric errors. Structural errors — the wrong friction model, the missing backlash term, the unmodelled flex — need a different approach.</p>
-              <p>Three small neural networks (each: 2 hidden layers, 32 neurons) learn the residual: the structured difference between what the physics model predicts and what actually happens.</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-blue overflow-x-auto whitespace-pre leading-loose">{"# Physics model prediction:\nx_physics = RK4(x, u, params)\n\n# Each network predicts the CORRECTION, not the full dynamics:\nd1 = MLP1(x, u)    # residual network 1\nd2 = MLP2(x, u)    # residual network 2 (different init)\nd3 = MLP3(x, u)    # residual network 3 (different init)\n\n# Final prediction = physics + mean correction:\nx_pred = x_physics + mean(d1, d2, d3)\n\n# Uncertainty = spread between networks:\nuncertainty = var(d1, d2, d3)    # high = out of distribution"}</div>
-            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
-              <p>The ensemble's disagreement is epistemic uncertainty — when the three networks predict very different corrections, they have not seen this state before and the estimate is unreliable. This uncertainty feeds directly into the CEM-MPC cost function: high-uncertainty actions are penalized, making the controller conservative when it doesn't know what will happen.</p>
-              <p>Networks start at zero correction. With no data, the physics model is the entire prediction. As data accumulates, the corrections grow to capture what the physics misses. The physics model is the prior; the ensemble is the posterior update.</p>
-            </div>
-          </div>
-
-          {/* ── SECTION 5: CEM-MPC ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-amber pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">5. CEM-MPC Optimizer</h3>
-              <p className="font-mono text-[10px] text-amber uppercase tracking-widest">Cross-Entropy Method — 6-step lookahead at 60Hz</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Model Predictive Control computes the best action by simulating many possible action sequences and picking the one that leads to the best outcome. PhysiCore uses the Cross-Entropy Method (CEM) to do this efficiently.</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-amber overflow-x-auto whitespace-pre leading-loose">{"# Every 16.7ms (60Hz):\n1. Sample N=6 action sequences (each: 6 steps × action_dim)\n   from current distribution mu, std\n\n2. For each sequence, simulate 6 steps forward:\n   cost = sum ||x_simulated - x_ref||² + lambda*uncertainty\n\n3. Keep top K=2 sequences (elite samples)\n\n4. Fit new distribution to elite samples:\n   mu_new = mean(elite_sequences)\n   std_new = std(elite_sequences)\n\n5. Warm-start: use mu_new as starting point next cycle\n\n6. Execute first action from best sequence"}</div>
-            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
-              <p>The uncertainty penalty λ·uncertainty makes the optimizer conservative when the model is uncertain. In practice: when a robot enters a new configuration or terrain, uncertainty rises, the optimizer avoids large actions, and the robot moves more carefully until the ensemble has learned the new regime.</p>
-              <p>Warm-starting reuses the previous solution shifted by one step. This means the optimizer doesn't start from scratch every cycle — it refines an already-good solution. This is why 6 samples is sufficient at 60Hz.</p>
-            </div>
-          </div>
-
-          {/* ── SECTION 6: Sentinel OS ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-amber pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">6. Sentinel OS</h3>
-              <p className="font-mono text-[10px] text-amber uppercase tracking-widest">8-layer safety architecture — Lyapunov + SHA-256 forensic chain</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Sentinel is a separate safety layer that monitors every control step. It cannot be disabled. It operates in three modes and transitions automatically based on real-time physics metrics.</p>
-            </div>
-            <div className="grid md:grid-cols-2 gap-6">
-              {SENTINEL_LAYERS_WP.map((l, i) => (
-                <div key={i} className="flex gap-4 p-4 border border-borderDim bg-bgRaised">
-                  <span className="font-mono text-[10px] text-amber shrink-0 w-8">{l.layer}</span>
-                  <div>
-                    <p className="font-display text-xs font-bold text-white uppercase tracking-wider">{l.name}</p>
-                    <p className="font-body text-xs text-textDim leading-relaxed mt-1">{l.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* ── SECTION 7: ALL 12 PLATFORMS ── */}
-          <div className="space-y-10">
-            <div className="border-l-4 border-green pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">7. All 12 Hardware Platforms</h3>
-              <p className="font-mono text-[10px] text-green uppercase tracking-widest">What PhysiCore learns on each platform</p>
-            </div>
-            <div className="space-y-6">
-              {[
-                {
-                  name: 'Balancing Bot',
-                  icon: '⚖',
-                  state: '[pitch, pitch_rate, x, x_dot]',
-                  action: '[torque_Nm]',
-                  learns: 'Real mass, real friction (vs floor surface), real inertia (vs CAD model). Detects payload additions within 5 seconds.',
-                  physics: 'Newton-Euler inverted pendulum with motor dynamics. Gravity compensation adapts as mass estimate converges.',
-                  hardware: 'Arduino + MPU6050 + L298N/TB6612/DRV8833',
-                  time: '30 seconds to converge',
-                },
-                {
-                  name: 'Quadrotor Drone',
-                  icon: '✈',
-                  state: '[x, y, z, vx, vy, vz, qw, qx, qy, qz, ωx, ωy, ωz]',
-                  action: '[T1, T2, T3, T4] thrust N',
-                  learns: 'Real mass including battery sag effect, real rotor efficiency (detects degradation), aerodynamic drag correction from actual flight data.',
-                  physics: 'Quaternion rigid-body dynamics with ISA atmosphere. Thrust-torque model adapts to real motor KV ratings.',
-                  hardware: 'PX4 / ArduPilot / MAVLink UDP',
-                  time: '2-3 flight minutes to converge',
-                },
-                {
-                  name: 'Sounding Rocket',
-                  icon: '🚀',
-                  state: '[x, y, vx, vy, mass, pitch_rad]',
-                  action: '[thrust_N, gimbal_deg]',
-                  learns: 'Real Cd at each Mach number (from coast-phase deceleration), real Isp (from mass depletion vs altitude gain), real mass depletion rate (vs motor datasheet).',
-                  physics: 'Tsiolkovsky mass depletion with ISA atmosphere, Mach-dependent drag rise through transonic regime (0.8–1.2 Mach). Barometric Kalman filter rejects ejection charge pressure spikes.',
-                  hardware: 'Custom FC (ATmega328PB / Teensy 4.1) + BMP388 + ADXL375',
-                  time: 'Post-flight analysis from 1 flight',
-                },
-                {
-                  name: 'Robotic Arm',
-                  icon: '🦾',
-                  state: '[q₁...q₇, q̇₁...q̇₇]  joint angles + velocities',
-                  action: '[τ₁...τ₇] joint torques Nm',
-                  learns: 'Real joint friction per axis (Coulomb + viscous), real payload mass at end-effector (updates within 3-5 joint movements), real joint compliance/backlash.',
-                  physics: 'Newton-Euler recursive rigid body dynamics with gravity compensation. Gravity vector adapts as arm moves through workspace.',
-                  hardware: 'ROS2 (any distribution) via /joint_states topic',
-                  time: '1-2 minutes of motion to converge',
-                },
-                {
-                  name: 'Legged / Quadruped',
-                  icon: '🐕',
-                  state: '[torso_pose, joint_angles, contact_forces]',
-                  action: '[τ_hip, τ_knee, τ_ankle] × 4',
-                  learns: 'Real terrain friction (concrete vs grass vs gravel — adapts within 15 steps of surface change), real mass with payload, contact dynamics per leg.',
-                  physics: 'Multi-body dynamics with contact model. Slip detection from commanded vs achieved velocity divergence.',
-                  hardware: 'ROS2 / Unitree SDK / ANYmal SDK',
-                  time: '15 seconds per terrain type',
-                },
-                {
-                  name: 'Humanoid Robot',
-                  icon: '🤖',
-                  state: '[base_pose, 6DOF, joint_angles × N]',
-                  action: '[joint_torques × N]',
-                  learns: 'Real joint friction profile for every joint, mass distribution (detects object pickup within 5 steps), whole-body contact dynamics.',
-                  physics: 'Floating-base rigid body dynamics. Gravity compensation updates as mass distribution changes.',
-                  hardware: 'Unitree G1/H1, Figure AI Apollo, custom humanoids via ROS2',
-                  time: '2-3 minutes of walking to converge',
-                },
-                {
-                  name: 'AUV / Underwater',
-                  icon: '🌊',
-                  state: '[x, y, z, vx, vy, vz, roll, pitch, yaw, ωx, ωy, ωz]',
-                  action: '[T_surge, T_sway, T_heave, τ_roll, τ_pitch, τ_yaw]',
-                  learns: 'Real quadratic drag coefficients in all 6 DOF (surge, sway, heave, roll, pitch, yaw), real buoyancy (adjusts with depth/compression), current vector estimation.',
-                  physics: 'Hydrodynamic model with added mass effect. Drag is quadratic with velocity. 6 independent drag coefficients.',
-                  hardware: 'BlueROV2, custom AUVs via ROS2 + /imu/data + /depth',
-                  time: '5 minutes of motion in water',
-                },
-                {
-                  name: 'eVTOL Aircraft',
-                  icon: '🚁',
-                  state: '[x, y, z, vx, vy, vz, pitch, roll, yaw, rates]',
-                  action: '[rotor_throttles × N]',
-                  learns: 'Real rotor efficiency per rotor (detects degradation), battery voltage sag effect on thrust, transition aerodynamics from hover to cruise.',
-                  physics: 'Multi-rotor dynamics with transition model. Battery discharge curve adapts from measured voltage vs thrust.',
-                  hardware: 'PX4 / ArduPilot via MAVLink',
-                  time: '3-5 flight minutes',
-                },
-                {
-                  name: 'Fixed-Wing UAV',
-                  icon: '✈',
-                  state: '[x, y, z, vx, vy, vz, α, β, roll, pitch, yaw, rates]',
-                  action: '[aileron, elevator, rudder, throttle]',
-                  learns: 'Real lift/drag polar (Cl vs α), real stall angle from actual flight data, real propeller efficiency.',
-                  physics: 'Full 6DOF aerodynamics with ISA atmosphere. Lift = ½ρv²SCl(α). Mach drag rise for fast aircraft.',
-                  hardware: 'ArduPilot Plane via MAVLink',
-                  time: '5-10 minutes of flight',
-                },
-                {
-                  name: 'Ground Rover / AMR',
-                  icon: '🚗',
-                  state: '[x, y, θ, vx, vy, ω]',
-                  action: '[v_left, v_right] wheel velocities',
-                  learns: 'Real terrain friction (updates within 10 steps of surface change), wheel slip ratio, load shift from payload.',
-                  physics: 'Differential drive with slip model. Friction estimate updates from wheel speed vs IMU velocity divergence.',
-                  hardware: 'ROS2 via /cmd_vel + /odom, or Arduino serial',
-                  time: '15-30 seconds per surface type',
-                },
-                {
-                  name: 'Surgical Robot',
-                  icon: '🏥',
-                  state: '[q₁...q₆, q̇₁...q̇₆]  joint angles + velocities',
-                  action: '[τ₁...τ₆] joint torques Nm',
-                  learns: 'Tissue stiffness at contact (classifies soft vs rigid tissue within 1 contact), real joint friction, instrument tip compliance.',
-                  physics: 'Same as robotic arm but with tighter Sentinel bounds and contact dynamics detection.',
-                  hardware: 'ROS2 + force-torque sensor',
-                  time: '30 seconds calibration',
-                },
-                {
-                  name: 'Satellite / Spacecraft',
-                  icon: '🛸',
-                  state: '[pos, vel, quat, ω]  — ECI frame',
-                  action: '[τ_rw1, τ_rw2, τ_rw3] reaction wheel torques',
-                  learns: 'Real inertia tensor (from reaction wheel torque vs angular acceleration), real thruster efficiency, solar radiation pressure correction.',
-                  physics: 'J2 orbital perturbation propagator + rigid-body attitude dynamics. ISA atmosphere extension to LEO.',
-                  hardware: 'Custom FC via serial telemetry',
-                  time: 'Converges over first orbit maneuver',
-                },
-              ].map((platform, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ opacity: 0 }}
-                  whileInView={{ opacity: 1 }}
-                  transition={{ delay: i * 0.05 }}
-                  className="reveal border border-border bg-bgRaised p-8 space-y-6"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <span className="text-3xl">{platform.icon}</span>
-                      <div>
-                        <h4 className="font-display text-lg font-bold text-white uppercase tracking-widest">{platform.name}</h4>
-                        <span className="font-mono text-[9px] text-textDim">{platform.hardware}</span>
-                      </div>
-                    </div>
-                    <span className="font-mono text-[9px] text-green border border-green/30 px-3 py-1 shrink-0">{platform.time}</span>
-                  </div>
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <div>
-                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">What it learns</p>
-                        <p className="font-body text-xs text-textSecondary leading-relaxed">{platform.learns}</p>
-                      </div>
-                      <div>
-                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">Physics model</p>
-                        <p className="font-body text-xs text-textSecondary leading-relaxed">{platform.physics}</p>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">State vector</p>
-                        <code className="font-mono text-[10px] text-cyan">{platform.state}</code>
-                      </div>
-                      <div>
-                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">Action vector</p>
-                        <code className="font-mono text-[10px] text-green">{platform.action}</code>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </div>
-
-          {/* ── SECTION 8: Registry Flywheel ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-cyan pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">8. The Registry Flywheel</h3>
-              <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">Why PhysiCore gets better with every deployment</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>At the end of every hardware session, PhysiCore saves the converged physics parameters to a local registry: mass estimate, friction estimate, ensemble weights. When the next session begins on the same hardware, it loads these parameters instead of starting from scratch.</p>
-              <p>In practice: your first session takes 30 seconds to converge. Your tenth session converges in 5 seconds because 9 sessions of prior knowledge give it a much better starting point. Your hundredth session starts essentially converged — it already knows your hardware.</p>
-              <p>The registry is keyed by platform type and hardware fingerprint. Two different balancing bots have separate registry entries. The same bot across many sessions accumulates a learned prior that gets stronger over time.</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto whitespace-pre leading-loose">{"# ~/.physicore/registry/balancing_bot/\n#   params.json          — latest converged mass, friction, inertia\n#   ensemble_0.npz       — learned residual network weights\n#   ensemble_1.npz\n#   ensemble_2.npz\n#   sessions.jsonl       — log of every session (timestamp, steps, convergence%)\n#   platform_prior.json  — weighted average across all sessions\n\n# Session 1:  starts from mass=1.0 (prior guess), converges to 1.35 in 30s\n# Session 10: starts from mass=1.31 (registry), converges to 1.34 in 5s\n# Session 50: starts from mass=1.347 (strong prior), stable in 2s"}</div>
-          </div>
-
-          {/* ── SECTION 9: 3-line integration ── */}
-          <div className="space-y-8">
-            <div className="border-l-4 border-green pl-6 space-y-2">
-              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">9. Integration API</h3>
-              <p className="font-mono text-[10px] text-green uppercase tracking-widest">The complete integration — three lines of Python</p>
-            </div>
-            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Once you have access and have run the Integration Engineer to flash your firmware, the entire PhysiCore integration is three lines of code in your control loop:</p>
-            </div>
-            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto whitespace-pre leading-loose">{"import physicore\n\n# Connect — loads registry prior, attaches Sentinel, starts adaptation\nrobot = physicore.connect(\"balancing_bot\", mass=1.35, friction=0.18)\n\n# Your control loop:\nwhile True:\n    state  = imu.read()                    # your sensor read\n    action = robot.step(state)             # PhysiCore computes optimal action\n    motors.apply(action)                   # your actuator write\n    robot.observe(state, action, imu.read())  # PhysiCore learns from what happened\n\n# robot.save() called automatically on Ctrl+C\n# Next session starts from converged parameters"}</div>
-            <div className="grid md:grid-cols-3 gap-6">
-              {[
-                { title: 'robot.step(state)', desc: 'CEM-MPC computes optimal action every 16.7ms. Returns numpy array of motor commands.' },
-                { title: 'robot.observe(s, a, s')', desc: 'Feeds the real transition back. SystemID and residual ensemble learn from every observation.' },
-                { title: 'robot.narrate()', desc: 'Returns plain English: "Model converged — mass 1.34kg, residual 0.003." Display in your product UI.' },
-              ].map((api, i) => (
-                <div key={i} className="p-5 border border-border bg-bgRaised space-y-2">
-                  <code className="font-mono text-[11px] text-green">{api.title}</code>
-                  <p className="font-body text-xs text-textSecondary leading-relaxed">{api.desc}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* CTA at bottom of whitepaper */}
-          <div className="border border-green/20 bg-green/5 p-10 text-center space-y-6">
-            <p className="font-display text-2xl font-bold text-white">This is what's running on your hardware.</p>
-            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
-              Not a black box. Not a fine-tuned neural network you can't inspect. A physics engine that explains itself — you can see the mass estimate converging, the residual dropping, the Sentinel mode — while your hardware adapts in real time.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button onClick={handleSetIntegratorView} className="btn-primary h-12 px-8 text-sm">
-                {user ? 'Open Integration Engineer →' : 'Request Access →'}
-              </button>
-              <a
-                href="mailto:prathamesh@physicore.ai"
-                className="btn-outline h-12 px-8 text-sm flex items-center justify-center"
-              >
-                Ask a technical question →
-              </a>
-            </div>
-          </div>
-
-        </div>
-      </section>
-
       {/* ── FOOTER ── */}
       <section className="bg-void py-24 px-6 border-t border-border">
         <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
@@ -5792,44 +4842,13 @@ Be direct, technical, confident. You are the world's best robotics integration e
     }
 
     async function checkTroubleshoot(msg: string) {
-      // Step 1: Local decision tree — INSTANT, always works, no API needed
-      const localResult = ie_troubleshoot(msg, ieState.hw, ieState.answers);
+      const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
+      setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
 
-      if (localResult) {
-        // Local tree matched — show answer immediately
-        setIE(s=>({...s, troubleshootResult: localResult, phase:'troubleshoot'}));
-        // Then try to enhance with AI in the background (silently, no spinner)
-        try {
-          const ai = getAI();
-          if (!ai) return; // No key — local answer is enough
-          const enhSnapshot = buildLiveSnapshot();
-          const enhSessionActive = isControlActive && isSystemConnected;
-          const extraCtx = enhSessionActive && enhSnapshot
-            ? `LIVE DATA: mass=${enhSnapshot.mass.current}kg drift=${enhSnapshot.mass.driftPct}% residual=${enhSnapshot.residual.current} trend=${enhSnapshot.residual.trend} sentinel=${enhSnapshot.sentinelMode}`
-            : '';
-          const enhResp = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents: `PhysiCore ${IE_FLOWS[ieState.hw]?.label||ieState.hw} troubleshooter.
-User problem: ${msg}
-${extraCtx}
-Add 1-2 specific insights beyond the basic answer. Be concise.`,
-          });
-          const extra = enhResp.text?.trim();
-          if (extra) {
-            setIE(s=>({...s, troubleshootResult:{
-              ...localResult,
-              title: enhSessionActive ? 'Live diagnosis' : localResult.title,
-              aiInsight: extra,
-            }}));
-          }
-        } catch(_) {} // Enhancement failed silently — local answer still shown
-        return;
-      }
-
-      // Step 2: No local match — need AI for novel/custom problem
-      setIE(s=>({...s, troubleshootResult:{
-        title:'Diagnosing your problem...',
-        steps:[{label:'Analysing...', cmd:'One moment'}]
+      // Always call Claude — either with live session context or static context
+      setIE(s=>({...s, troubleshootResult: result || {
+        title:'Diagnosing...',
+        steps:[{label:'Analysing your session data', cmd:'Please wait'}]
       }, phase:'troubleshoot'}));
 
       const snapshot = buildLiveSnapshot();
@@ -5875,10 +4894,10 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
 
         let text = '';
         // Tier 1: Gemini direct — available on Vercel with VITE_GEMINI_API_KEY
-        const mainAI = getAI();
-        if (mainAI) {
+        const ai = getAI();
+        if (ai) {
           try {
-            const gemResp = await mainAI.models.generateContent({
+            const gemResp = await ai.models.generateContent({
               model: 'gemini-2.0-flash',
               contents: `${systemPrompt}
 
@@ -5907,24 +4926,7 @@ PROBLEM: ${msg}`,
             }
           } catch (_ae) {}
         }
-        if (!text) {
-          // AI unavailable — generate a local fallback from what we know
-          const hw = IE_FLOWS[ieState.hw]?.label || ieState.hw || 'your hardware';
-          const m = msg.toLowerCase();
-          if (m.includes('balanc') || m.includes('fall') || m.includes('tip')) {
-            text = `Balancing issue checklist:\n1. Verify BALANCE_POINT: hold upright → Serial Monitor → read pitch → set that value → re-upload\n2. Check MAX_TORQUE = 2.5 in firmware (not 100 or 255)\n3. Confirm ACTIVE CONTROL ON (LED must be ON)\n4. Verify IMU data changing: tilt robot → pitch must move in Serial Monitor`;
-          } else if (m.includes('imu') || m.includes('sensor') || m.includes('zero') || m.includes('pitch')) {
-            text = `IMU troubleshooting:\n1. Check wiring: SDA→A4, SCL→A5, VCC→3.3V (NOT 5V), GND→GND\n2. Run I2C scanner: File→Examples→Wire→i2c_scanner — your IMU address must appear\n3. Install IMU library: Library Manager → search "${ieState.answers.imu || 'MPU6050'}"\n4. Re-upload firmware after library install`;
-          } else if (m.includes('connect') || m.includes('dashboard') || m.includes('bridge')) {
-            text = `Connection troubleshooting:\n1. Endpoint must be exactly: ws://localhost:8765\n2. Close Arduino IDE (it holds the serial port)\n3. Run: python physicore/bridge/physicore_bridge.py --test\n4. Check firewall — allow port 8765`;
-          } else if (m.includes('ros2') || m.includes('topic') || m.includes('rclpy')) {
-            text = `ROS2 troubleshooting:\n1. source /opt/ros/${(ieState.answers.distro||'humble').toLowerCase()}/setup.bash (every terminal)\n2. ros2 topic list — your topics must appear\n3. ros2 topic echo ${ieState.answers.topic||'/joint_states'} --once — data must flow`;
-          } else if (m.includes('rocket') || m.includes('altitude') || m.includes('pressure') || m.includes('baro')) {
-            text = `Rocket/barometer troubleshooting:\n1. Check I2C wiring: ${ieState.answers.baro||'BMP388'} SDA→A4, SCL→A5, VCC→3.3V\n2. Run I2C scanner — address ${ieState.answers.baro==='BMP280'?'0x76':'0x77'} must appear\n3. Install library: "${ieState.answers.baro||'BMP388'}" in Library Manager\n4. Check altitude_raw vs altitude fields — if altitude_raw is 0, sensor not initialized`;
-          } else {
-            text = `Diagnosis for ${hw}:\n1. Verify hardware wiring and power (3.3V not 5V for most sensors)\n2. Check serial port: python physicore/bridge/physicore_bridge.py --test\n3. Verify firmware is sending real sensor data (not zeros)\n4. Dashboard endpoint must be exactly ws://localhost:8765\n\nDescribe your specific error and I will give a more precise answer.`;
-          }
-        }
+        if (!text) text = 'Could not reach AI. Use the quick fix buttons above for instant answers.';
         setIE(s=>({...s, troubleshootResult:{
           title: sessionActive ? 'Live diagnosis — based on your actual session data' : 'Diagnosis complete',
           steps:[{label:text, cmd:''}],
@@ -7244,7 +6246,7 @@ max_torque: 2.5`}</Code>
                   {[
                     { item: 'SystemID parameters', detail: 'Converged mass, friction, inertia estimates. Weighted average across sessions — more converged sessions count more.' },
                     { item: 'Residual ensemble weights', detail: 'The three neural network weights that learned what your simulator gets wrong. Loads pre-trained next session.' },
-                    { item: 'CEM warm start', detail: "The optimizer\'s memory of good action sequences. First few control steps are better immediately." },
+                    { item: 'CEM warm start', detail: 'The optimizer\'s memory of good action sequences. First few control steps are better immediately.' },
                     { item: 'Session log', detail: 'Every session recorded: timestamp, steps, convergence quality, final params.' },
                   ].map((s, i) => (
                     <div key={i} className="p-4 border border-borderDim bg-bgRaised space-y-1">
@@ -7351,7 +6353,7 @@ max_torque: 2.5`}</Code>
                       ],
                     },
                     {
-                      error: "Motors spin full speed in one direction and won\'t stop",
+                      error: 'Motors spin full speed in one direction and won\'t stop',
                       causes: ['BALANCE_POINT is wrong', 'Bot thinks it\'s always falling'],
                       fixes: [
                         'Redo Phase 2 calibration. Hold bot upright, read pitch from Serial Monitor, set BALANCE_POINT to that exact value, re-flash.',

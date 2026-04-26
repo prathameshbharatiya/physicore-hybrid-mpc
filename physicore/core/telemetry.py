@@ -1,3 +1,4 @@
+import os
 """
 PhysiCore Telemetry — The Data Flywheel
 ========================================
@@ -27,7 +28,6 @@ Author: Prathamesh Shirbhate — physicore.ai
 
 from __future__ import annotations
 
-import os
 import json
 import time
 import hashlib

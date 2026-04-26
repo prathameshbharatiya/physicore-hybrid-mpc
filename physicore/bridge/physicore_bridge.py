@@ -27,16 +27,6 @@ import math
 import platform as _platform
 import numpy as np
 
-# ── Sensor filter import ─────────────────────────────────────────────────────
-try:
-    from physicore.core.sensor_filter import (
-        PhysicoreSensorFilter, FlightPhase, SerialPacketValidator,
-        RocketStateBuilder, GyroNormaliser,
-    )
-    HAS_SENSOR_FILTER = True
-except ImportError:
-    HAS_SENSOR_FILTER = False
-
 # ── PhysiCore engine import ────────────────────────────────────────────────────
 try:
     import sys, os
@@ -191,12 +181,6 @@ engine            = None   # PhysiCore engine instance — initialized on startu
 control_active    = False  # Set by dashboard "ACTIVE CONTROL" button
 x_ref             = None   # Target state from dashboard
 
-# ── Global sensor filter ───────────────────────────────────────────────────────
-# Instantiated per-platform in main() once platform is known
-_sensor_filter:   object = None
-_packet_validator: object = None
-_gyro_norm:       object = None
-
 def state_to_vector(platform: str) -> np.ndarray:
     """Convert current telemetry to engine state vector for the given platform."""
     if platform == 'balancing_bot':
@@ -218,10 +202,7 @@ def state_to_vector(platform: str) -> np.ndarray:
         return np.array([0,0,state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
                          roll_r,pitch_r,yaw_r, state.gyro_x,state.gyro_y,state.gyro_z])
     elif platform == 'rocket':
-        # Use real estimated mass (tracked by RocketStateBuilder), not hardcoded 1.0
-        mass = state.estimated_mass if state.estimated_mass > 0.01 else 1.0
-        alt  = state.altitude  # already filtered by sensor_filter if active
-        return np.array([0, alt, state.velocity_x, state.velocity_z, mass, math.radians(state.pitch)])
+        return np.array([0, state.altitude, state.velocity_x, state.velocity_z, 1.0, math.radians(state.pitch)])
     elif platform in ('ground_rover', 'rover'):
         return np.array([0, 0, math.radians(state.yaw), state.velocity_x, state.velocity_y, state.gyro_z])
     elif platform == 'auv':
@@ -282,8 +263,6 @@ def mavlink_reader(connection_string: str, baud: int):
                 state.roll   = math.degrees(msg.roll)
                 state.pitch  = math.degrees(msg.pitch)
                 state.yaw    = math.degrees(msg.yaw)
-                # MAVLink rollspeed/pitchspeed/yawspeed are in rad/s — convert to deg/s
-                # to match serial bridge convention (both now always deg/s)
                 state.gyro_x = math.degrees(msg.rollspeed)
                 state.gyro_y = math.degrees(msg.pitchspeed)
                 state.gyro_z = math.degrees(msg.yawspeed)
@@ -350,78 +329,33 @@ def robot_serial_reader(connection_string: str, baud: int):
                     if not line or not line.startswith('{'):
                         continue
 
-                    # ── Packet validation ─────────────────────────────────────
-                    if _packet_validator:
-                        valid, data, errors = _packet_validator.validate(line)
-                        if errors:
-                            for err in errors[:2]:  # show max 2 errors per packet
-                                print(f"[SENSOR] {err}")
-                        if not valid or data is None:
-                            continue
+                    data = json.loads(line)
+                    state.pitch       = float(data.get('pitch',   0))
+                    state.roll        = float(data.get('roll',    0))
+                    state.gyro_x      = float(data.get('gyro_x',  0))
+                    state.gyro_y      = float(data.get('gyro_y',  0))
+                    state.gyro_z      = float(data.get('gyro_z',  0))
+                    state.accel_x     = float(data.get('accel_x', 0))
+                    state.accel_y     = float(data.get('accel_y', 0))
+                    state.accel_z     = float(data.get('accel_z', 0))
+                    state.motor_l     = float(data.get('motor_l', 0))
+                    state.motor_r     = float(data.get('motor_r', 0))
+                    state.altitude    = float(data.get('altitude', 0))
+                    # Estimate forward velocity from accel_x integration (no wheel encoders on basic bots)
+                    raw_vx = float(data.get('vx', 0))
+                    if raw_vx != 0:
+                        state.velocity_x = raw_vx
                     else:
-                        data = json.loads(line)
-
-                    # ── Raw sensor reads ────────────────────────────────────────
-                    raw_ax = float(data.get('accel_x', 0))
-                    raw_ay = float(data.get('accel_y', 0))
-                    raw_az = float(data.get('accel_z', 9.81))
-                    raw_gx = float(data.get('gyro_x',  0))
-                    raw_gy = float(data.get('gyro_y',  0))
-                    raw_gz = float(data.get('gyro_z',  0))
-                    raw_alt  = float(data.get('altitude', state.altitude))
-                    pressure = data.get('pressure')   # hPa if available
-                    temp_c   = float(data.get('temperature', 20.0))
-
-                    # ── Apply sensor filter (saturation, spike, frame, units) ──
-                    if _sensor_filter:
-                        _sensor_filter.process(
-                            raw_ax=raw_ax, raw_ay=raw_ay, raw_az=raw_az,
-                            raw_gx=raw_gx, raw_gy=raw_gy, raw_gz=raw_gz,
-                            raw_baro_alt=raw_alt,
-                            pressure_hpa=float(pressure) if pressure else None,
-                            temperature_c=temp_c,
-                        )
-                        state.accel_x  = _sensor_filter.accel_x
-                        state.accel_y  = _sensor_filter.accel_y
-                        state.accel_z  = _sensor_filter.accel_z
-                        state.gyro_x   = _sensor_filter.gyro_x
-                        state.gyro_y   = _sensor_filter.gyro_y
-                        state.gyro_z   = _sensor_filter.gyro_z
-                        state.altitude = _sensor_filter.altitude
-                        state.velocity_x = _sensor_filter.vx
-                        state.velocity_y = _sensor_filter.vy
-                        state.velocity_z = _sensor_filter.vz
-                        if _sensor_filter.phase:
-                            state.flight_mode = _sensor_filter.phase.value
-                        if _sensor_filter.warnings:
-                            for w in _sensor_filter.warnings:
-                                print(f"[SENSOR] {w}")
-                    else:
-                        # Fallback — direct reads without filtering
-                        state.accel_x  = raw_ax; state.accel_y = raw_ay; state.accel_z = raw_az
-                        state.gyro_x   = raw_gx; state.gyro_y  = raw_gy; state.gyro_z  = raw_gz
-                        state.altitude = raw_alt
-                        raw_vx = float(data.get('vx', 0))
-                        if raw_vx != 0:
-                            state.velocity_x = raw_vx
-                        else:
-                            state.velocity_x += raw_ax * 0.02
-
-                    state.pitch     = float(data.get('pitch', state.pitch))
-                    state.roll      = float(data.get('roll',  state.roll))
-                    state.motor_l   = float(data.get('motor_l', 0))
-                    state.motor_r   = float(data.get('motor_r', 0))
+                        state.velocity_x = state.velocity_x * 0.95 + state.accel_x * (1.0 / 50.0)
                     state.flight_mode = str(data.get('phase', state.flight_mode))
-
-                    # ── Real mass tracking from serial ──────────────────────────
-                    reported_mass = data.get('mass')
-                    if reported_mass is not None:
-                        m = float(reported_mass)
-                        if m > 0.001:
-                            state.estimated_mass = m
-
-                    state.timestamp = time.time()
-                    state.connected = True
+                    # Rocket-specific: update mass from telemetry (tracks propellant depletion)
+                    if data.get('mass') is not None:
+                        # Only update if it's decreasing (propellant burning) or initialized
+                        reported_mass = float(data.get('mass', 0))
+                        if reported_mass > 0:
+                            state.estimated_mass = reported_mass
+                    state.timestamp   = time.time()
+                    state.connected   = True
 
                     # ── PHYSICORE ACTIVE CONTROL ──────────────────────────────
                     if engine and control_active:
@@ -516,8 +450,6 @@ def ros2_reader(topic: str):
             state.accel_x = msg.linear_acceleration.x
             state.accel_y = msg.linear_acceleration.y
             state.accel_z = msg.linear_acceleration.z
-            # ROS2 IMU angular_velocity is in rad/s — convert to deg/s
-            # to match serial bridge convention (always deg/s in bridge state)
             state.gyro_x  = math.degrees(msg.angular_velocity.x)
             state.gyro_y  = math.degrees(msg.angular_velocity.y)
             state.gyro_z  = math.degrees(msg.angular_velocity.z)
@@ -696,14 +628,6 @@ if __name__ == "__main__":
     parser.add_argument('--topic',      default='/imu/data')
     parser.add_argument('--platform',   default=None, choices=list(PLATFORM_PROFILES.keys()))
     parser.add_argument('--test',       action='store_true')
-    parser.add_argument('--imu-frame',  default='standard',
-                        choices=['standard','z_down','x_up','y_forward','x_back'],
-                        help='IMU mounting orientation correction')
-    parser.add_argument('--imu-max-g',  type=float, default=16.0,
-                        help='IMU accelerometer range in g (MPU-6050=16, ADXL375=200)')
-    parser.add_argument('--gyro-unit',  default='auto',
-                        choices=['auto','deg_s','rad_s'],
-                        help='Gyro input unit (auto=detect, deg_s=degrees/s, rad_s=radians/s)')
     args = parser.parse_args()
 
     if args.test:
@@ -743,9 +667,7 @@ if __name__ == "__main__":
     if args.platform:
         profile = PLATFORM_PROFILES[args.platform]
         args.mode  = profile["mode"]
-        # Only use profile baud if user didn't explicitly set --baud
-        if args.baud == 57600:  # default value = not explicitly set
-            args.baud = profile["baud"]
+        args.baud  = profile["baud"]
         state.vehicle_type = profile["vehicle_type"]
         state.domain       = profile["domain"]
         state.platform     = args.platform
@@ -763,22 +685,6 @@ if __name__ == "__main__":
                     init_params = _robot_config.initial_params
 
                 engine = PhysiCore.for_platform(ep, init_params)
-
-                # ── Initialise sensor filter for this platform ─────────────────
-                global _sensor_filter, _packet_validator
-                if HAS_SENSOR_FILTER:
-                    is_rocket = ep == "rocket"
-                    gyro_unit = "deg_s" if args.mode == "mavlink" else "auto"
-                    imu_frame = getattr(args, 'imu_frame', 'standard')
-                    imu_max_g = getattr(args, 'imu_max_g', 16.0)
-                    _sensor_filter = PhysicoreSensorFilter(
-                        imu_max_g=imu_max_g,
-                        imu_frame=imu_frame,
-                        gyro_unit=gyro_unit,
-                        is_rocket=is_rocket,
-                    )
-                    _packet_validator = SerialPacketValidator()
-                    print(f"[SENSOR] Filter active — saturation={imu_max_g}g frame={imu_frame} gyro={gyro_unit}")
 
                 # Load saved model from registry if available
                 registry_key = ep
