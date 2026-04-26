@@ -5233,7 +5233,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
                 desc: 'The IE generates a complete .ino firmware file for your MCU and sensors. It includes IMU initialization, barometric pressure reading with temperature compensation, Kalman-filtered altitude for rockets, and the JSON serial protocol PhysiCore speaks.',
                 detail: 'Open the file in Arduino IDE, select your board, click Upload. The firmware sends real sensor data over serial and receives torque commands back from PhysiCore.',
                 action: null,
-                code: "// Generated firmware sends this every 20ms:\n{\\"pitch\\":5.2,\\"gyro_x\\":12.4,\\"accel_z\\":9.81,\\"motor_l\\":0.0,\\"timestamp\\":12400}\n\n// PhysiCore sends this back:\n{\\"op\\":\\"command\\",\\"action\\":[-0.460]}",
+                code: '// Generated firmware sends this every 20ms:\n{pitch:5.2, gyro_x:12.4, accel_z:9.81, motor_l:0.0, timestamp:12400}\n\n// PhysiCore sends this back:\n{op: command, action: [-0.460]}',
               },
               {
                 n: '04',
@@ -5243,7 +5243,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
                 desc: 'One command starts the bridge that connects your hardware to PhysiCore. It reads the YAML config the IE generated, opens the serial port, and exposes the WebSocket on port 8765 for the dashboard.',
                 detail: 'The bridge handles MAVLink for PX4/ArduPilot drones, ROS2 topics for robot arms, and JSON serial for everything else. Same dashboard, same adaptation engine, any hardware.',
                 action: null,
-                code: "# Mac/Linux:\nbash run_bridge.sh\n\n# Windows:\nrun_bridge.bat\n\n# Output:\n[BRIDGE] Serial connected: /dev/cu.usbserial-0001\n[ENGINE] Initialized for 'balancing_bot' | mass=1.0\n[TELEM] pitch=0.2\u00b0 | residual=0.8541 | mass=1.000",
+                code: '# Mac/Linux:\nbash run_bridge.sh\n\n# Windows:\nrun_bridge.bat\n\n# Output:\n[BRIDGE] Serial connected: /dev/cu.usbserial-0001\n[ENGINE] Initialized for balancing_bot | mass=1.0\n[TELEM] pitch=0.2 | residual=0.8541 | mass=1.000',
               },
               {
                 n: '05',
@@ -5253,7 +5253,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
                 desc: 'Open the PhysiCore dashboard, click MAVLINK, enter ws://localhost:8765, click Connect. Your live telemetry appears. Click ACTIVE CONTROL ON. PhysiCore starts adapting to your hardware immediately.',
                 detail: 'Watch the mass estimate converge. Watch the residual drop. Within 30 seconds, PhysiCore knows your robot better than your simulation did. The registry saves these learned parameters — your next session starts from here.',
                 action: null,
-                code: "// What happens in the first 30 seconds:\nStep    1: residual=0.854 mass=1.000 (starting fresh)\nStep  300: residual=0.312 mass=1.147 (adapting)\nStep  900: residual=0.089 mass=1.312 (converging)\nStep 1800: residual=0.031 mass=1.347 (converged)\n\n// PhysiCore now knows your robot's real physics.\n// Registry saved. Next session starts from 1.347kg.",
+                code: '// What happens in the first 30 seconds:\nStep    1: residual=0.854 mass=1.000 (starting fresh)\nStep  300: residual=0.312 mass=1.147 (adapting)\nStep  900: residual=0.089 mass=1.312 (converging)\nStep 1800: residual=0.031 mass=1.347 (converged)\n\n// PhysiCore now knows your hardware physics.\n// Registry saved. Next session starts from 1.347kg.',
               },
             ].map((step, i) => (
               <motion.div
