@@ -4588,7 +4588,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
       {view !== 'dashboard' && (
         <div className="hidden lg:flex items-center gap-8">
-          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
+          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'GET STARTED', 'WHITEPAPER', 'MANUAL', 'TEAM'].map(item => {
             if (item === 'TEAM' && !isAdmin) return null;
             return (
               <a 
@@ -4600,13 +4600,14 @@ Be direct, technical, confident. You are the world's best robotics integration e
                   if (item === 'MANUAL') setView('manual');
                   else if (item === 'TEAM') setView('team');
                   else {
+                    const sectionId = item === 'GET STARTED' ? 'get-started' : item.toLowerCase();
                     if (view !== 'home') {
                       setView('home');
                       setTimeout(() => {
-                        document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
                       }, 100);
                     } else {
-                      document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
+                      document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
                     }
                   }
                 }}
@@ -5232,11 +5233,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
                 desc: 'The IE generates a complete .ino firmware file for your MCU and sensors. It includes IMU initialization, barometric pressure reading with temperature compensation, Kalman-filtered altitude for rockets, and the JSON serial protocol PhysiCore speaks.',
                 detail: 'Open the file in Arduino IDE, select your board, click Upload. The firmware sends real sensor data over serial and receives torque commands back from PhysiCore.',
                 action: null,
-                code: `// Generated firmware sends this every 20ms:
-{"pitch":5.2,"gyro_x":12.4,"accel_z":9.81,"motor_l":0.0,"timestamp":12400}
-
-// PhysiCore sends this back:
-{"op":"command","action":[-0.460]}`,
+                code: "// Generated firmware sends this every 20ms:\n{\\"pitch\\":5.2,\\"gyro_x\\":12.4,\\"accel_z\\":9.81,\\"motor_l\\":0.0,\\"timestamp\\":12400}\n\n// PhysiCore sends this back:\n{\\"op\\":\\"command\\",\\"action\\":[-0.460]}",
               },
               {
                 n: '04',
@@ -5246,16 +5243,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
                 desc: 'One command starts the bridge that connects your hardware to PhysiCore. It reads the YAML config the IE generated, opens the serial port, and exposes the WebSocket on port 8765 for the dashboard.',
                 detail: 'The bridge handles MAVLink for PX4/ArduPilot drones, ROS2 topics for robot arms, and JSON serial for everything else. Same dashboard, same adaptation engine, any hardware.',
                 action: null,
-                code: `# Mac/Linux:
-bash run_bridge.sh
-
-# Windows:
-run_bridge.bat
-
-# Output:
-[BRIDGE] Serial connected: /dev/cu.usbserial-0001
-[ENGINE] Initialized for 'balancing_bot' | mass=1.0
-[TELEM] pitch=0.2° | residual=0.8541 | mass=1.000`,
+                code: "# Mac/Linux:\nbash run_bridge.sh\n\n# Windows:\nrun_bridge.bat\n\n# Output:\n[BRIDGE] Serial connected: /dev/cu.usbserial-0001\n[ENGINE] Initialized for 'balancing_bot' | mass=1.0\n[TELEM] pitch=0.2\u00b0 | residual=0.8541 | mass=1.000",
               },
               {
                 n: '05',
@@ -5265,14 +5253,7 @@ run_bridge.bat
                 desc: 'Open the PhysiCore dashboard, click MAVLINK, enter ws://localhost:8765, click Connect. Your live telemetry appears. Click ACTIVE CONTROL ON. PhysiCore starts adapting to your hardware immediately.',
                 detail: 'Watch the mass estimate converge. Watch the residual drop. Within 30 seconds, PhysiCore knows your robot better than your simulation did. The registry saves these learned parameters — your next session starts from here.',
                 action: null,
-                code: `// What happens in the first 30 seconds:
-Step    1: residual=0.854 mass=1.000 (starting fresh)
-Step  300: residual=0.312 mass=1.147 (adapting)
-Step  900: residual=0.089 mass=1.312 (converging)
-Step 1800: residual=0.031 mass=1.347 (converged)
-
-// PhysiCore now knows your robot's real physics.
-// Registry saved. Next session starts from 1.347kg.`,
+                code: "// What happens in the first 30 seconds:\nStep    1: residual=0.854 mass=1.000 (starting fresh)\nStep  300: residual=0.312 mass=1.147 (adapting)\nStep  900: residual=0.089 mass=1.312 (converging)\nStep 1800: residual=0.031 mass=1.347 (converged)\n\n// PhysiCore now knows your robot's real physics.\n// Registry saved. Next session starts from 1.347kg.",
               },
             ].map((step, i) => (
               <motion.div
@@ -5372,12 +5353,12 @@ Step 1800: residual=0.031 mass=1.347 (converged)
               <p>The physics kernel is the prior — what PhysiCore knows before it sees any real data. It integrates the equations of motion forward in time using 4th-order Runge-Kutta:</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
-{`k₁ = f(xₙ,        uₙ)              # derivative at step start
+{&#96;k₁ = f(xₙ,        uₙ)              # derivative at step start
 k₂ = f(xₙ + k₁·h/2, uₙ)           # derivative at midpoint (first estimate)
 k₃ = f(xₙ + k₂·h/2, uₙ)           # derivative at midpoint (refined)
 k₄ = f(xₙ + k₃·h,   uₙ)            # derivative at step end
 
-xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s`}
+xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s&#96;}
             </pre>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>RK4 matters because robot dynamics are stiff — small integration errors amplify quickly under nonlinear control. Euler integration (the simplest method) diverges under high-gain control at 60Hz. RK4 stays stable.</p>
@@ -5396,7 +5377,7 @@ xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s`}
               <p>The learning is numerical gradient descent on the physics parameters:</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
-{`# Every step:
+{&#96;# Every step:
 x_pred   = physics(x_prev, action, params)    # what model predicted
 x_real   = sensor_reading                     # what actually happened
 error    = ||x_real - x_pred||²               # prediction error
@@ -5411,7 +5392,7 @@ lr = base_lr · (innovation / innovation_ema)  # fast when things change
 
 # Parameter update:
 mass     -= lr · ∂error/∂mass
-friction -= lr · ∂error/∂friction`}
+friction -= lr · ∂error/∂friction&#96;}
             </pre>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The innovation-driven learning rate is key. When the robot picks up a payload, the prediction error spikes. The innovation rises. The learning rate increases. Parameters update faster. When the model has converged and the robot is behaving predictably, the learning rate decreases — avoiding noise fitting.</p>
@@ -5430,7 +5411,7 @@ friction -= lr · ∂error/∂friction`}
               <p>Three small neural networks (each: 2 hidden layers, 32 neurons) learn the residual: the structured difference between what the physics model predicts and what actually happens.</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-blue overflow-x-auto leading-loose">
-{`# Physics model prediction:
+{&#96;# Physics model prediction:
 x_physics = RK4(x, u, params)
 
 # Each network predicts the CORRECTION, not the full dynamics:
@@ -5442,7 +5423,7 @@ x_physics = RK4(x, u, params)
 x_pred = x_physics + mean(δ₁, δ₂, δ₃)
 
 # Uncertainty = spread between networks:
-uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
+uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution&#96;}
             </pre>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The ensemble's disagreement is epistemic uncertainty — when the three networks predict very different corrections, they have not seen this state before and the estimate is unreliable. This uncertainty feeds directly into the CEM-MPC cost function: high-uncertainty actions are penalized, making the controller conservative when it doesn't know what will happen.</p>
@@ -5460,7 +5441,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
               <p>Model Predictive Control computes the best action by simulating many possible action sequences and picking the one that leads to the best outcome. PhysiCore uses the Cross-Entropy Method (CEM) to do this efficiently.</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-amber overflow-x-auto leading-loose">
-{`# Every 16.7ms (60Hz):
+{&#96;# Every 16.7ms (60Hz):
 1. Sample N=6 action sequences (each: 6 steps × action_dim)
    from current distribution μ, σ
 
@@ -5475,7 +5456,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
 
 5. Warm-start: use μ_new as starting point next cycle
 
-6. Execute first action from best sequence`}
+6. Execute first action from best sequence&#96;}
             </pre>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The uncertainty penalty λ·uncertainty makes the optimizer conservative when the model is uncertain. In practice: when a robot enters a new configuration or terrain, uncertainty rises, the optimizer avoids large actions, and the robot moves more carefully until the ensemble has learned the new regime.</p>
@@ -5699,7 +5680,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
               <p>The registry is keyed by platform type and hardware fingerprint. Two different balancing bots have separate registry entries. The same bot across many sessions accumulates a learned prior that gets stronger over time.</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
-{`# ~/.physicore/registry/balancing_bot/
+{&#96;# ~/.physicore/registry/balancing_bot/
 #   params.json          — latest converged mass, friction, inertia
 #   ensemble_0.npz       — learned residual network weights
 #   ensemble_1.npz
@@ -5709,7 +5690,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
 
 # Session 1:  starts from mass=1.0 (prior guess), converges to 1.35 in 30s
 # Session 10: starts from mass=1.31 (registry), converges to 1.34 in 5s
-# Session 50: starts from mass=1.347 (strong prior), stable in 2s`}
+# Session 50: starts from mass=1.347 (strong prior), stable in 2s&#96;}
             </pre>
           </div>
 
@@ -5723,7 +5704,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
               <p>Once you have access and have run the Integration Engineer to flash your firmware, the entire PhysiCore integration is three lines of code in your control loop:</p>
             </div>
             <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
-{`import physicore
+{&#96;import physicore
 
 # Connect — loads registry prior, attaches Sentinel, starts adaptation
 robot = physicore.connect("balancing_bot", mass=1.35, friction=0.18)
@@ -5736,7 +5717,7 @@ while True:
     robot.observe(state, action, imu.read())  # PhysiCore learns from what happened
 
 # robot.save() called automatically on Ctrl+C
-# Next session starts from converged parameters`}
+# Next session starts from converged parameters&#96;}
             </pre>
             <div className="grid md:grid-cols-3 gap-6">
               {[
