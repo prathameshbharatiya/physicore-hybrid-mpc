@@ -411,7 +411,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team' | 'replay';
+type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -3140,14 +3140,6 @@ function AppContent() {
     checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '',
   });
   const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
-
-  // ── Session Replay state ───────────────────────────────────────────────────
-  const [replayFile, setReplayFile]       = useState<File|null>(null);
-  const [replayPlatform, setReplayPlatform] = useState('rocket');
-  const [replayMass, setReplayMass]       = useState('0.5');
-  const [replayAnalysis, setReplayAnalysis] = useState<any>(null);
-  const [replayLoading, setReplayLoading] = useState(false);
-  const [replayError, setReplayError]     = useState<string|null>(null);
   const [ieTsInput, setIETsInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -5197,6 +5189,591 @@ Be direct, technical, confident. You are the world's best robotics integration e
         </div>
       </section>
 
+      {/* ══════════════════════════════════════════════════════════════════
+           GET STARTED — 5-STEP JOURNEY (no login required to read this)
+           ══════════════════════════════════════════════════════════════ */}
+      <section id="get-started" className="bg-bg py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-16">
+          <div className="text-center space-y-4">
+            <span className="micro-label text-green">Get Started</span>
+            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">From zero to adapted hardware in 30 minutes.</h2>
+            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
+              No manual calibration. No weeks of tuning. PhysiCore does the physics learning — you just connect it.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {[
+              {
+                n: '01',
+                title: 'Request access',
+                time: '2 minutes',
+                color: COLORS.green,
+                desc: 'PhysiCore is in closed beta. Email prathamesh@physicore.ai with your hardware type and use case. You will receive access within 24 hours.',
+                detail: 'Why closed beta: We integrate with every team personally to understand their hardware and make sure PhysiCore actually works before they deploy it.',
+                action: null,
+                code: null,
+              },
+              {
+                n: '02',
+                title: 'Open the Integration Engineer',
+                time: '2 minutes',
+                color: COLORS.cyan,
+                desc: 'Once you have access, open the Integration Engineer from the top navigation. It asks you 5–6 questions about your hardware — MCU, sensors, motor drivers, mass.',
+                detail: 'No code required yet. The IE knows the difference between an ATmega328PB and an Arduino Uno, between a BMP388 and an MS5607, between an L298N and a VESC. It generates the right code for your exact combination.',
+                action: 'Open Integration Engineer',
+                code: null,
+              },
+              {
+                n: '03',
+                title: 'Flash the generated firmware',
+                time: '10 minutes',
+                color: COLORS.cyan,
+                desc: 'The IE generates a complete .ino firmware file for your MCU and sensors. It includes IMU initialization, barometric pressure reading with temperature compensation, Kalman-filtered altitude for rockets, and the JSON serial protocol PhysiCore speaks.',
+                detail: 'Open the file in Arduino IDE, select your board, click Upload. The firmware sends real sensor data over serial and receives torque commands back from PhysiCore.',
+                action: null,
+                code: `// Generated firmware sends this every 20ms:
+{"pitch":5.2,"gyro_x":12.4,"accel_z":9.81,"motor_l":0.0,"timestamp":12400}
+
+// PhysiCore sends this back:
+{"op":"command","action":[-0.460]}`,
+              },
+              {
+                n: '04',
+                title: 'Run the bridge',
+                time: '5 minutes',
+                color: COLORS.blue,
+                desc: 'One command starts the bridge that connects your hardware to PhysiCore. It reads the YAML config the IE generated, opens the serial port, and exposes the WebSocket on port 8765 for the dashboard.',
+                detail: 'The bridge handles MAVLink for PX4/ArduPilot drones, ROS2 topics for robot arms, and JSON serial for everything else. Same dashboard, same adaptation engine, any hardware.',
+                action: null,
+                code: `# Mac/Linux:
+bash run_bridge.sh
+
+# Windows:
+run_bridge.bat
+
+# Output:
+[BRIDGE] Serial connected: /dev/cu.usbserial-0001
+[ENGINE] Initialized for 'balancing_bot' | mass=1.0
+[TELEM] pitch=0.2° | residual=0.8541 | mass=1.000`,
+              },
+              {
+                n: '05',
+                title: 'Connect and activate',
+                time: '2 minutes',
+                color: COLORS.green,
+                desc: 'Open the PhysiCore dashboard, click MAVLINK, enter ws://localhost:8765, click Connect. Your live telemetry appears. Click ACTIVE CONTROL ON. PhysiCore starts adapting to your hardware immediately.',
+                detail: 'Watch the mass estimate converge. Watch the residual drop. Within 30 seconds, PhysiCore knows your robot better than your simulation did. The registry saves these learned parameters — your next session starts from here.',
+                action: null,
+                code: `// What happens in the first 30 seconds:
+Step    1: residual=0.854 mass=1.000 (starting fresh)
+Step  300: residual=0.312 mass=1.147 (adapting)
+Step  900: residual=0.089 mass=1.312 (converging)
+Step 1800: residual=0.031 mass=1.347 (converged)
+
+// PhysiCore now knows your robot's real physics.
+// Registry saved. Next session starts from 1.347kg.`,
+              },
+            ].map((step, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: -20 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.1 }}
+                className="reveal flex gap-8 p-8 border border-border bg-bgRaised group hover:border-borderActive transition-all"
+              >
+                <div className="shrink-0 flex flex-col items-center gap-2">
+                  <div className="w-12 h-12 border-2 flex items-center justify-center font-display text-lg font-bold" style={{ borderColor: step.color, color: step.color }}>
+                    {step.n}
+                  </div>
+                  {i < 4 && <div className="w-px flex-1 bg-border mt-2" />}
+                </div>
+                <div className="flex-1 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-display text-xl font-bold text-white uppercase tracking-widest">{step.title}</h3>
+                    <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">{step.time}</span>
+                  </div>
+                  <p className="font-body text-sm text-textSecondary leading-relaxed">{step.desc}</p>
+                  <p className="font-body text-xs text-textDim leading-relaxed italic">{step.detail}</p>
+                  {step.code && (
+                    <pre className="bg-void border border-borderDim p-4 font-mono text-[10px] text-green overflow-x-auto leading-relaxed whitespace-pre">
+                      {step.code}
+                    </pre>
+                  )}
+                  {step.action && (
+                    <button
+                      onClick={handleSetIntegratorView}
+                      className="px-4 py-2 border border-green text-green font-display text-[10px] font-bold uppercase tracking-widest hover:bg-green hover:text-black transition-all"
+                    >
+                      {step.action} →
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+
+          <div className="border border-green/20 bg-green/5 p-8 text-center space-y-4">
+            <p className="font-display text-lg font-bold text-white">Ready to close the reality gap?</p>
+            <p className="font-body text-sm text-textSecondary">Email <span className="text-green font-mono">prathamesh@physicore.ai</span> with your hardware type. Or open the Integration Engineer if you already have access.</p>
+            <button onClick={handleSetIntegratorView} className="btn-primary h-12 px-8 text-sm">
+              {user ? 'Open Integration Engineer →' : 'Get Access →'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════════════════════════
+           WHITEPAPER — Deep technical reference, no login required
+           Covers every platform: physics, adaptation, what PhysiCore learns
+           ══════════════════════════════════════════════════════════════ */}
+      <section id="whitepaper" className="bg-void py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-20">
+
+          {/* Header */}
+          <div className="space-y-6">
+            <div className="border-l-2 border-green pl-4">
+              <span className="micro-label text-green">Technical Reference</span>
+            </div>
+            <h2 className="font-display text-4xl md:text-5xl font-bold text-white leading-tight">
+              PhysiCore Whitepaper
+            </h2>
+            <p className="font-body text-lg text-textSecondary max-w-[720px] leading-relaxed">
+              Everything PhysiCore does, explained precisely. How the physics works, what it learns from your hardware, and why the sim-to-real gap closes. No login required to read this.
+            </p>
+            <div className="flex gap-6 flex-wrap">
+              {['Physics Kernel', 'SystemID', 'Residual Learning', 'Sentinel OS', 'All 12 Platforms', 'The Registry Flywheel'].map((t,i) => (
+                <span key={i} className="font-mono text-[10px] text-textDim border border-borderDim px-3 py-1">{t}</span>
+              ))}
+            </div>
+          </div>
+
+          {/* ── SECTION 1: The Core Problem ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-green pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">1. The Sim-to-Real Problem</h3>
+              <p className="font-mono text-[10px] text-green uppercase tracking-widest">Why simulation always fails on real hardware</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>Simulation assumes a perfect world. Your physics model has exact mass, exact friction, exact aerodynamic coefficients. The simulation runs and the robot works. You deploy to hardware and it breaks.</p>
+              <p>The gap comes from three sources. <strong className="text-white">Parametric error</strong>: your model's mass is 1.0kg, the real robot is 1.35kg because the motor mounts weigh more than the CAD said. <strong className="text-white">Structural error</strong>: your friction model is Coulomb (constant), real friction is velocity-dependent and surface-dependent. <strong className="text-white">Unmodelled dynamics</strong>: backlash in the gearbox, motor current lag, sensor noise, flex in the frame.</p>
+              <p>Traditional approaches: manually measure everything (takes weeks), add noise to simulation (doesn't fix structural gaps), re-tune in hardware (takes months, doesn't transfer to a different unit of the same robot).</p>
+              <p>PhysiCore's approach: start with an approximate model, run it on real hardware, measure what the model got wrong, learn the correction, repeat 60 times per second. The model converges on the real physics while the hardware is running.</p>
+            </div>
+          </div>
+
+          {/* ── SECTION 2: Physics Kernel ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-cyan pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">2. Physics Kernel</h3>
+              <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">RK4 integration · ISA atmosphere · platform dynamics</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>The physics kernel is the prior — what PhysiCore knows before it sees any real data. It integrates the equations of motion forward in time using 4th-order Runge-Kutta:</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
+{`k₁ = f(xₙ,        uₙ)              # derivative at step start
+k₂ = f(xₙ + k₁·h/2, uₙ)           # derivative at midpoint (first estimate)
+k₃ = f(xₙ + k₂·h/2, uₙ)           # derivative at midpoint (refined)
+k₄ = f(xₙ + k₃·h,   uₙ)            # derivative at step end
+
+xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s`}
+            </pre>
+            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
+              <p>RK4 matters because robot dynamics are stiff — small integration errors amplify quickly under nonlinear control. Euler integration (the simplest method) diverges under high-gain control at 60Hz. RK4 stays stable.</p>
+              <p>Every platform has its own dynamics function f(x, u). The balancing bot uses Newton-Euler with gravity compensation. The quadrotor uses thrust-torque quaternion dynamics. The rocket uses Tsiolkovsky mass depletion with ISA atmosphere and Mach-dependent drag rise. The satellite uses J2 orbital perturbation. These are not toy models — they are the equations used in real aerospace and robotics engineering.</p>
+            </div>
+          </div>
+
+          {/* ── SECTION 3: Online SystemID ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-blue pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">3. Online System Identification</h3>
+              <p className="font-mono text-[10px] text-blue uppercase tracking-widest">How PhysiCore learns your real mass, friction, and drag</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>After every control step, PhysiCore has three pieces of information: the state before the action, the action it took, and the state that actually resulted. It uses these to update its physics parameter estimates.</p>
+              <p>The learning is numerical gradient descent on the physics parameters:</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
+{`# Every step:
+x_pred   = physics(x_prev, action, params)    # what model predicted
+x_real   = sensor_reading                     # what actually happened
+error    = ||x_real - x_pred||²               # prediction error
+
+# Gradient of error with respect to params (numerical):
+∂error/∂mass     ≈ (error(mass+δ) - error(mass-δ)) / 2δ
+∂error/∂friction ≈ (error(friction+δ) - error(friction-δ)) / 2δ
+
+# Innovation-driven adaptive learning rate:
+innovation_ema = 0.95 · innovation_ema + 0.05 · ||x_real - x_pred||
+lr = base_lr · (innovation / innovation_ema)  # fast when things change
+
+# Parameter update:
+mass     -= lr · ∂error/∂mass
+friction -= lr · ∂error/∂friction`}
+            </pre>
+            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
+              <p>The innovation-driven learning rate is key. When the robot picks up a payload, the prediction error spikes. The innovation rises. The learning rate increases. Parameters update faster. When the model has converged and the robot is behaving predictably, the learning rate decreases — avoiding noise fitting.</p>
+              <p>Parameters are bounded to physical ranges. Mass cannot go below 10g or above 500kg. Friction cannot go negative. This prevents the optimization from diverging to nonsensical values when sensor noise causes temporary spikes.</p>
+            </div>
+          </div>
+
+          {/* ── SECTION 4: Residual Ensemble ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-blue pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">4. Residual Ensemble</h3>
+              <p className="font-mono text-[10px] text-blue uppercase tracking-widest">What SystemID can't capture — learned by neural networks</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>SystemID adjusts parameters, but parameters can only fix parametric errors. Structural errors — the wrong friction model, the missing backlash term, the unmodelled flex — need a different approach.</p>
+              <p>Three small neural networks (each: 2 hidden layers, 32 neurons) learn the residual: the structured difference between what the physics model predicts and what actually happens.</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-blue overflow-x-auto leading-loose">
+{`# Physics model prediction:
+x_physics = RK4(x, u, params)
+
+# Each network predicts the CORRECTION, not the full dynamics:
+δ₁ = MLP₁(x, u)    # residual network 1
+δ₂ = MLP₂(x, u)    # residual network 2 (different init)
+δ₃ = MLP₃(x, u)    # residual network 3 (different init)
+
+# Final prediction = physics + mean correction:
+x_pred = x_physics + mean(δ₁, δ₂, δ₃)
+
+# Uncertainty = spread between networks:
+uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution`}
+            </pre>
+            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
+              <p>The ensemble's disagreement is epistemic uncertainty — when the three networks predict very different corrections, they have not seen this state before and the estimate is unreliable. This uncertainty feeds directly into the CEM-MPC cost function: high-uncertainty actions are penalized, making the controller conservative when it doesn't know what will happen.</p>
+              <p>Networks start at zero correction. With no data, the physics model is the entire prediction. As data accumulates, the corrections grow to capture what the physics misses. The physics model is the prior; the ensemble is the posterior update.</p>
+            </div>
+          </div>
+
+          {/* ── SECTION 5: CEM-MPC ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-amber pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">5. CEM-MPC Optimizer</h3>
+              <p className="font-mono text-[10px] text-amber uppercase tracking-widest">Cross-Entropy Method — 6-step lookahead at 60Hz</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>Model Predictive Control computes the best action by simulating many possible action sequences and picking the one that leads to the best outcome. PhysiCore uses the Cross-Entropy Method (CEM) to do this efficiently.</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-amber overflow-x-auto leading-loose">
+{`# Every 16.7ms (60Hz):
+1. Sample N=6 action sequences (each: 6 steps × action_dim)
+   from current distribution μ, σ
+
+2. For each sequence, simulate 6 steps forward:
+   cost = Σ ||x_simulated - x_ref||² + λ·uncertainty
+
+3. Keep top K=2 sequences (elite samples)
+
+4. Fit new distribution to elite samples:
+   μ_new = mean(elite_sequences)
+   σ_new = std(elite_sequences)
+
+5. Warm-start: use μ_new as starting point next cycle
+
+6. Execute first action from best sequence`}
+            </pre>
+            <div className="space-y-4 font-body text-textSecondary leading-relaxed">
+              <p>The uncertainty penalty λ·uncertainty makes the optimizer conservative when the model is uncertain. In practice: when a robot enters a new configuration or terrain, uncertainty rises, the optimizer avoids large actions, and the robot moves more carefully until the ensemble has learned the new regime.</p>
+              <p>Warm-starting reuses the previous solution shifted by one step. This means the optimizer doesn't start from scratch every cycle — it refines an already-good solution. This is why 6 samples is sufficient at 60Hz.</p>
+            </div>
+          </div>
+
+          {/* ── SECTION 6: Sentinel OS ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-amber pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">6. Sentinel OS</h3>
+              <p className="font-mono text-[10px] text-amber uppercase tracking-widest">8-layer safety architecture — Lyapunov + SHA-256 forensic chain</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>Sentinel is a separate safety layer that monitors every control step. It cannot be disabled. It operates in three modes and transitions automatically based on real-time physics metrics.</p>
+            </div>
+            <div className="grid md:grid-cols-2 gap-6">
+              {[
+                { layer: 'L0', name: 'Preflight Check', desc: 'Verifies all subsystems initialized correctly before any motion begins. Fails hard if physics kernel, ensemble, or SysID are not ready.' },
+                { layer: 'L1', name: 'Intent Coherence', desc: 'Checks that the commanded action is consistent with the robot's current state and declared goal. Rejects nonsensical commands.' },
+                { layer: 'L2', name: 'Physics Consistency', desc: 'The commanded action must be explainable by the physics model within uncertainty bounds. Actions that defy physics are rejected.' },
+                { layer: 'L3', name: 'Lyapunov Projection', desc: 'Verifies that the action reduces system energy V(x) = x'Px. If the action would increase instability, it is scaled down or rejected.' },
+                { layer: 'L4', name: 'Actuator Envelope', desc: 'Hard clamps on actuator commands. No matter what the optimizer produces, motors never receive commands outside physical limits.' },
+                { layer: 'L5', name: 'Fault Signatures', desc: 'Classifies 5 fault types: BEARING_WEAR, UNEXPECTED_PAYLOAD, AERO_DAMAGE, MOTOR_DEGRADATION, SENSOR_DRIFT. Detected from parameter patterns.' },
+                { layer: 'L6', name: 'Jerk Limiting', desc: 'Limits rate of change of action. Prevents actuator shock loads from sudden large commands.' },
+                { layer: 'L7', name: 'SHA-256 Forensic Chain', desc: 'Every control command is hashed. Each hash includes the previous hash (chain). Tamper-evident. Any modification breaks the chain.' },
+              ].map((l, i) => (
+                <div key={i} className="flex gap-4 p-4 border border-borderDim bg-bgRaised">
+                  <span className="font-mono text-[10px] text-amber shrink-0 w-8">{l.layer}</span>
+                  <div>
+                    <p className="font-display text-xs font-bold text-white uppercase tracking-wider">{l.name}</p>
+                    <p className="font-body text-xs text-textDim leading-relaxed mt-1">{l.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── SECTION 7: ALL 12 PLATFORMS ── */}
+          <div className="space-y-10">
+            <div className="border-l-4 border-green pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">7. All 12 Hardware Platforms</h3>
+              <p className="font-mono text-[10px] text-green uppercase tracking-widest">What PhysiCore learns on each platform</p>
+            </div>
+            <div className="space-y-6">
+              {[
+                {
+                  name: 'Balancing Bot',
+                  icon: '⚖',
+                  state: '[pitch, pitch_rate, x, x_dot]',
+                  action: '[torque_Nm]',
+                  learns: 'Real mass, real friction (vs floor surface), real inertia (vs CAD model). Detects payload additions within 5 seconds.',
+                  physics: 'Newton-Euler inverted pendulum with motor dynamics. Gravity compensation adapts as mass estimate converges.',
+                  hardware: 'Arduino + MPU6050 + L298N/TB6612/DRV8833',
+                  time: '30 seconds to converge',
+                },
+                {
+                  name: 'Quadrotor Drone',
+                  icon: '✈',
+                  state: '[x, y, z, vx, vy, vz, qw, qx, qy, qz, ωx, ωy, ωz]',
+                  action: '[T1, T2, T3, T4] thrust N',
+                  learns: 'Real mass including battery sag effect, real rotor efficiency (detects degradation), aerodynamic drag correction from actual flight data.',
+                  physics: 'Quaternion rigid-body dynamics with ISA atmosphere. Thrust-torque model adapts to real motor KV ratings.',
+                  hardware: 'PX4 / ArduPilot / MAVLink UDP',
+                  time: '2-3 flight minutes to converge',
+                },
+                {
+                  name: 'Sounding Rocket',
+                  icon: '🚀',
+                  state: '[x, y, vx, vy, mass, pitch_rad]',
+                  action: '[thrust_N, gimbal_deg]',
+                  learns: 'Real Cd at each Mach number (from coast-phase deceleration), real Isp (from mass depletion vs altitude gain), real mass depletion rate (vs motor datasheet).',
+                  physics: 'Tsiolkovsky mass depletion with ISA atmosphere, Mach-dependent drag rise through transonic regime (0.8–1.2 Mach). Barometric Kalman filter rejects ejection charge pressure spikes.',
+                  hardware: 'Custom FC (ATmega328PB / Teensy 4.1) + BMP388 + ADXL375',
+                  time: 'Post-flight analysis from 1 flight',
+                },
+                {
+                  name: 'Robotic Arm',
+                  icon: '🦾',
+                  state: '[q₁...q₇, q̇₁...q̇₇]  joint angles + velocities',
+                  action: '[τ₁...τ₇] joint torques Nm',
+                  learns: 'Real joint friction per axis (Coulomb + viscous), real payload mass at end-effector (updates within 3-5 joint movements), real joint compliance/backlash.',
+                  physics: 'Newton-Euler recursive rigid body dynamics with gravity compensation. Gravity vector adapts as arm moves through workspace.',
+                  hardware: 'ROS2 (any distribution) via /joint_states topic',
+                  time: '1-2 minutes of motion to converge',
+                },
+                {
+                  name: 'Legged / Quadruped',
+                  icon: '🐕',
+                  state: '[torso_pose, joint_angles, contact_forces]',
+                  action: '[τ_hip, τ_knee, τ_ankle] × 4',
+                  learns: 'Real terrain friction (concrete vs grass vs gravel — adapts within 15 steps of surface change), real mass with payload, contact dynamics per leg.',
+                  physics: 'Multi-body dynamics with contact model. Slip detection from commanded vs achieved velocity divergence.',
+                  hardware: 'ROS2 / Unitree SDK / ANYmal SDK',
+                  time: '15 seconds per terrain type',
+                },
+                {
+                  name: 'Humanoid Robot',
+                  icon: '🤖',
+                  state: '[base_pose, 6DOF, joint_angles × N]',
+                  action: '[joint_torques × N]',
+                  learns: 'Real joint friction profile for every joint, mass distribution (detects object pickup within 5 steps), whole-body contact dynamics.',
+                  physics: 'Floating-base rigid body dynamics. Gravity compensation updates as mass distribution changes.',
+                  hardware: 'Unitree G1/H1, Figure AI Apollo, custom humanoids via ROS2',
+                  time: '2-3 minutes of walking to converge',
+                },
+                {
+                  name: 'AUV / Underwater',
+                  icon: '🌊',
+                  state: '[x, y, z, vx, vy, vz, roll, pitch, yaw, ωx, ωy, ωz]',
+                  action: '[T_surge, T_sway, T_heave, τ_roll, τ_pitch, τ_yaw]',
+                  learns: 'Real quadratic drag coefficients in all 6 DOF (surge, sway, heave, roll, pitch, yaw), real buoyancy (adjusts with depth/compression), current vector estimation.',
+                  physics: 'Hydrodynamic model with added mass effect. Drag is quadratic with velocity. 6 independent drag coefficients.',
+                  hardware: 'BlueROV2, custom AUVs via ROS2 + /imu/data + /depth',
+                  time: '5 minutes of motion in water',
+                },
+                {
+                  name: 'eVTOL Aircraft',
+                  icon: '🚁',
+                  state: '[x, y, z, vx, vy, vz, pitch, roll, yaw, rates]',
+                  action: '[rotor_throttles × N]',
+                  learns: 'Real rotor efficiency per rotor (detects degradation), battery voltage sag effect on thrust, transition aerodynamics from hover to cruise.',
+                  physics: 'Multi-rotor dynamics with transition model. Battery discharge curve adapts from measured voltage vs thrust.',
+                  hardware: 'PX4 / ArduPilot via MAVLink',
+                  time: '3-5 flight minutes',
+                },
+                {
+                  name: 'Fixed-Wing UAV',
+                  icon: '✈',
+                  state: '[x, y, z, vx, vy, vz, α, β, roll, pitch, yaw, rates]',
+                  action: '[aileron, elevator, rudder, throttle]',
+                  learns: 'Real lift/drag polar (Cl vs α), real stall angle from actual flight data, real propeller efficiency.',
+                  physics: 'Full 6DOF aerodynamics with ISA atmosphere. Lift = ½ρv²SCl(α). Mach drag rise for fast aircraft.',
+                  hardware: 'ArduPilot Plane via MAVLink',
+                  time: '5-10 minutes of flight',
+                },
+                {
+                  name: 'Ground Rover / AMR',
+                  icon: '🚗',
+                  state: '[x, y, θ, vx, vy, ω]',
+                  action: '[v_left, v_right] wheel velocities',
+                  learns: 'Real terrain friction (updates within 10 steps of surface change), wheel slip ratio, load shift from payload.',
+                  physics: 'Differential drive with slip model. Friction estimate updates from wheel speed vs IMU velocity divergence.',
+                  hardware: 'ROS2 via /cmd_vel + /odom, or Arduino serial',
+                  time: '15-30 seconds per surface type',
+                },
+                {
+                  name: 'Surgical Robot',
+                  icon: '🏥',
+                  state: '[q₁...q₆, q̇₁...q̇₆]  joint angles + velocities',
+                  action: '[τ₁...τ₆] joint torques Nm',
+                  learns: 'Tissue stiffness at contact (classifies soft vs rigid tissue within 1 contact), real joint friction, instrument tip compliance.',
+                  physics: 'Same as robotic arm but with tighter Sentinel bounds and contact dynamics detection.',
+                  hardware: 'ROS2 + force-torque sensor',
+                  time: '30 seconds calibration',
+                },
+                {
+                  name: 'Satellite / Spacecraft',
+                  icon: '🛸',
+                  state: '[pos, vel, quat, ω]  — ECI frame',
+                  action: '[τ_rw1, τ_rw2, τ_rw3] reaction wheel torques',
+                  learns: 'Real inertia tensor (from reaction wheel torque vs angular acceleration), real thruster efficiency, solar radiation pressure correction.',
+                  physics: 'J2 orbital perturbation propagator + rigid-body attitude dynamics. ISA atmosphere extension to LEO.',
+                  hardware: 'Custom FC via serial telemetry',
+                  time: 'Converges over first orbit maneuver',
+                },
+              ].map((platform, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0 }}
+                  whileInView={{ opacity: 1 }}
+                  transition={{ delay: i * 0.05 }}
+                  className="reveal border border-border bg-bgRaised p-8 space-y-6"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                      <span className="text-3xl">{platform.icon}</span>
+                      <div>
+                        <h4 className="font-display text-lg font-bold text-white uppercase tracking-widest">{platform.name}</h4>
+                        <span className="font-mono text-[9px] text-textDim">{platform.hardware}</span>
+                      </div>
+                    </div>
+                    <span className="font-mono text-[9px] text-green border border-green/30 px-3 py-1 shrink-0">{platform.time}</span>
+                  </div>
+                  <div className="grid md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">What it learns</p>
+                        <p className="font-body text-xs text-textSecondary leading-relaxed">{platform.learns}</p>
+                      </div>
+                      <div>
+                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">Physics model</p>
+                        <p className="font-body text-xs text-textSecondary leading-relaxed">{platform.physics}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">State vector</p>
+                        <code className="font-mono text-[10px] text-cyan">{platform.state}</code>
+                      </div>
+                      <div>
+                        <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-1">Action vector</p>
+                        <code className="font-mono text-[10px] text-green">{platform.action}</code>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── SECTION 8: Registry Flywheel ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-cyan pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">8. The Registry Flywheel</h3>
+              <p className="font-mono text-[10px] text-cyan uppercase tracking-widest">Why PhysiCore gets better with every deployment</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>At the end of every hardware session, PhysiCore saves the converged physics parameters to a local registry: mass estimate, friction estimate, ensemble weights. When the next session begins on the same hardware, it loads these parameters instead of starting from scratch.</p>
+              <p>In practice: your first session takes 30 seconds to converge. Your tenth session converges in 5 seconds because 9 sessions of prior knowledge give it a much better starting point. Your hundredth session starts essentially converged — it already knows your hardware.</p>
+              <p>The registry is keyed by platform type and hardware fingerprint. Two different balancing bots have separate registry entries. The same bot across many sessions accumulates a learned prior that gets stronger over time.</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
+{`# ~/.physicore/registry/balancing_bot/
+#   params.json          — latest converged mass, friction, inertia
+#   ensemble_0.npz       — learned residual network weights
+#   ensemble_1.npz
+#   ensemble_2.npz
+#   sessions.jsonl       — log of every session (timestamp, steps, convergence%)
+#   platform_prior.json  — weighted average across all sessions
+
+# Session 1:  starts from mass=1.0 (prior guess), converges to 1.35 in 30s
+# Session 10: starts from mass=1.31 (registry), converges to 1.34 in 5s
+# Session 50: starts from mass=1.347 (strong prior), stable in 2s`}
+            </pre>
+          </div>
+
+          {/* ── SECTION 9: 3-line integration ── */}
+          <div className="space-y-8">
+            <div className="border-l-4 border-green pl-6 space-y-2">
+              <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">9. Integration API</h3>
+              <p className="font-mono text-[10px] text-green uppercase tracking-widest">The complete integration — three lines of Python</p>
+            </div>
+            <div className="space-y-6 font-body text-textSecondary leading-relaxed">
+              <p>Once you have access and have run the Integration Engineer to flash your firmware, the entire PhysiCore integration is three lines of code in your control loop:</p>
+            </div>
+            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
+{`import physicore
+
+# Connect — loads registry prior, attaches Sentinel, starts adaptation
+robot = physicore.connect("balancing_bot", mass=1.35, friction=0.18)
+
+# Your control loop:
+while True:
+    state  = imu.read()                    # your sensor read
+    action = robot.step(state)             # PhysiCore computes optimal action
+    motors.apply(action)                   # your actuator write
+    robot.observe(state, action, imu.read())  # PhysiCore learns from what happened
+
+# robot.save() called automatically on Ctrl+C
+# Next session starts from converged parameters`}
+            </pre>
+            <div className="grid md:grid-cols-3 gap-6">
+              {[
+                { title: 'robot.step(state)', desc: 'CEM-MPC computes optimal action every 16.7ms. Returns numpy array of motor commands.' },
+                { title: 'robot.observe(s, a, s')', desc: 'Feeds the real transition back. SystemID and residual ensemble learn from every observation.' },
+                { title: 'robot.narrate()', desc: 'Returns plain English: "Model converged — mass 1.34kg, residual 0.003." Display in your product UI.' },
+              ].map((api, i) => (
+                <div key={i} className="p-5 border border-border bg-bgRaised space-y-2">
+                  <code className="font-mono text-[11px] text-green">{api.title}</code>
+                  <p className="font-body text-xs text-textSecondary leading-relaxed">{api.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* CTA at bottom of whitepaper */}
+          <div className="border border-green/20 bg-green/5 p-10 text-center space-y-6">
+            <p className="font-display text-2xl font-bold text-white">This is what's running on your hardware.</p>
+            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
+              Not a black box. Not a fine-tuned neural network you can't inspect. A physics engine that explains itself — you can see the mass estimate converging, the residual dropping, the Sentinel mode — while your hardware adapts in real time.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <button onClick={handleSetIntegratorView} className="btn-primary h-12 px-8 text-sm">
+                {user ? 'Open Integration Engineer →' : 'Request Access →'}
+              </button>
+              <a
+                href="mailto:prathamesh@physicore.ai"
+                className="btn-outline h-12 px-8 text-sm flex items-center justify-center"
+              >
+                Ask a technical question →
+              </a>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
       {/* ── FOOTER ── */}
       <section className="bg-void py-24 px-6 border-t border-border">
         <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
@@ -6008,7 +6585,6 @@ PROBLEM: ${msg}`,
 
   const renderManual = () => {
     const sections = [
-      { id: 'replay_link', title: '↑ SESSION REPLAY',    icon: <Activity size={14} /> },
       { id: 'intro',      title: '01. WHAT IS PHYSICORE',    icon: <Info size={14} /> },
       { id: 'how',        title: '02. HOW IT WORKS',         icon: <Activity size={14} /> },
       { id: 'bot',        title: '03. BALANCING BOT',        icon: <Cpu size={14} /> },
@@ -6077,7 +6653,7 @@ PROBLEM: ${msg}`,
             {sections.map(s => (
               <button
                 key={s.id}
-                onClick={() => { if(s.id==='replay_link'){setView('replay');}else{setManualSection(s.id);} }}
+                onClick={() => setManualSection(s.id)}
                 className={`w-full flex items-center gap-3 px-4 py-3 font-display text-[10px] font-bold uppercase tracking-widest transition-all border-l-2 ${manualSection === s.id ? 'bg-amber/10 border-amber text-amber' : 'border-transparent text-textDim hover:text-textSecondary hover:bg-bgRaised'}`}
               >
                 {s.icon}
@@ -6955,353 +7531,6 @@ max_torque: 2.5`}</Code>
   };
 
 
-  // ── ITEM 3: SESSION REPLAY & POST-FLIGHT ANALYSIS ─────────────────────────
-  // Upload any flight log CSV → get: apogee, Cd, saturation events, descent rate
-  // Works with Insight 2.0, generic CSV, PhysiCore session JSON
-  const renderReplay = () => {
-    const PLATFORMS = [
-      {id:'rocket',         label:'Sounding Rocket'},
-      {id:'quadrotor',      label:'Quadrotor Drone'},
-      {id:'balancing_bot',  label:'Balancing Bot'},
-      {id:'ground_rover',   label:'Ground Rover'},
-      {id:'auv',            label:'AUV'},
-      {id:'manipulator_arm',label:'Robot Arm'},
-    ];
-
-    async function analyzeFile() {
-      if (!replayFile) return;
-      setReplayLoading(true);
-      setReplayError(null);
-      setReplayAnalysis(null);
-
-      try {
-        const text = await replayFile.text();
-        const lines = text.split('\n').filter(l => l.trim());
-        if (lines.length < 5) throw new Error('File too short — need at least 5 data rows');
-
-        // Parse headers
-        const headerLine = lines[0];
-        const sep = headerLine.includes(',') ? ',' : headerLine.includes(';') ? ';' : '\t';
-        const headers = headerLine.split(sep).map(h => h.trim().replace(/[:"]/g,'').toLowerCase());
-
-        // Map Insight 2.0 and generic column names
-        const colMap: Record<string,string> = {
-          'ti':'timestamp','a_x':'accel_x','a_y':'accel_y','a_z':'accel_z',
-          'r_x':'gyro_x','r_y':'gyro_y','r_z':'gyro_z','h':'altitude',
-          'temp':'temperature','vin':'battery',
-          'ax':'accel_x','ay':'accel_y','az':'accel_z',
-          'alt':'altitude','height':'altitude','t':'timestamp','time':'timestamp',
-          'pres':'pressure','press':'pressure',
-        };
-        const mapped = headers.map(h => colMap[h] || h);
-
-        // Parse data rows
-        interface DataRow { [key: string]: number }
-        const rows: DataRow[] = [];
-        for (let i = 1; i < lines.length; i++) {
-          const vals = lines[i].split(sep).map(v => parseFloat(v.trim()));
-          if (vals.some(isNaN)) continue;
-          const row: DataRow = {};
-          mapped.forEach((col, j) => { if (vals[j] !== undefined) row[col] = vals[j]; });
-          if (Object.keys(row).length >= 2) rows.push(row);
-        }
-
-        if (rows.length < 5) throw new Error('Could not parse data — check CSV format');
-
-        // Detect timestamp units
-        const t0 = rows[0].timestamp || 0;
-        const tN = rows[rows.length-1].timestamp || rows.length;
-        const span = tN - t0;
-        const timesRaw = rows.map(r => (r.timestamp || 0) - t0);
-        // If span > 10000 → milliseconds; if < 100 → seconds
-        const times = span > 10000 ? timesRaw.map(t => t/1000) :
-                      span > 200   ? timesRaw.map(t => t/1000) : timesRaw;
-        const duration = times[times.length-1];
-        const hz = rows.length / Math.max(duration, 1);
-
-        // Extract sensor channels
-        const alt_raw  = rows.map(r => r.altitude ?? r.alt ?? 0);
-        const az_raw   = rows.map(r => r.accel_z ?? r.az ?? 9.81);
-        const ax_raw   = rows.map(r => r.accel_x ?? r.ax ?? 0);
-        const ay_raw   = rows.map(r => r.accel_y ?? r.ay ?? 0);
-        const pressure = rows.map(r => r.pressure ?? r.pres ?? null);
-        const tempC    = rows.map(r => r.temperature ?? r.temp ?? 20);
-
-        // IMU saturation detection
-        const IMU_MAX_G = 16.0;
-        const CEILING   = IMU_MAX_G * 9.81;
-        let satCount = 0;
-        const az_clean = az_raw.map((az,i) => {
-          const mag = Math.sqrt(ax_raw[i]**2 + ay_raw[i]**2 + az**2);
-          if (mag >= CEILING * 0.97) { satCount++; return az_clean?.[i-1] ?? az; }
-          return az;
-        });
-        const imuSaturated = satCount > 0;
-
-        // Simple Kalman filter for altitude
-        let kf_alt = alt_raw[0], kf_vel = 0, kf_p = 100;
-        const alt_filtered: number[] = [kf_alt];
-        const vz_filtered: number[] = [0];
-        for (let i = 1; i < rows.length; i++) {
-          const dt = Math.max(times[i] - times[i-1], 0.001);
-          const vert_accel = az_clean[i] - 9.81;
-          // Predict
-          kf_alt += kf_vel * dt + 0.5 * vert_accel * dt * dt;
-          kf_vel += vert_accel * dt;
-          kf_p   += dt * (0.1 + 1.0) + 0.1;
-          // Spike detection: reject if baro jumps > 50m
-          const jump = Math.abs(alt_raw[i] - kf_alt);
-          if (jump < 50) {
-            const k = kf_p / (kf_p + 2.0);
-            kf_alt += k * (alt_raw[i] - kf_alt);
-            kf_p   *= (1 - k);
-          }
-          alt_filtered.push(kf_alt);
-          vz_filtered.push(kf_vel);
-        }
-
-        // Ground reference (first 2 seconds)
-        const nGround = Math.max(1, Math.floor(hz * 2));
-        const groundAlt = alt_filtered.slice(0, nGround).reduce((s,v)=>s+v,0) / nGround;
-        const alt_agl   = alt_filtered.map(a => a - groundAlt);
-
-        // Key stats
-        const apogee    = Math.max(...alt_agl);
-        const apogeeIdx = alt_agl.indexOf(apogee);
-        const apogeeT   = times[apogeeIdx];
-        const accelMagG = rows.map((_,i) => Math.sqrt(ax_raw[i]**2+ay_raw[i]**2+az_raw[i]**2)/9.81);
-        const maxAccelG = Math.max(...accelMagG);
-
-        // Descent rate (after apogee, stable window)
-        const postApogeeVz = vz_filtered.slice(apogeeIdx + Math.floor(hz*5));
-        const stableVz     = postApogeeVz.slice(Math.floor(postApogeeVz.length/3));
-        const descentRate  = stableVz.length > 5
-          ? Math.abs(stableVz.reduce((s,v)=>s+v,0)/stableVz.length)
-          : 0;
-
-        // Cd estimate from coast deceleration
-        const coastStart = Math.floor(hz * 3);  // 3s after data start
-        const coastEnd   = Math.max(coastStart + 10, apogeeIdx - Math.floor(hz));
-        let estimatedCd  = 0;
-        if (coastEnd > coastStart + 10) {
-          const coastVz    = vz_filtered.slice(coastStart, coastEnd);
-          const avgVz      = Math.abs(coastVz.reduce((s,v)=>s+v,0)/coastVz.length) + 0.1;
-          const coastAlt   = alt_agl.slice(coastStart, coastEnd);
-          const midAlt     = coastAlt[Math.floor(coastAlt.length/2)];
-          const rho        = 1.225 * Math.exp(-Math.max(0,midAlt) / 8500);
-          const area       = Math.PI * (0.08/2)**2; // 80mm diameter
-          const massKg     = parseFloat(replayMass) || 0.5;
-          // Cd = 2*m*decel / (rho*v²*A)
-          const decel = Math.abs(coastVz[coastVz.length-1] - coastVz[0]) /
-                       Math.max(times[coastEnd] - times[coastStart], 0.1);
-          estimatedCd = Math.min(3, Math.max(0.05, 2*massKg*decel/(rho*avgVz**2*area)));
-        }
-
-        // Recommendations
-        const recs: string[] = [];
-        if (imuSaturated) recs.push(`IMU saturated at ±${IMU_MAX_G}g during ${satCount} samples — real peak acceleration was higher. Use ADXL375 (±200g) for rockets.`);
-        if (descentRate > 15) recs.push(`Descent rate ${descentRate.toFixed(1)} m/s is fast — check parachute deployment.`);
-        else if (descentRate > 0 && descentRate < 3) recs.push(`Descent rate ${descentRate.toFixed(1)} m/s is slow — parachute may be oversized.`);
-        if (estimatedCd > 0) recs.push(`Estimated Cd ≈ ${estimatedCd.toFixed(3)} from coast-phase deceleration.`);
-        if (apogee > 0) recs.push(`Apogee ${apogee.toFixed(0)}m AGL confirmed. Next flight: integrate PhysiCore live for real-time adaptation.`);
-        if (recs.length === 0) recs.push('Flight nominal. No anomalies detected.');
-
-        setReplayAnalysis({
-          rows:         rows.length,
-          duration:     duration.toFixed(1),
-          hz:           hz.toFixed(0),
-          apogee:       apogee.toFixed(1),
-          apogeeT:      apogeeT.toFixed(1),
-          maxAccelG:    maxAccelG.toFixed(1),
-          imuSaturated,
-          satCount,
-          descentRate:  descentRate.toFixed(1),
-          estimatedCd:  estimatedCd > 0 ? estimatedCd.toFixed(3) : null,
-          groundAlt:    groundAlt.toFixed(1),
-          recommendations: recs,
-          columns:      mapped.filter(c => c !== 'timestamp'),
-        });
-      } catch(e:any) {
-        setReplayError(e.message || 'Analysis failed');
-      } finally {
-        setReplayLoading(false);
-      }
-    }
-
-    return (
-      <div className="pt-[52px] h-screen overflow-y-auto bg-void">
-        <div className="max-w-3xl mx-auto px-6 py-10 space-y-8">
-
-          {/* Header */}
-          <div className="space-y-2">
-            <h1 className="font-display text-3xl font-black text-white uppercase tracking-tighter">
-              Session Replay
-            </h1>
-            <p className="font-body text-sm text-textSecondary">
-              Upload any flight log or session data. Get: apogee, real Cd, IMU saturation events,
-              descent rate, and exactly where your simulation was wrong.
-            </p>
-            <p className="font-mono text-[10px] text-textDim uppercase tracking-widest">
-              Supports: Insight 2.0 (.txt) · Generic CSV · PhysiCore session JSON
-            </p>
-          </div>
-
-          {/* Upload */}
-          <div className="space-y-4">
-            <div
-              className="border-2 border-dashed border-border hover:border-green transition-all p-8 text-center cursor-pointer"
-              onClick={() => document.getElementById('replay-file-input')?.click()}
-              onDragOver={e => e.preventDefault()}
-              onDrop={e => {
-                e.preventDefault();
-                const f = e.dataTransfer.files[0];
-                if (f) setReplayFile(f);
-              }}
-            >
-              <input
-                id="replay-file-input"
-                type="file"
-                accept=".txt,.csv,.json,.tsv"
-                className="hidden"
-                onChange={e => e.target.files?.[0] && setReplayFile(e.target.files[0])}
-              />
-              {replayFile ? (
-                <div className="space-y-1">
-                  <p className="font-display text-sm font-bold text-green">{replayFile.name}</p>
-                  <p className="font-mono text-[10px] text-textDim">{(replayFile.size/1024).toFixed(1)} KB — ready to analyse</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="font-display text-sm font-bold text-textSecondary uppercase tracking-widest">
-                    Drop your data log here
-                  </p>
-                  <p className="font-mono text-[10px] text-textDim">or click to browse</p>
-                </div>
-              )}
-            </div>
-
-            {/* Config */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Platform</label>
-                <select
-                  value={replayPlatform}
-                  onChange={e => setReplayPlatform(e.target.value)}
-                  className="w-full bg-bgRaised border border-border text-textPrimary font-mono text-xs px-3 py-2"
-                >
-                  {PLATFORMS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Launch mass (kg)</label>
-                <input
-                  type="number"
-                  value={replayMass}
-                  onChange={e => setReplayMass(e.target.value)}
-                  className="w-full bg-bgRaised border border-border text-textPrimary font-mono text-xs px-3 py-2"
-                  step="0.1"
-                />
-              </div>
-            </div>
-
-            <button
-              onClick={analyzeFile}
-              disabled={!replayFile || replayLoading}
-              className="w-full py-3 bg-green text-black font-display text-xs font-bold uppercase tracking-widest disabled:opacity-40 hover:bg-white transition-all"
-            >
-              {replayLoading ? 'Analysing...' : 'Analyse Flight Data'}
-            </button>
-          </div>
-
-          {/* Error */}
-          {replayError && (
-            <div className="p-4 border border-red/30 bg-red/5">
-              <p className="font-mono text-xs text-red">{replayError}</p>
-            </div>
-          )}
-
-          {/* Results */}
-          {replayAnalysis && (
-            <div className="space-y-6">
-              <div className="border-t border-border pt-6">
-                <p className="font-mono text-[9px] text-green uppercase tracking-widest mb-4">
-                  Analysis complete — {replayAnalysis.rows} rows · {replayAnalysis.duration}s · {replayAnalysis.hz}Hz
-                </p>
-              </div>
-
-              {/* Key numbers */}
-              <div className="grid grid-cols-2 gap-3">
-                {[
-                  { label:'Apogee', value:`${replayAnalysis.apogee} m AGL`, sub:`at t=${replayAnalysis.apogeeT}s`, color:'text-green' },
-                  { label:'Max Acceleration', value:`${replayAnalysis.maxAccelG} g`, sub: replayAnalysis.imuSaturated ? `⚠ IMU saturated (${replayAnalysis.satCount} samples)` : 'Within sensor range', color: replayAnalysis.imuSaturated ? 'text-amber' : 'text-white' },
-                  { label:'Descent Rate', value:`${replayAnalysis.descentRate} m/s`, sub: parseFloat(replayAnalysis.descentRate) > 15 ? '⚠ Fast — check parachute' : parseFloat(replayAnalysis.descentRate) > 0 ? '✓ Parachute confirmed' : 'No descent data', color: parseFloat(replayAnalysis.descentRate) > 15 ? 'text-red' : 'text-green' },
-                  { label:'Estimated Cd', value: replayAnalysis.estimatedCd || 'N/A', sub:'from coast-phase deceleration', color:'text-cyan' },
-                ].map((stat,i) => (
-                  <div key={i} className="p-4 border border-border bg-bgRaised space-y-1">
-                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">{stat.label}</p>
-                    <p className={`font-display text-xl font-black ${stat.color}`}>{stat.value}</p>
-                    <p className="font-mono text-[9px] text-textDim">{stat.sub}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* IMU saturation warning */}
-              {replayAnalysis.imuSaturated && (
-                <div className="p-4 border border-amber/30 bg-amber/5 space-y-2">
-                  <p className="font-display text-xs font-bold text-amber uppercase tracking-widest">⚠ IMU Saturated During Powered Phase</p>
-                  <p className="font-body text-xs text-textSecondary">
-                    Your IMU hit its ±16g ceiling during {replayAnalysis.satCount} samples.
-                    The real peak acceleration was higher than recorded.
-                    For rockets: replace MPU-6050 with ADXL375 (±200g range) to capture the full thrust curve.
-                  </p>
-                </div>
-              )}
-
-              {/* Columns detected */}
-              <div className="space-y-2">
-                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Columns detected</p>
-                <div className="flex flex-wrap gap-2">
-                  {replayAnalysis.columns.map((c:string) => (
-                    <span key={c} className="px-2 py-1 border border-borderDim font-mono text-[9px] text-textSecondary">{c}</span>
-                  ))}
-                </div>
-              </div>
-
-              {/* Recommendations */}
-              <div className="space-y-3">
-                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">PhysiCore recommendations</p>
-                {replayAnalysis.recommendations.map((r:string, i:number) => (
-                  <div key={i} className="flex gap-3 p-3 border border-borderDim">
-                    <span className="font-mono text-[9px] text-green mt-0.5 shrink-0">→</span>
-                    <p className="font-body text-xs text-textSecondary">{r}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* CTA */}
-              <div className="p-5 border border-green/20 bg-green/5 space-y-3">
-                <p className="font-display text-xs font-bold text-green uppercase tracking-widest">
-                  Next step: integrate PhysiCore live on your next flight
-                </p>
-                <p className="font-body text-xs text-textSecondary">
-                  This was post-flight analysis from your log file. With PhysiCore running live during flight,
-                  it adapts your Cd estimate in real time from actual sensor data — every flight starts smarter than the last.
-                </p>
-                <button
-                  onClick={() => setView('integrator')}
-                  className="px-4 py-2 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all"
-                >
-                  Open Integration Engineer →
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-
   const renderDashboard = () => {
     return (
       <div className="pt-[52px] h-screen flex flex-col bg-void overflow-hidden">
@@ -7821,10 +8050,6 @@ max_torque: 2.5`}</Code>
         ) : view === 'team' ? (
           <motion.div key="team" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderTeam()}
-          </motion.div>
-        ) : view === 'replay' ? (
-          <motion.div key="replay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-            {renderReplay()}
           </motion.div>
         ) : (
           <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
