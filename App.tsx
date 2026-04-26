@@ -5352,14 +5352,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
             <div className="space-y-6 font-body text-textSecondary leading-relaxed">
               <p>The physics kernel is the prior — what PhysiCore knows before it sees any real data. It integrates the equations of motion forward in time using 4th-order Runge-Kutta:</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
-{&#96;k₁ = f(xₙ,        uₙ)              # derivative at step start
-k₂ = f(xₙ + k₁·h/2, uₙ)           # derivative at midpoint (first estimate)
-k₃ = f(xₙ + k₂·h/2, uₙ)           # derivative at midpoint (refined)
-k₄ = f(xₙ + k₃·h,   uₙ)            # derivative at step end
-
-xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto whitespace-pre leading-loose">{"k1 = f(xn,        un)              # derivative at step start\nk2 = f(xn + k1*h/2, un)           # derivative at midpoint (first estimate)\nk3 = f(xn + k2*h/2, un)           # derivative at midpoint (refined)\nk4 = f(xn + k3*h,   un)            # derivative at step end\n\nxn₊1 = xn + (k1 + 2k2 + 2k3 + k4) * h/6    h = 1/60 s"}</div>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>RK4 matters because robot dynamics are stiff — small integration errors amplify quickly under nonlinear control. Euler integration (the simplest method) diverges under high-gain control at 60Hz. RK4 stays stable.</p>
               <p>Every platform has its own dynamics function f(x, u). The balancing bot uses Newton-Euler with gravity compensation. The quadrotor uses thrust-torque quaternion dynamics. The rocket uses Tsiolkovsky mass depletion with ISA atmosphere and Mach-dependent drag rise. The satellite uses J2 orbital perturbation. These are not toy models — they are the equations used in real aerospace and robotics engineering.</p>
@@ -5376,24 +5369,7 @@ xₙ₊₁ = xₙ + (k₁ + 2k₂ + 2k₃ + k₄) · h/6    h = 1/60 s&#96;}
               <p>After every control step, PhysiCore has three pieces of information: the state before the action, the action it took, and the state that actually resulted. It uses these to update its physics parameter estimates.</p>
               <p>The learning is numerical gradient descent on the physics parameters:</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
-{&#96;# Every step:
-x_pred   = physics(x_prev, action, params)    # what model predicted
-x_real   = sensor_reading                     # what actually happened
-error    = ||x_real - x_pred||²               # prediction error
-
-# Gradient of error with respect to params (numerical):
-∂error/∂mass     ≈ (error(mass+δ) - error(mass-δ)) / 2δ
-∂error/∂friction ≈ (error(friction+δ) - error(friction-δ)) / 2δ
-
-# Innovation-driven adaptive learning rate:
-innovation_ema = 0.95 · innovation_ema + 0.05 · ||x_real - x_pred||
-lr = base_lr · (innovation / innovation_ema)  # fast when things change
-
-# Parameter update:
-mass     -= lr · ∂error/∂mass
-friction -= lr · ∂error/∂friction&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto whitespace-pre leading-loose">{"# Every step:\nx_pred   = physics(x_prev, action, params)    # what model predicted\nx_real   = sensor_reading                     # what actually happened\nerror    = ||x_real - x_pred||²               # prediction error\n\n# Gradient of error with respect to params (numerical):\nderror/dmass     ~= (error(mass+d) - error(mass-d)) / 2d\nderror/dfriction ~= (error(friction+d) - error(friction-d)) / 2d\n\n# Innovation-driven adaptive learning rate:\ninnovation_ema = 0.95 * innovation_ema + 0.05 * ||x_real - x_pred||\nlr = base_lr * (innovation / innovation_ema)  # fast when things change\n\n# Parameter update:\nmass     -= lr * derror/dmass\nfriction -= lr * derror/dfriction"}</div>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The innovation-driven learning rate is key. When the robot picks up a payload, the prediction error spikes. The innovation rises. The learning rate increases. Parameters update faster. When the model has converged and the robot is behaving predictably, the learning rate decreases — avoiding noise fitting.</p>
               <p>Parameters are bounded to physical ranges. Mass cannot go below 10g or above 500kg. Friction cannot go negative. This prevents the optimization from diverging to nonsensical values when sensor noise causes temporary spikes.</p>
@@ -5410,21 +5386,7 @@ friction -= lr · ∂error/∂friction&#96;}
               <p>SystemID adjusts parameters, but parameters can only fix parametric errors. Structural errors — the wrong friction model, the missing backlash term, the unmodelled flex — need a different approach.</p>
               <p>Three small neural networks (each: 2 hidden layers, 32 neurons) learn the residual: the structured difference between what the physics model predicts and what actually happens.</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-blue overflow-x-auto leading-loose">
-{&#96;# Physics model prediction:
-x_physics = RK4(x, u, params)
-
-# Each network predicts the CORRECTION, not the full dynamics:
-δ₁ = MLP₁(x, u)    # residual network 1
-δ₂ = MLP₂(x, u)    # residual network 2 (different init)
-δ₃ = MLP₃(x, u)    # residual network 3 (different init)
-
-# Final prediction = physics + mean correction:
-x_pred = x_physics + mean(δ₁, δ₂, δ₃)
-
-# Uncertainty = spread between networks:
-uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-blue overflow-x-auto whitespace-pre leading-loose">{"# Physics model prediction:\nx_physics = RK4(x, u, params)\n\n# Each network predicts the CORRECTION, not the full dynamics:\nd1 = MLP1(x, u)    # residual network 1\nd2 = MLP2(x, u)    # residual network 2 (different init)\nd3 = MLP3(x, u)    # residual network 3 (different init)\n\n# Final prediction = physics + mean correction:\nx_pred = x_physics + mean(d1, d2, d3)\n\n# Uncertainty = spread between networks:\nuncertainty = var(d1, d2, d3)    # high = out of distribution"}</div>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The ensemble's disagreement is epistemic uncertainty — when the three networks predict very different corrections, they have not seen this state before and the estimate is unreliable. This uncertainty feeds directly into the CEM-MPC cost function: high-uncertainty actions are penalized, making the controller conservative when it doesn't know what will happen.</p>
               <p>Networks start at zero correction. With no data, the physics model is the entire prediction. As data accumulates, the corrections grow to capture what the physics misses. The physics model is the prior; the ensemble is the posterior update.</p>
@@ -5440,24 +5402,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution&#96;}
             <div className="space-y-6 font-body text-textSecondary leading-relaxed">
               <p>Model Predictive Control computes the best action by simulating many possible action sequences and picking the one that leads to the best outcome. PhysiCore uses the Cross-Entropy Method (CEM) to do this efficiently.</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-amber overflow-x-auto leading-loose">
-{&#96;# Every 16.7ms (60Hz):
-1. Sample N=6 action sequences (each: 6 steps × action_dim)
-   from current distribution μ, σ
-
-2. For each sequence, simulate 6 steps forward:
-   cost = Σ ||x_simulated - x_ref||² + λ·uncertainty
-
-3. Keep top K=2 sequences (elite samples)
-
-4. Fit new distribution to elite samples:
-   μ_new = mean(elite_sequences)
-   σ_new = std(elite_sequences)
-
-5. Warm-start: use μ_new as starting point next cycle
-
-6. Execute first action from best sequence&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-amber overflow-x-auto whitespace-pre leading-loose">{"# Every 16.7ms (60Hz):\n1. Sample N=6 action sequences (each: 6 steps × action_dim)\n   from current distribution mu, std\n\n2. For each sequence, simulate 6 steps forward:\n   cost = sum ||x_simulated - x_ref||² + lambda*uncertainty\n\n3. Keep top K=2 sequences (elite samples)\n\n4. Fit new distribution to elite samples:\n   mu_new = mean(elite_sequences)\n   std_new = std(elite_sequences)\n\n5. Warm-start: use mu_new as starting point next cycle\n\n6. Execute first action from best sequence"}</div>
             <div className="space-y-4 font-body text-textSecondary leading-relaxed">
               <p>The uncertainty penalty λ·uncertainty makes the optimizer conservative when the model is uncertain. In practice: when a robot enters a new configuration or terrain, uncertainty rises, the optimizer avoids large actions, and the robot moves more carefully until the ensemble has learned the new regime.</p>
               <p>Warm-starting reuses the previous solution shifted by one step. This means the optimizer doesn't start from scratch every cycle — it refines an already-good solution. This is why 6 samples is sufficient at 60Hz.</p>
@@ -5679,19 +5624,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution&#96;}
               <p>In practice: your first session takes 30 seconds to converge. Your tenth session converges in 5 seconds because 9 sessions of prior knowledge give it a much better starting point. Your hundredth session starts essentially converged — it already knows your hardware.</p>
               <p>The registry is keyed by platform type and hardware fingerprint. Two different balancing bots have separate registry entries. The same bot across many sessions accumulates a learned prior that gets stronger over time.</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto leading-loose">
-{&#96;# ~/.physicore/registry/balancing_bot/
-#   params.json          — latest converged mass, friction, inertia
-#   ensemble_0.npz       — learned residual network weights
-#   ensemble_1.npz
-#   ensemble_2.npz
-#   sessions.jsonl       — log of every session (timestamp, steps, convergence%)
-#   platform_prior.json  — weighted average across all sessions
-
-# Session 1:  starts from mass=1.0 (prior guess), converges to 1.35 in 30s
-# Session 10: starts from mass=1.31 (registry), converges to 1.34 in 5s
-# Session 50: starts from mass=1.347 (strong prior), stable in 2s&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-cyan overflow-x-auto whitespace-pre leading-loose">{"# ~/.physicore/registry/balancing_bot/\n#   params.json          — latest converged mass, friction, inertia\n#   ensemble_0.npz       — learned residual network weights\n#   ensemble_1.npz\n#   ensemble_2.npz\n#   sessions.jsonl       — log of every session (timestamp, steps, convergence%)\n#   platform_prior.json  — weighted average across all sessions\n\n# Session 1:  starts from mass=1.0 (prior guess), converges to 1.35 in 30s\n# Session 10: starts from mass=1.31 (registry), converges to 1.34 in 5s\n# Session 50: starts from mass=1.347 (strong prior), stable in 2s"}</div>
           </div>
 
           {/* ── SECTION 9: 3-line integration ── */}
@@ -5703,22 +5636,7 @@ uncertainty = var(δ₁, δ₂, δ₃)    # high = out of distribution&#96;}
             <div className="space-y-6 font-body text-textSecondary leading-relaxed">
               <p>Once you have access and have run the Integration Engineer to flash your firmware, the entire PhysiCore integration is three lines of code in your control loop:</p>
             </div>
-            <pre className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto leading-loose">
-{&#96;import physicore
-
-# Connect — loads registry prior, attaches Sentinel, starts adaptation
-robot = physicore.connect("balancing_bot", mass=1.35, friction=0.18)
-
-# Your control loop:
-while True:
-    state  = imu.read()                    # your sensor read
-    action = robot.step(state)             # PhysiCore computes optimal action
-    motors.apply(action)                   # your actuator write
-    robot.observe(state, action, imu.read())  # PhysiCore learns from what happened
-
-# robot.save() called automatically on Ctrl+C
-# Next session starts from converged parameters&#96;}
-            </pre>
+            <div className="bg-bg border border-borderDim p-6 font-mono text-[11px] text-green overflow-x-auto whitespace-pre leading-loose">{"import physicore\n\n# Connect — loads registry prior, attaches Sentinel, starts adaptation\nrobot = physicore.connect(\"balancing_bot\", mass=1.35, friction=0.18)\n\n# Your control loop:\nwhile True:\n    state  = imu.read()                    # your sensor read\n    action = robot.step(state)             # PhysiCore computes optimal action\n    motors.apply(action)                   # your actuator write\n    robot.observe(state, action, imu.read())  # PhysiCore learns from what happened\n\n# robot.save() called automatically on Ctrl+C\n# Next session starts from converged parameters"}</div>
             <div className="grid md:grid-cols-3 gap-6">
               {[
                 { title: 'robot.step(state)', desc: 'CEM-MPC computes optimal action every 16.7ms. Returns numpy array of motor commands.' },
