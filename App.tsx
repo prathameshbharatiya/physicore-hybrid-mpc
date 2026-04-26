@@ -4681,6 +4681,17 @@ Be direct, technical, confident. You are the world's best robotics integration e
     </nav>
   );
 
+  const SENTINEL_LAYERS_WP = [
+    { layer: 'L0', name: 'Preflight Check', desc: 'Verifies all subsystems initialized correctly before any motion begins. Fails hard if physics kernel, ensemble, or SysID are not ready.' },
+    { layer: 'L1', name: 'Intent Coherence', desc: 'Checks that the commanded action is consistent with the current state and declared goal. Rejects nonsensical commands.' },
+    { layer: 'L2', name: 'Physics Consistency', desc: 'The commanded action must be explainable by the physics model within uncertainty bounds. Actions that defy physics are rejected.' },
+    { layer: 'L3', name: 'Lyapunov Projection', desc: 'Verifies that the action reduces system energy V. If the action would increase instability, it is scaled down or rejected.' },
+    { layer: 'L4', name: 'Actuator Envelope', desc: 'Hard clamps on actuator commands. No matter what the optimizer produces, motors never receive commands outside physical limits.' },
+    { layer: 'L5', name: 'Fault Signatures', desc: 'Classifies 5 fault types: BEARING_WEAR, UNEXPECTED_PAYLOAD, AERO_DAMAGE, MOTOR_DEGRADATION, SENSOR_DRIFT. Detected from parameter trends.' },
+    { layer: 'L6', name: 'Jerk Limiting', desc: 'Limits rate of change of action. Prevents actuator shock loads from sudden large commands.' },
+    { layer: 'L7', name: 'SHA-256 Forensic Chain', desc: 'Every control command is hashed. Each hash includes the previous hash forming a chain. Tamper-evident. Any modification breaks the chain.' },
+  ];
+
   const renderHome = () => {
   // Convergence animation data — real numbers from actual hardware test
   // Mass estimate converging from 1.0 toward 1.35 over 30 seconds
@@ -5419,16 +5430,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
               <p>Sentinel is a separate safety layer that monitors every control step. It cannot be disabled. It operates in three modes and transitions automatically based on real-time physics metrics.</p>
             </div>
             <div className="grid md:grid-cols-2 gap-6">
-              {[
-                { layer: 'L0', name: 'Preflight Check', desc: 'Verifies all subsystems initialized correctly before any motion begins. Fails hard if physics kernel, ensemble, or SysID are not ready.' },
-                { layer: 'L1', name: 'Intent Coherence', desc: 'Checks that the commanded action is consistent with the robot's current state and declared goal. Rejects nonsensical commands.' },
-                { layer: 'L2', name: 'Physics Consistency', desc: 'The commanded action must be explainable by the physics model within uncertainty bounds. Actions that defy physics are rejected.' },
-                { layer: 'L3', name: 'Lyapunov Projection', desc: 'Verifies that the action reduces system energy V(x) = x'Px. If the action would increase instability, it is scaled down or rejected.' },
-                { layer: 'L4', name: 'Actuator Envelope', desc: 'Hard clamps on actuator commands. No matter what the optimizer produces, motors never receive commands outside physical limits.' },
-                { layer: 'L5', name: 'Fault Signatures', desc: 'Classifies 5 fault types: BEARING_WEAR, UNEXPECTED_PAYLOAD, AERO_DAMAGE, MOTOR_DEGRADATION, SENSOR_DRIFT. Detected from parameter patterns.' },
-                { layer: 'L6', name: 'Jerk Limiting', desc: 'Limits rate of change of action. Prevents actuator shock loads from sudden large commands.' },
-                { layer: 'L7', name: 'SHA-256 Forensic Chain', desc: 'Every control command is hashed. Each hash includes the previous hash (chain). Tamper-evident. Any modification breaks the chain.' },
-              ].map((l, i) => (
+              {SENTINEL_LAYERS_WP.map((l, i) => (
                 <div key={i} className="flex gap-4 p-4 border border-borderDim bg-bgRaised">
                   <span className="font-mono text-[10px] text-amber shrink-0 w-8">{l.layer}</span>
                   <div>
@@ -7242,7 +7244,7 @@ max_torque: 2.5`}</Code>
                   {[
                     { item: 'SystemID parameters', detail: 'Converged mass, friction, inertia estimates. Weighted average across sessions — more converged sessions count more.' },
                     { item: 'Residual ensemble weights', detail: 'The three neural network weights that learned what your simulator gets wrong. Loads pre-trained next session.' },
-                    { item: 'CEM warm start', detail: 'The optimizer\'s memory of good action sequences. First few control steps are better immediately.' },
+                    { item: 'CEM warm start', detail: "The optimizer\'s memory of good action sequences. First few control steps are better immediately." },
                     { item: 'Session log', detail: 'Every session recorded: timestamp, steps, convergence quality, final params.' },
                   ].map((s, i) => (
                     <div key={i} className="p-4 border border-borderDim bg-bgRaised space-y-1">
@@ -7349,7 +7351,7 @@ max_torque: 2.5`}</Code>
                       ],
                     },
                     {
-                      error: 'Motors spin full speed in one direction and won\'t stop',
+                      error: "Motors spin full speed in one direction and won\'t stop",
                       causes: ['BALANCE_POINT is wrong', 'Bot thinks it\'s always falling'],
                       fixes: [
                         'Redo Phase 2 calibration. Hold bot upright, read pitch from Serial Monitor, set BALANCE_POINT to that exact value, re-flash.',
