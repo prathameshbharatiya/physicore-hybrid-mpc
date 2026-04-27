@@ -135,6 +135,11 @@ class FailureLog:
                 self._sysid_bad_streak = 0
             if self._sysid_bad_streak >= 5:
                 new.append(FailureEvent(step,t,"SYSID_DIVERGE",FAILURE_TYPES["SYSID_DIVERGE"],"WARNING",sysid_loss,self._sysid_loss_prev,snap))
+        elif sysid_loss is None:
+            # E-14: reset streak and prev when no sysid data yet to avoid dirty baseline
+            self._sysid_loss_prev = None
+            self._sysid_bad_streak = 0
+            return new
         self._sysid_loss_prev = sysid_loss
 
         self._events.extend(new)
@@ -194,7 +199,7 @@ class WindField:
     @staticmethod
     def severe():  return WindField(1.0)
 
-_DEFAULT_WIND = WindField(0.0)
+_DEFAULT_WIND = WindField(0.0)  # E-07: module-level default; instances override with self._wind
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ATMOSPHERE + DRAG
@@ -237,8 +242,13 @@ def quadrotor_dynamics(state, action, params):
     return np.array([vx,vy,vz,ax,ay,az,dq[0],dq[1],dq[2],dq[3],(rc-p)/tau,(pc-q)/tau,(yc-r)/tau])
 
 def fixed_wing_dynamics(state, action, params):
+    """Fixed-wing dynamics in NED frame. state[2] must be NED z (negative altitude).
+    E-11: If you provide state in ENU (positive Z = altitude), alt=max(-state[2],0) returns 0 always.
+    Convention: state[2] < 0 means aircraft is above ground (NED z is down-positive)."""
     m=max(params.get("mass",12.5),0.1); cd0=params.get("friction",0.025); cla=params.get("inertia",5.7)
     _,_,_,vx,vy,vz,roll,pitch,yaw,p,q,r=state; throttle,ail,elev,rud=action
+    # E-11: NED convention check — negative state[2] = positive altitude
+    assert state[2] <= 1.0, "fixed_wing state[2] must be NED z (negative altitude). Got positive z — check your coordinate frame."
     alt=max(-state[2],0); _,_,rho=isa_atmosphere(alt); wind=_DEFAULT_WIND.sample(alt,1/60)
     vxe,vye,vze=vx-wind[0],vy-wind[1],vz-wind[2]; v=max(math.sqrt(vxe**2+vye**2+vze**2),0.5)
     cd_m=mach_drag_factor(v/340.3,cd0); qdyn=0.5*rho*v**2; S=params.get("wing_area",0.85)
@@ -276,7 +286,8 @@ def balancing_bot_dynamics(state, action, params):
     """Nonlinear inverted pendulum. State=[pitch,pitch_rate,x,v]. Action=[torque]."""
     pitch,pitch_rate,x_pos,x_vel=state; torque=float(action[0])
     m=max(params.get("mass",1.0),0.01)
-    l=max(params.get("friction",0.15),0.01)   # CoM height reused as l
+    # E-08: pendulum_length is the correct parameter (was wrongly using "friction" as CoM height)
+    l=max(params.get("pendulum_length",0.15),0.01)
     I=max(params.get("inertia",0.01),1e-5); g=9.81
     denom=I+m*l**2
     ddpitch=(m*g*l*math.sin(pitch)-torque*math.cos(pitch))/denom
@@ -287,7 +298,7 @@ def rocket_dynamics(state, action, params):
     x,y,vx,vy,mass,angle=state; thrust_mag,gimbal=action
     cd=params.get("friction",0.45); isp=max(params.get("inertia",220),1); dia=max(params.get("mass",0.15),0.01)
     alt=max(y,0); _,_,rho=isa_atmosphere(alt); wind=_DEFAULT_WIND.sample(alt,1/60)
-    vxe=vx-wind[0]; vye=vy-wind[2]; v=math.sqrt(vxe**2+vye**2)
+    vxe=vx-wind[0]; vye=vy-wind[1]; v=math.sqrt(vxe**2+vye**2)  # E-09: wind[1] not wind[2] for Y-velocity
     T,_,_=isa_atmosphere(alt); a_s=math.sqrt(1.4*287.05*max(T,1)); mach=v/a_s if a_s>0 else 0
     area=math.pi*(dia/2)**2; drag=0.5*rho*v**2*mach_drag_factor(mach,cd)*area
     ta=angle+gimbal; Ftx=thrust_mag*math.sin(ta); Fty=thrust_mag*math.cos(ta)
@@ -315,6 +326,38 @@ def satellite_dynamics(state, action, params):
     return np.array([vel[0],vel[1],vel[2],acc[0],acc[1],acc[2],p,q,r,Tx/Ixx,Ty/Ixx,Tz/Ixx])
 
 def rover_dynamics(state, action, params): return ground_rover_dynamics(state, action, params)
+
+# E-01: Platform-specific action smoothing alpha (balancing_bot needs 0 to avoid oscillation)
+PLATFORM_ALPHA: Dict[str, float] = {
+    "balancing_bot":   0.00,
+    "quadrotor":       0.15,
+    "fixed_wing":      0.10,
+    "evtol":           0.15,
+    "manipulator_arm": 0.25,
+    "surgical_robot":  0.30,
+    "legged_robot":    0.20,
+    "rocket":          0.10,
+    "ground_rover":    0.20,
+    "rover":           0.20,
+    "auv":             0.25,
+    "satellite":       0.05,
+}
+
+# E-02: Platform-specific SysID buffer size (fast dynamics need more data points)
+PLATFORM_SYSID_BUFFER: Dict[str, int] = {
+    "balancing_bot":   60,
+    "quadrotor":       60,
+    "fixed_wing":      60,
+    "evtol":           60,
+    "manipulator_arm": 45,
+    "surgical_robot":  45,
+    "legged_robot":    60,
+    "rocket":          45,
+    "ground_rover":    30,
+    "rover":           30,
+    "auv":             30,
+    "satellite":       20,
+}
 
 PLATFORM_DYNAMICS: Dict[str, Tuple[Callable, int, int]] = {
     "quadrotor":       (quadrotor_dynamics,       13, 4),
@@ -351,7 +394,7 @@ class PhysiCoreConfig:
     cem_iters:           int   = 2
     cem_min_std:         float = 1e-3
     lam_unc:             float = 0.1
-    action_smooth_alpha: float = 0.35   # jitter reduction: 0=none, higher=smoother
+    action_smooth_alpha: float = 0.35   # jitter reduction: 0=none, higher=smoother (overridden per platform)
     ensemble_size:       int   = 3
     hidden_dim:          int   = 64
     residual_lr:         float = 1e-3
@@ -438,11 +481,11 @@ class ResidualEnsemble:
         self.batch_size=cfg.residual_batch
 
     def predict(self, state, action):
-        """Returns (mean_residual, scalar_variance, per_axis_residual)."""
+        """Returns (mean_residual, scalar_variance, per_member_preds)."""
         preds=np.array([m.forward(state,action) for m in self.members])
         residual=preds.mean(axis=0)
         uncertainty=float(np.mean(np.var(preds,axis=0)))
-        return residual, uncertainty, residual
+        return residual, uncertainty, preds  # E-03: return preds (per-member array) not residual again
 
     def add_experience(self, state, action, sim_pred, real_next):
         target=real_next-sim_pred
@@ -480,8 +523,14 @@ class CEMOptimizer:
 
     def _cost(self, state, actions, physics, ensemble, Q, R, x_ref, dt):
         x=state.copy(); total=0.0
-        for u in actions:
-            x_sim=physics.step(x,u,dt); res,s2,_=ensemble.predict(x,u); x=x_sim+res
+        for step_i, u in enumerate(actions):
+            x_sim=physics.step(x,u,dt); res,s2,_=ensemble.predict(x,u)
+            # E-12: only apply residual correction at step 0; decay for later steps to avoid 6x compounding
+            if step_i == 0:
+                x = x_sim + res
+            else:
+                decay = 0.5 ** step_i
+                x = x_sim + res * decay
             dx=x-x_ref; n=min(len(dx),Q.shape[0])
             total+=float(dx[:n]@Q[:n,:n]@dx[:n]+u@R@u)+self.lam*s2
         return total
@@ -514,22 +563,29 @@ class OnlineSystemID:
         adaptive_lr=self.lr*min(3.0,max(0.5,innovation/(self._innovation_ema+1e-8)))
 
         eps=5e-4
-        for name in list(self.params.keys()):
-            if name not in self.bounds: continue
-            loss_p=loss_m=0.0
-            for s,u,ns in self._buf:
-                pp={**self.params,name:self.params[name]+eps}
-                pm={**self.params,name:self.params[name]-eps}
-                physics.update_params(pp); xp=physics.step(s,u,1/60)
-                physics.update_params(pm); xm=physics.step(s,u,1/60)
-                physics.update_params(self.params)
-                loss_p+=float(np.sum((xp-ns)**2)); loss_m+=float(np.sum((xm-ns)**2))
-            n=len(self._buf)
-            grad=float(np.clip((loss_p-loss_m)/(2*eps*n),-self.clip,self.clip))
-            self._vel[name]=self._beta*self._vel[name]+(1-self._beta)*grad
-            lo,hi=self.bounds.get(name,(None,None))
-            if lo is None: lo,hi=-1e9,1e9
-            self.params[name]=float(np.clip(self.params[name]-adaptive_lr*self._vel[name],lo,hi))
+        original_params = self.params.copy()  # E-05: save original params before loop
+        try:
+            for name in list(self.params.keys()):
+                if name not in self.bounds: continue
+                loss_p=loss_m=0.0
+                for s,u,ns in self._buf:
+                    pp={**self.params,name:self.params[name]+eps}
+                    pm={**self.params,name:self.params[name]-eps}
+                    physics.update_params(pp); xp=physics.step(s,u,1/60)
+                    physics.update_params(pm); xm=physics.step(s,u,1/60)
+                    physics.update_params(self.params)
+                    loss_p+=float(np.sum((xp-ns)**2)); loss_m+=float(np.sum((xm-ns)**2))
+                n=len(self._buf)
+                grad=float(np.clip((loss_p-loss_m)/(2*eps*n),-self.clip,self.clip))
+                self._vel[name]=self._beta*self._vel[name]+(1-self._beta)*grad
+                lo,hi=self.bounds.get(name,(None,None))
+                if lo is None: lo,hi=-1e9,1e9
+                self.params[name]=float(np.clip(self.params[name]-adaptive_lr*self._vel[name],lo,hi))
+        except Exception:
+            # E-05: restore original params if any exception occurs mid-loop
+            self.params.update(original_params)
+            physics.update_params(self.params)
+            raise
 
         physics.update_params(self.params)
         loss=sum(np.sum((physics.step(s,u,1/60)-ns)**2) for s,u,ns in self._buf)/len(self._buf)
@@ -551,10 +607,11 @@ class HashChain:
     def __init__(self): self._prev="GENESIS"
 
     def sign(self, step_count, action, params, residual, uncertainty):
+        # E-13: round all floats to fixed precision before JSON serialization for cross-platform consistency
         payload=json.dumps({"step":step_count,"action":[round(float(a),6) for a in action],
-                            "params":{k:round(v,6) for k,v in params.items()},
-                            "residual":round(residual,8),"uncertainty":round(uncertainty,8),
-                            "prev":self._prev},sort_keys=True)
+                            "params":{k:round(float(v),6) for k,v in params.items()},
+                            "residual":round(float(residual),8),"uncertainty":round(float(uncertainty),8),
+                            "prev":self._prev},sort_keys=True,separators=(',',':'))
         h=hashlib.sha256(payload.encode()).hexdigest()
         self._prev=h; return h
 
@@ -608,7 +665,17 @@ class PhysiCore:
         if platform in ('quadrotor','satellite','fixed_wing','evtol','manipulator_arm',
                         'surgical_robot','legged_robot','rocket','ground_rover'):
             cfg.cem_samples=6; cfg.horizon=5; cfg.cem_iters=2
+        # E-01: apply platform-specific action smoothing alpha
+        cfg.action_smooth_alpha = PLATFORM_ALPHA.get(platform, 0.20)
+        # E-02: apply platform-specific sysid buffer (fast dynamics need more points)
+        cfg.sysid_buffer = PLATFORM_SYSID_BUFFER.get(platform, 45)
+        # E-08: add pendulum_length to param_bounds for balancing_bot
+        if platform == "balancing_bot":
+            cfg.param_bounds["pendulum_length"] = (0.01, 2.0)
         if initial_params is None: initial_params={"mass":1.0,"friction":0.3,"inertia":0.1}
+        # E-08: ensure balancing_bot starts with pendulum_length not relying on friction for CoM height
+        if platform == "balancing_bot" and "pendulum_length" not in initial_params:
+            initial_params.setdefault("pendulum_length", 0.15)
         if Q is None: Q=np.eye(state_dim)*cfg.q_scale
         if R is None: R=np.eye(action_dim)*cfg.r_scale
         return cls(cfg,fn,initial_params,Q,R,action_bounds)
@@ -649,7 +716,7 @@ class PhysiCore:
     def observe(self, state, action, next_state):
         if self._last_sim_pred is None: return
         self.ensemble.add_experience(state,action,self._last_sim_pred,next_state)
-        if self._step_count%10==0: self.ensemble.update_all()
+        self.ensemble.update_all()  # E-06: train every step, not every 10 (was 10x too slow)
         self.physics.update_params(self.sysid.update(state,action,next_state,self.physics))
 
     def set_wind(self, intensity):
@@ -663,8 +730,10 @@ class PhysiCore:
     def diagnostics_full(self):
         res_norm=unc=0.0; r_axis=np.zeros(self.cfg.state_dim)
         if self._last_state is not None and self._last_action is not None:
-            r,unc,r_axis=self.ensemble.predict(self._last_state,self._last_action)
+            r,unc,preds=self.ensemble.predict(self._last_state,self._last_action)
             res_norm=float(np.linalg.norm(r))
+            # E-03: r_axis is now per-axis variance across ensemble members (preds shape: [n_members, state_dim])
+            r_axis=np.var(preds, axis=0) if preds.ndim == 2 else r
         return {
             "step_count":      self._step_count,
             "params":          self.physics.params.copy(),
@@ -711,8 +780,8 @@ class PhysiCore:
         if len(hist) >= 5:
             converging = hist[-1] < hist[0] * 0.9  # at least 10% drop
 
-        # Mass convergence - compare against initial
-        init_mass = list(self._initial_params.values())[0] if hasattr(self, '_initial_params') else mass
+        # Mass convergence - compare against initial (E-04: use .get() not values()[0] to avoid IndexError)
+        init_mass = self._initial_params.get("mass", mass)
         mass_drift_pct = abs(mass - init_mass) / max(abs(init_mass), 0.01) * 100
 
         # Classify status
@@ -791,3 +860,11 @@ class PhysicoreSimulator:
     def __init__(self, platform="quadrotor", params=None):
         self.engine=PhysiCore.for_platform(platform,initial_params=params)
         self.state=np.zeros(self.engine.cfg.state_dim)
+
+    def step(self, state, x_ref):
+        """E-15: wrap engine.step() and return the ControlStep."""
+        return self.engine.step(state, x_ref)
+
+    def observe(self, state, action, next_state):
+        """E-15: wrap engine.observe() so the simulator actually learns."""
+        self.engine.observe(state, action, next_state)
