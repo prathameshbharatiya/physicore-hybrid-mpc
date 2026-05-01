@@ -45,7 +45,8 @@ const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
   "prathameshshirbhate256@gmail.com",
-  "ashwanth123creations@gmail.com"
+  "ashwanth123creations@gmail.com",
+  "adithya17k@gmail.com"
 ];
 
 
@@ -2574,7 +2575,8 @@ function AppContent() {
     
     const teamEmails = [
       "prathameshshirbhate256@gmail.com",
-      "ashwanth123creations@gmail.com"
+      "ashwanth123creations@gmail.com",
+      "adithya17k@gmail.com"
     ];
     
     let addedCount = 0;
