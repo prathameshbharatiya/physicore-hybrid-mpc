@@ -45,15 +45,7 @@ const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
   "prathameshshirbhate256@gmail.com",
-  "work.prateekg@gmail.com",
-  "aleksaspetro@gmail.com",
-  "ammar@purposerobotics.ca",
-  "koshmarus@gmail.com",
-  "sudhar@hardlightsim.com",
-  "aman@naveria.space",
-  "amanmain3@gmail.com",
-  "ppareek85@gmail.com",
-  "ramishan0300@gmail.com"
+  "ashwanth123creations@gmail.com"
 ];
 
 
@@ -2581,17 +2573,8 @@ function AppContent() {
     setIsBootstrapping(true);
     
     const teamEmails = [
-      "koshmarus@gmail.com",
-      "stesrocketryteam@gmail.com",
-      "darisglx@gmail.com",
-      "vladimir.robotics@gmail.com",
-      "projectauvm@manipal.edu",
       "prathameshshirbhate256@gmail.com",
-      "work.prateekg@gmail.com",
-      "aleksaspetro@gmail.com",
-      "ammar@purposerobotics.ca",
-      "sudhar@hardlightsim.com",
-      "aman@naveria.space"
+      "ashwanth123creations@gmail.com"
     ];
     
     let addedCount = 0;

@@ -104,31 +104,17 @@ class ModelRegistry:
 
         # Merge with existing params using exponential moving average
         # so params improve across sessions, not just overwrite
-        # R-02: quality gate — only merge if session actually converged
-        hist = engine.sysid.convergence_history
-        if len(hist) >= 2:
-            _initial = hist[0] if hist[0] > 0 else 1.0
-            _final   = hist[-1]
-            _convergence_pct_early = max(0.0, (_initial - _final) / _initial * 100)
-        else:
-            _convergence_pct_early = 0.0
-
-        if params_path.exists() and _convergence_pct_early >= 20:
+        if params_path.exists():
             with open(params_path) as f:
                 existing = json.load(f)
             merged = {}
             for k, v in params.items():
                 if k in existing:
+                    # Weight current session 40%, historical 60%
                     merged[k] = 0.6 * existing[k] + 0.4 * v
                 else:
                     merged[k] = v
             params_to_save = merged
-        elif params_path.exists() and _convergence_pct_early < 20:
-            # Bad session — keep existing params, do not corrupt registry
-            with open(params_path) as f:
-                existing = json.load(f)
-            params_to_save = existing.get("params", params)
-            print(f"[REGISTRY] Session convergence {_convergence_pct_early:.1f}% < 20% — keeping existing params")
         else:
             params_to_save = params
 
@@ -185,9 +171,10 @@ class ModelRegistry:
         # 6. Update platform prior (aggregated params from all sessions)
         self._update_prior(platform, params, engine._step_count, convergence_pct)
 
-        # R-04: never log raw params — hardware calibration values must not appear in plaintext logs
         print(f"[REGISTRY] Saved session {session_id} for '{platform}'")
-        print(f"  Steps: {engine._step_count} | Convergence: {convergence_pct:.1f}% | Saved to: {d}")
+        print(f"  Steps: {engine._step_count} | Convergence: {convergence_pct:.1f}%")
+        print(f"  Params: {params}")
+        print(f"  Saved to: {d}")
         return session_id
 
     def _update_prior(self, platform, params, steps, convergence_pct):
@@ -217,11 +204,7 @@ class ModelRegistry:
                 new_params[k] = v
 
         prior["params"]   = new_params
-        # R-05: removed hard cap of 50.0 — use EMA with forgetting factor
-        # Hard cap means after 50 sessions new data contributes <2% — wrong prior can never be corrected
-        # EMA: new data always has proportional influence regardless of session count
-        _forgetting = 0.95  # each session, old data retains 95% weight
-        prior["weight"] = w * _forgetting + q  # exponential moving average, no hard cap
+        prior["weight"]   = min(w + q, 50.0)   # cap so single session always has impact
         prior["sessions"] = prior.get("sessions", 0) + 1
         prior["platform"] = platform
         prior["last_updated"] = time.time()
@@ -252,13 +235,11 @@ class ModelRegistry:
         params = saved.get("params", {})
         engine.physics.update_params(params)
         engine.sysid.params = params.copy()
-        engine.sysid._vel            = {k: 0.0 for k in params}
-        engine.sysid._innovation_ema = 0.1   # R-03: reset EMA so prior session doesn't skew adaptive LR
-        engine.sysid._history        = []    # R-03: reset history so convergence chart is clean
+        engine.sysid._vel   = {k: 0.0 for k in params}
         sessions_count = saved.get("sessions_count", 1)
         loaded_anything = True
-        # R-04: do not log raw params
         print(f"[REGISTRY] Loaded params from {sessions_count} previous session(s)")
+        print(f"  {params}")
 
         # 2. Load ResidualEnsemble weights
         all_loaded = True
@@ -307,8 +288,8 @@ class ModelRegistry:
         params = prior.get("params", {})
         engine.physics.update_params(params)
         engine.sysid.params = params.copy()
-        # R-04: do not log raw params
         print(f"[REGISTRY] Loaded platform prior from {prior['sessions']} sessions")
+        print(f"  {params}")
         return True
 
     # ── INSPECT ───────────────────────────────────────────────────────────────
@@ -317,7 +298,7 @@ class ModelRegistry:
         d = self._platform_dir(platform)
         fp = d / "sessions.jsonl"
         if not fp.exists(): return 0
-        with open(fp) as fh: return sum(1 for _ in fh)  # R-01: closed file handle
+        return sum(1 for _ in open(fp))
 
     def list_platforms(self) -> List[str]:
         return [p.name for p in self.root.iterdir() if p.is_dir()]
@@ -328,11 +309,9 @@ class ModelRegistry:
         sp = d / "sessions.jsonl"
         prior_p = d / "platform_prior.json"
 
-        # R-01: use context managers — open() without with leaks file handles
-        # R-01: context managers on all file reads — no leaked handles
-        params = json.loads(pp.read_text()) if pp.exists() else {}
-        with open(sp) as fh: sessions_count = sum(1 for _ in fh) if sp.exists() else 0
-        prior = json.loads(prior_p.read_text()) if prior_p.exists() else {}
+        params = json.load(open(pp)) if pp.exists() else {}
+        sessions_count = sum(1 for _ in open(sp)) if sp.exists() else 0
+        prior = json.load(open(prior_p)) if prior_p.exists() else {}
 
         return {
             "platform":      platform,

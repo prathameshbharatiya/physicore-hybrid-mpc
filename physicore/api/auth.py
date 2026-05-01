@@ -50,10 +50,6 @@ def _is_local_dev() -> bool:
     return os.environ.get("PHYSICORE_SKIP_AUTH", "0") == "1"
 
 
-# A-02: Cache hashes at module load time — not on every API request (was 60 reads/sec at 60Hz)
-_VALID_KEY_HASHES: Set[str] = _load_valid_keys()
-
-
 # ── FastAPI dependency ─────────────────────────────────────────────────────────
 
 async def require_api_key(
@@ -88,19 +84,17 @@ async def require_api_key(
         )
 
     # Validate
-    # A-02: use module-level cache — loaded once at startup, not per request
-    valid_hashes = _VALID_KEY_HASHES
+    valid_hashes = _load_valid_keys()
     if not valid_hashes:
-        # A-01: fail CLOSED — no silent pass when keys not configured
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Server not configured: PHYSICORE_API_KEYS not set. "
-                "Set PHYSICORE_SKIP_AUTH=1 for local dev, "
-                "or set PHYSICORE_API_KEYS=your_key for production."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        # No keys configured — server is running without auth setup
+        # This is a warning, not a hard block, to not break existing local setups
+        import warnings
+        warnings.warn(
+            "PHYSICORE_API_KEYS not set. API is unprotected. "
+            "Set PHYSICORE_SKIP_AUTH=1 for local dev or PHYSICORE_API_KEYS for production.",
+            stacklevel=2,
         )
+        return raw_key
 
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     if key_hash not in valid_hashes:

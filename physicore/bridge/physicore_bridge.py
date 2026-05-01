@@ -184,16 +184,11 @@ x_ref             = None   # Target state from dashboard
 def state_to_vector(platform: str) -> np.ndarray:
     """Convert current telemetry to engine state vector for the given platform."""
     if platform == 'balancing_bot':
-        # B-01: gyro unit invariant — state.gyro_x is ALWAYS deg/s at this point
-        # Serial:  raw_gx (deg/s from MPU6050) → GyroNormaliser → state.gyro_x (deg/s)
-        # MAVLink: msg.rollspeed (rad/s) → math.degrees() in mavlink_reader → state.gyro_x (deg/s)
-        # ROS2:    angular_velocity.x (rad/s) → math.degrees() in imu_cb → state.gyro_x (deg/s)
-        # So math.radians() here correctly converts deg/s → rad/s for all paths.
         return np.array([
-            math.radians(state.pitch),   # pitch in radians
-            math.radians(state.gyro_x),  # pitch rate in rad/s (always deg/s input — see above)
-            0.0,                          # x position (not from IMU)
-            state.velocity_x,             # x velocity
+            math.radians(state.pitch),  # pitch in radians
+            math.radians(state.gyro_x), # pitch rate in rad/s — gyro_x is pitch axis on MPU6050
+            0.0,                         # x position (not available from IMU)
+            state.velocity_x,            # x velocity
         ])
     elif platform in ('quadrotor', 'evtol', 'fixed_wing'):
         roll_r  = math.radians(state.roll)
@@ -219,47 +214,6 @@ def state_to_vector(platform: str) -> np.ndarray:
         return np.array([0,0,state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
                          math.radians(state.roll),math.radians(state.pitch),math.radians(state.yaw),
                          state.gyro_x,state.gyro_y,state.gyro_z])
-
-
-# B-06: platform-specific default x_ref — zeros invalid for quaternion platforms
-def _default_x_ref(platform: str, state_dim: int) -> np.ndarray:
-    ref = np.zeros(state_dim)
-    if platform in ('quadrotor', 'evtol') and state_dim >= 10:
-        ref[6] = 1.0  # B-06: identity quaternion qw=1 (hover) — zero quaternion is invalid
-    return ref
-
-
-# B-03: 60Hz engine control loop — fixed rate, decoupled from sensor message rate
-_engine_loop_prev_state = None
-
-def _engine_loop_body():
-    global _engine_loop_prev_state
-    if not (engine and control_active and state.connected):
-        return
-    try:
-        current_x = state_to_vector(engine.cfg.platform)
-        ref = np.array(x_ref) if x_ref else _default_x_ref(engine.cfg.platform, engine.cfg.state_dim)
-        ref = ref[:engine.cfg.state_dim] if len(ref) >= engine.cfg.state_dim else np.pad(ref, (0, engine.cfg.state_dim - len(ref)))
-        step = engine.step(current_x, ref)
-        if _engine_loop_prev_state is not None:
-            engine.observe(_engine_loop_prev_state, step.action, current_x)
-        _engine_loop_prev_state = current_x.copy()
-        _update_engine_state(step)
-        state.physicore_active = True
-    except Exception as e:
-        print(f"[ENGINE] Step error: {e}")
-
-def _start_engine_loop():
-    import threading as _th
-    _interval = 1.0 / 60.0
-    def _loop():
-        while True:
-            t0 = time.time()
-            _engine_loop_body()
-            elapsed = time.time() - t0
-            time.sleep(max(0, _interval - elapsed))
-    _th.Thread(target=_loop, daemon=True).start()
-    print("[ENGINE] 60Hz control loop started")
 
 # ── MAVLink reader ─────────────────────────────────────────────────────────────
 def mavlink_reader(connection_string: str, baud: int):
@@ -334,8 +288,22 @@ def mavlink_reader(connection_string: str, baud: int):
                 state.armed      = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                 state.flight_mode = f"MODE_{msg.custom_mode}"
 
-            # B-03: engine.step() is NOT called here — message rate is mixed (2-20Hz)
-            # The 60Hz engine loop (_engine_loop_body) drives the engine at fixed rate
+            # PhysiCore engine step
+            if engine and control_active:
+                try:
+                    current_x = state_to_vector(engine.cfg.platform)
+                    ref       = np.array(x_ref) if x_ref else np.zeros(engine.cfg.state_dim)
+                    ref       = ref[:engine.cfg.state_dim] if len(ref) >= engine.cfg.state_dim else np.pad(ref, (0, engine.cfg.state_dim - len(ref)))
+                    step      = engine.step(current_x, ref)
+                    if prev_state_vec is not None:
+                        engine.observe(prev_state_vec, step.action, current_x)
+                    prev_state_vec = current_x.copy()
+                    _update_engine_state(step)
+                    state.physicore_active = True
+                except Exception as e:
+                    print(f"[ENGINE] Step error: {e}")
+            else:
+                state.physicore_active = False
 
         except Exception:
             time.sleep(0.1)
@@ -432,42 +400,19 @@ def robot_serial_reader(connection_string: str, baud: int):
             state.connected = False
             time.sleep(3)
 
-# B-02: local session buffer avoids circular import (bridge→server→bridge)
-_LOCAL_SESSION_BUFFER: list = []
-_LOCAL_SESSION_BUFFER_MAX = 20
-
-def _update_local_session_buffer(eng) -> None:
-    """B-02: local session buffer — no circular import with server.py."""
-    try:
-        d   = eng.diagnostics_full
-        nar = eng.narrate()
-        snap = {
-            "ts":          time.time(),
-            "step":        d["step_count"],
-            "residual":    round(d["residual_norm"], 4),
-            "uncertainty": round(d["uncertainty"], 4),
-            "params":      {k: round(v, 4) for k, v in d["params"].items()},
-            "innovation":  round(d["innovation_ema"], 4),
-            "status":      nar["status"],
-            "headline":    nar["headline"],
-            "failures":    d["failure_summary"].get("total_events", 0),
-            "hash":        d["hash_chain_head"][:8],
-        }
-        _LOCAL_SESSION_BUFFER.append(snap)
-        if len(_LOCAL_SESSION_BUFFER) > _LOCAL_SESSION_BUFFER_MAX:
-            _LOCAL_SESSION_BUFFER.pop(0)
-    except Exception:
-        pass
-
-
 def _update_engine_state(step):
     """Update telemetry state with PhysiCore diagnostics."""
     d = engine.diagnostics_full
     state.residual_norm        = d.get('residual_norm', 0.0)
     state.uncertainty          = d.get('uncertainty', 0.0)
-    # B-02: use local buffer — no circular import with server.py
-    if state.step_count % 100 == 0:
-        _update_local_session_buffer(engine)
+
+    # Feed session buffer for intelligence layer
+    try:
+        from physicore.api.server import _update_session_buffer
+        if state.step_count % 100 == 0:
+            _update_session_buffer(engine)
+    except Exception:
+        pass
     state.estimated_mass       = d['params'].get('mass', 0.0)
     state.estimated_friction   = d['params'].get('friction', 0.0)
     state.step_count           = d.get('step_count', 0)
@@ -613,41 +558,29 @@ async def broadcast_telemetry():
             connected_clients -= dead
 
 async def health_endpoint():
-    # B-05: replaced aiohttp (not in requirements.txt) with stdlib http.server
-    import http.server
-    import threading as _hth
-
-    class _HealthHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.path == '/api/health':
-                body = json.dumps({
-                    "service": "physicore", "status": "ok",
-                    "vehicle_type": state.vehicle_type,
-                    "domain": state.domain,
-                    "connected": state.connected,
-                    "engine_ready": engine is not None,
-                    "physicore_active": state.physicore_active,
-                    "step_count": state.step_count,
-                    "estimated_mass": state.estimated_mass,
-                    "residual": state.residual_norm,
-                }).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            else:
-                self.send_response(404)
-                self.end_headers()
-        def log_message(self, *args): pass
-
-    def _run():
-        http.server.HTTPServer(('0.0.0.0', 8080), _HealthHandler).serve_forever()
-    _hth.Thread(target=_run, daemon=True).start()
-    print("[BRIDGE] Health: http://localhost:8080/api/health (no aiohttp needed)")
-    while True:
-        await asyncio.sleep(60)
+    from aiohttp import web
+    async def health(req):
+        return web.Response(
+            text=json.dumps({
+                "service": "physicore", "status": "ok",
+                "vehicle_type": state.vehicle_type,
+                "domain": state.domain,
+                "connected": state.connected,
+                "engine_ready": engine is not None,
+                "physicore_active": state.physicore_active,
+                "step_count": state.step_count,
+                "estimated_mass": state.estimated_mass,
+                "residual": state.residual_norm,
+            }),
+            content_type='application/json',
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+    app = web.Application()
+    app.router.add_get('/api/health', health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, '0.0.0.0', 8080).start()
+    print("[BRIDGE] Health: http://localhost:8080/api/health")
 
 async def status_printer():
     while True:

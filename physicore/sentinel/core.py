@@ -40,7 +40,6 @@ Author: Prathamesh Shirbhate — physicore.ai
 
 from __future__ import annotations
 
-import statistics as _st  # SENT-03: moved from hot step() function
 import time
 import json
 import math
@@ -182,9 +181,6 @@ class SentinelConfig:
     action_min: Optional[np.ndarray] = None
     action_max: Optional[np.ndarray] = None
 
-    # SENT-08: per-platform state limit for preprocessor (2.8 rad = balancing_bot only)
-    state_limit: float = 2.8
-
     # forensic log
     log_path: Optional[str] = None
 
@@ -222,7 +218,6 @@ SENTINEL_PRESETS: Dict[str, SentinelConfig] = {
         max_residual_nominal=2.0, max_residual_cautious=15.0,
         fts_corridor_m=50.0, fts_recoverability_threshold=0.2,
         cautious_timeout_steps=200, prospective_dt=0.1,
-        state_limit=50000.0,  # SENT-08: rocket altitude can be 10000s of meters
     ),
     "surgical_robot": SentinelConfig(
         max_lyapunov_energy=0.1, lyapunov_alpha=0.30,
@@ -259,7 +254,6 @@ SENTINEL_PRESETS: Dict[str, SentinelConfig] = {
         max_uncertainty_nominal=0.001, max_uncertainty_cautious=0.01,
         max_residual_nominal=0.1, max_residual_cautious=1.0,
         cautious_timeout_steps=1000, fallback_recovery_steps=5000,
-        state_limit=7e6,  # SENT-08: satellite orbital radius ~7,000 km
     ),
 }
 
@@ -361,19 +355,13 @@ class LyapunovKernel:
 
     def project_action(
         self,
-        action:        np.ndarray,
-        x:             np.ndarray,
-        x_dot_model:   np.ndarray,
-        dynamics_fn=None,   # SENT-04: pass dynamics function for nonlinear correction
-        state=None,
-        params=None,
+        action:      np.ndarray,
+        x:           np.ndarray,
+        x_dot_model: np.ndarray,
     ) -> Tuple[np.ndarray, bool]:
         """
-        SENT-04: If dV/dt > -α·V, project action onto stability boundary.
-        Binary search on scale s ∈ [0,1].
-        When dynamics_fn is provided, computes x_dot_s = f(state, s*action) at each
-        binary search step — mathematically correct for nonlinear systems.
-        Without dynamics_fn, falls back to linear approximation (x_dot_model * s).
+        If dV/dt > -α·V, project action onto stability boundary.
+        Binary search on scale s ∈ [0,1] (sentinel_lyapunov.py project_command).
         Returns (safe_action, was_projected).
         """
         V  = self.energy(x)
@@ -387,16 +375,8 @@ class LyapunovKernel:
 
         s_lo, s_hi = 0.0, 1.0
         for _ in range(12):                  # 12 iterations → 0.024% error
-            s = (s_lo + s_hi) / 2.0
-            if dynamics_fn is not None and state is not None and params is not None:
-                # SENT-04: nonlinear correction — evaluate f(state, s*action) directly
-                try:
-                    x_dot_s = dynamics_fn(state, action * s, params)
-                except Exception:
-                    x_dot_s = x_dot_model * s  # fallback if dynamics call fails
-            else:
-                x_dot_s = x_dot_model * s   # linear approximation (old behaviour)
-            dVs = self.dV_dt(x, x_dot_s)
+            s   = (s_lo + s_hi) / 2.0
+            dVs = self.dV_dt(x, x_dot_model * s)
             if dVs <= -self.alpha * V:
                 s_lo = s
             else:
@@ -575,8 +555,7 @@ class ForensicLedger:
         if len(self._entries) > self._max:
             self._entries.pop(0)
 
-        # SENT-06: log every step — a tamper-evident chain MUST be continuous
-        if self._logfile:
+        if self._logfile and trigger != "NOMINAL":
             self._logfile.write(json.dumps(entry.to_dict()) + ",\n")
             self._logfile.flush()
 
@@ -636,8 +615,7 @@ class MissionPhaseManager:
         t_ms = time.time() * 1000 - self._start_ms
 
         # τ_prepare from forgetting factor (Sentinel updateMissionPhase)
-        # SENT-05: correct formula — tau widens when lam≈1 (slow forgetting = stable)
-        self.tau_prepare_ms = 1000.0 / (1.0 - lam + 0.001)
+        self.tau_prepare_ms = max(500.0, (1.0 - lam) * 50_000)
 
         next_ev = next((e for e in self._timeline if e.timestamp_ms > t_ms), None)
         curr_ev = next((e for e in reversed(self._timeline) if e.timestamp_ms <= t_ms), None)
@@ -933,7 +911,7 @@ class SentinelOS:
 
     def __init__(
         self,
-        engine = None,  # SENT-01: engine is now optional — use check_action() for standalone
+        engine,
         platform:         str                        = "balancing_bot",
         config:           Optional[SentinelConfig]   = None,
         fallback_fn:      Optional[Callable]         = None,
@@ -953,12 +931,11 @@ class SentinelOS:
         self._step           = 0
         self._cautious_steps = 0
         self._fallback_steps = 0
-        self._initial_params = engine.physics.params.copy() if engine is not None else {}
+        self._initial_params = engine.physics.params.copy()
 
-        # Sub-systems — use action_dim from engine or infer from config
-        _state_dim = engine.cfg.state_dim if engine is not None else 12
+        # Sub-systems
         self._lya  = LyapunovKernel(
-            _state_dim, self.config.lyapunov_alpha,
+            engine.cfg.state_dim, self.config.lyapunov_alpha,
             self.config.max_lyapunov_energy,
         )
         self._rls     = MultiBodyRLS()
@@ -966,10 +943,7 @@ class SentinelOS:
         self._ledger  = ForensicLedger()
         self._mission = MissionPhaseManager(mission_timeline)
         self._coher   = IntentCoherenceMonitor()
-        self._pre     = SentinelPreprocessor(
-            state_limit=self.config.state_limit,  # SENT-08: use platform-specific limit
-            predict_dt=self.config.violation_predict_dt,
-        )
+        self._pre     = SentinelPreprocessor()
         self._post    = SentinelPostprocessor(self.config.max_accel)
         self._fts     = (
             FlightTerminationSystem(
@@ -989,29 +963,13 @@ class SentinelOS:
             self._ledger.open_file(self.config.log_path)
 
         if self._verbose:
-            mode_str = 'attached' if engine is not None else 'standalone (check_action mode)'
             print(
-                f"[SENTINEL] Ready | platform={platform} | engine={mode_str} | "
+                f"[SENTINEL] Ready | platform={platform} | "
                 f"mode=NOMINAL | α={self.config.lyapunov_alpha} | "
                 f"V_max={self.config.max_lyapunov_energy}"
             )
 
     # ── PUBLIC API ─────────────────────────────────────────────────────────────
-
-    def check_action(
-        self,
-        state:          np.ndarray,
-        candidate_action: np.ndarray,
-        altitude:       float = 0.0,
-        velocity:       Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """
-        SENT-01/02: Standalone safety filter — accepts candidate action from ANY upstream
-        controller (PhysiCore, PX4, ROS2 policy) and returns a safe action.
-        This is the correct architecture: PhysiCore.step() → candidate → Sentinel.check_action() → approved.
-        Use step() for backward compatibility when engine is attached.
-        """
-        return self._run_safety_pipeline(state, candidate_action, altitude, velocity)
 
     def step(
         self,
@@ -1020,9 +978,7 @@ class SentinelOS:
         altitude: float                   = 0.0,
         velocity: Optional[np.ndarray]   = None,
     ) -> np.ndarray:
-        """One Sentinel-governed control step. Returns safe action.
-        SENT-01/02: When engine is attached, gets candidate from engine then filters it.
-        Prefer check_action() for decoupled usage (standalone Sentinel)."""
+        """One Sentinel-governed control step. Returns safe action."""
         self._step += 1
         state    = np.asarray(state,    dtype=float)
         x_ref    = np.asarray(x_ref,    dtype=float)
@@ -1035,8 +991,8 @@ class SentinelOS:
         # ── L6 Preprocessing (500ms predictive window) ─────────────────────
         viol_pred, ttv = self._pre.check(state, velocity)
 
-        # ── L2 RLS update from PhysiCore residual (or _ctrl if provided) ──
-        diag        = self.engine.diagnostics_full if self.engine is not None else {}
+        # ── L2 RLS update from PhysiCore residual ─────────────────────────
+        diag        = self.engine.diagnostics_full
         uncertainty = diag.get("uncertainty",   0.0)
         residual    = diag.get("residual_norm", 0.0)
         params      = diag.get("params",        {})
@@ -1044,7 +1000,7 @@ class SentinelOS:
         if self._step > 1:
             ctrl_mag = float(np.linalg.norm(
                 self.engine.cem.mu
-                if (self.engine is not None and hasattr(self.engine, "cem")) else np.zeros(1)
+                if hasattr(self.engine, "cem") else np.zeros(1)
             ))
             self._rls.update(
                 control_input = ctrl_mag,
@@ -1055,7 +1011,7 @@ class SentinelOS:
             )
 
         # Rocket propellant mass observer
-        if self.platform == "rocket" and self._rls.bodies and self.engine is not None:
+        if self.platform == "rocket" and self._rls.bodies:
             thrust   = float(np.linalg.norm(
                 self.engine.cem.mu if hasattr(self.engine, "cem") else np.zeros(1)
             ))
@@ -1081,6 +1037,7 @@ class SentinelOS:
         if len(self._shadow_ratios) > 50:
             self._shadow_ratios.pop(0)
         if len(self._shadow_ratios) >= 20 and V > 1.0:
+            import statistics as _st
             _median = _st.median(self._shadow_ratios[:-1])
             _spike  = _ratio_now / max(_median, 1e-9)
             if _spike > 10.0 or _spike < 0.1:
@@ -1114,26 +1071,20 @@ class SentinelOS:
         if self.mode in (SentinelMode.FALLBACK, SentinelMode.INTERNAL_FAULT):
             action = np.asarray(self.fallback_fn(state, x_ref), dtype=float)
         else:
-            # SENT-01/02: use candidate_action from upstream (engine or external)
-            action = candidate_action.copy()
+            ctrl   = self.engine.step(state, x_ref)
+            action = ctrl.action.copy()
             if self.mode == SentinelMode.CAUTIOUS:
                 action = action * 0.6
 
         # ── L3 Lyapunov command projection ────────────────────────────────
-        if self.mode == SentinelMode.NOMINAL and self.engine is not None and hasattr(self.engine, "physics"):
+        if self.mode == SentinelMode.NOMINAL and hasattr(self.engine, "physics"):
             x_dot = self.engine.physics.dynamics_fn(state, action, self.engine.physics.params)
-            # SENT-04: pass dynamics_fn so binary search evaluates f(state, s*action) — nonlinear correct
-            action, projected = self._lya.project_action(
-                action, state, x_dot,
-                dynamics_fn=self.engine.physics.dynamics_fn,
-                state=state,
-                params=self.engine.physics.params,
-            )
+            action, projected = self._lya.project_action(action, state, x_dot)
             if projected:
                 trigger += "|LYAPUNOV_PROJECTED"
 
         # ── L3 Prospective stability (rocket mass depletion) ───────────────
-        if self.platform == "rocket" and self.engine is not None:
+        if self.platform == "rocket":
             mass_dot = -(self.engine.physics.params.get("mass_flow_rate", 0.0))
             if not self._lya.prospective_check(state, self._rls.total_mass,
                                                mass_dot, self.config.prospective_dt):
@@ -1198,9 +1149,8 @@ class SentinelOS:
 
     def observe(self, state: np.ndarray, action: np.ndarray,
                 next_state: np.ndarray) -> None:
-        """Pass real transition to PhysiCore (only when safe and engine attached)."""
-        if (self.engine is not None
-                and self.mode not in (SentinelMode.FALLBACK, SentinelMode.INTERNAL_FAULT)):
+        """Pass real transition to PhysiCore (only when safe)."""
+        if self.mode not in (SentinelMode.FALLBACK, SentinelMode.INTERNAL_FAULT):
             self.engine.observe(state, action, next_state)
 
     # ── SAFETY EVALUATION ─────────────────────────────────────────────────────
@@ -1278,41 +1228,9 @@ class SentinelOS:
                 return np.zeros_like(action)
         return action
 
-    # SENT-07: Platform-specific fallback actions — zero torque = immediate crash for balancing_bot/quadrotor
-    _FALLBACK_ACTIONS = {
-        # balancing_bot: proportional stabilising torque on current pitch (not zeros)
-        "balancing_bot":   "proportional",
-        # quadrotor: hover thrust (not zeros — zeros = freefall)
-        "quadrotor":       "hover",
-        "evtol":           "hover",
-        # others: zeros are acceptable (rover, satellite, manipulator can safely stop)
-    }
-
     def _zero_fallback(self, state: np.ndarray,
                        x_ref: np.ndarray) -> np.ndarray:
-        """SENT-07: Platform-aware fallback — never return zeros for platforms where zeros = crash."""
-        action_dim = self.engine.cfg.action_dim
-        fb_type = self._FALLBACK_ACTIONS.get(self.platform, "zeros")
-
-        if fb_type == "proportional" and self.platform == "balancing_bot":
-            # Proportional stabiliser on pitch angle — torque to arrest the fall
-            pitch = float(state[0]) if len(state) > 0 else 0.0
-            pitch_rate = float(state[1]) if len(state) > 1 else 0.0
-            kp, kd = 15.0, 2.0  # conservative gains for safe recovery
-            torque = -(kp * pitch + kd * pitch_rate)
-            torque = float(np.clip(torque, -self.config.max_torque, self.config.max_torque))
-            return np.array([torque])
-
-        elif fb_type == "hover":
-            # Hover thrust: F = m*g distributed across action dims
-            mass = self._rls.total_mass
-            hover_thrust = mass * 9.81
-            action = np.zeros(action_dim)
-            action[0] = float(np.clip(hover_thrust, 0, self.config.max_torque))
-            return action
-
-        # Default: zeros (safe for rovers, satellites, manipulators)
-        return np.zeros(action_dim)
+        return np.zeros(self.engine.cfg.action_dim)
 
     def _log_fault(self, fault_type: FaultType, severity: str, value: float,
                    description: str, predictive: bool = False) -> None:
@@ -1325,18 +1243,18 @@ class SentinelOS:
             is_ood        = fault_type == FaultType.OOD_ANOMALY,
             timestamp     = time.time(),
             step          = self._step,
-            params        = self.engine.physics.params.copy() if self.engine is not None else {},
+            params        = self.engine.physics.params.copy(),
         )
         self._fault_log.append(evt)
         self._active_fault = evt.to_dict()
         print(f"[SENTINEL] ⚠  {severity} | {fault_type.value} | {description}")
 
     def _run_preflight(self):
-        # SENT-01: engine may be None in standalone mode (check_action usage)
-        if self.engine is not None:
-            pf_ok = self._lya.energy(np.zeros(self.engine.cfg.state_dim)) < self.config.max_lyapunov_energy
-        else:
-            pf_ok = True  # standalone mode — Lyapunov always safe at zero
+        from dataclasses import dataclass as _dc
+        pf_ok = (
+            self.engine is not None
+            and self._lya.energy(np.zeros(self.engine.cfg.state_dim)) < self.config.max_lyapunov_energy
+        )
         return {
             "engine_loaded":   self.engine is not None,
             "lyapunov_safe":   pf_ok,
