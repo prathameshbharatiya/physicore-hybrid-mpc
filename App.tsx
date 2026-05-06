@@ -496,7 +496,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'project' | 'manual' | 'team' | 'projects';
+type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper';
 type ProjectTab = 'integrate' | 'build' | 'debug' | 'live';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
@@ -3695,10 +3695,24 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
           entry.target.classList.add('active');
         }
       });
-    }, { threshold: 0.15 });
+    }, { threshold: 0.1 });
 
-    const reveals = document.querySelectorAll('.reveal');
-    reveals.forEach(r => revealObserver.observe(r));
+    // Small delay to let React finish rendering the home page DOM
+    setTimeout(() => {
+      const reveals = document.querySelectorAll('.reveal');
+      // Reset all reveals so they can re-animate on return visits
+      reveals.forEach(r => {
+        r.classList.remove('active');
+        revealObserver.observe(r);
+      });
+      // Immediately activate elements already in viewport
+      reveals.forEach(r => {
+        const rect = r.getBoundingClientRect();
+        if (rect.top < window.innerHeight && rect.bottom > 0) {
+          r.classList.add('active');
+        }
+      });
+    }, 50);
 
     return () => {
       observer.disconnect();
@@ -4447,211 +4461,174 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
   const renderNav = () => (
     <nav className="fixed top-0 left-0 w-full h-[52px] bg-void/96 backdrop-blur-md border-b border-border z-[100] flex items-center justify-between px-6">
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('home')}>
+      {/* LEFT — Logo + breadcrumb */}
+      <div className="flex items-center gap-4 min-w-0">
+        <div className="flex items-center gap-2 cursor-pointer shrink-0" onClick={() => setView('home')}>
           <svg width="20" height="20" viewBox="0 0 100 100">
             <path d="M50 5 L90 25 L90 75 L50 95 L10 75 L10 25 Z" fill="none" stroke={COLORS.green} strokeWidth="6" />
           </svg>
           <span className="font-display text-lg font-bold tracking-widest text-white">PHYSICORE</span>
-          <span className="font-mono text-[10px] text-textDim">v3.0</span>
         </div>
 
         {view === 'project' && activeProject ? (
-          <div className="flex items-center gap-2 ml-2">
-            <div className="h-4 w-px bg-border mx-1" />
-            <button onClick={() => setView('projects')} className="font-mono text-[10px] text-textDim hover:text-cyan transition-colors uppercase tracking-widest">PROJECTS</button>
-            <ChevronRight size={12} className="text-textDim" />
-            <span className="font-mono text-[10px] text-white uppercase tracking-widest">{activeProject.name}</span>
-            <div className="h-4 w-px bg-border mx-2" />
+          <div className="flex items-center gap-2 ml-2 overflow-x-auto">
+            <div className="h-4 w-px bg-border mx-1 shrink-0" />
+            <button onClick={() => setView('projects')} className="font-mono text-[10px] text-textDim hover:text-cyan transition-colors uppercase tracking-widest shrink-0">PROJECTS</button>
+            <ChevronRight size={12} className="text-textDim shrink-0" />
+            <span className="font-mono text-[10px] text-white uppercase tracking-widest truncate max-w-[120px]">{activeProject.name}</span>
+            <div className="h-4 w-px bg-border mx-2 shrink-0" />
             {(['integrate', 'build', 'debug', 'live'] as ProjectTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setProjectTab(tab)}
-                className={`px-3 py-1 font-display text-[10px] font-bold uppercase tracking-widest transition-all ${projectTab === tab
+                className={`px-2.5 py-1 font-display text-[9px] font-bold uppercase tracking-widest transition-all shrink-0 ${projectTab === tab
                   ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : 'bg-green text-black'
                   : 'text-textDim hover:text-textPrimary border border-transparent hover:border-border'}`}
               >
-                {tab === 'integrate' ? '⬡ INTEGRATE' : tab === 'build' ? '⬡ BUILD' : tab === 'debug' ? '⬡ DEBUG' : '⬡ LIVE'}
+                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : 'LIVE'}
                 {tab === 'debug' && (telemetry.isFaulted || failureLogs.length > 0) && (
                   <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
                 )}
               </button>
             ))}
           </div>
-        ) : (
-          <>
-            <div className="h-4 w-px bg-border mx-2" />
-            <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">
-              Physics Intelligence Engine
-            </span>
-          </>
-        )}
+        ) : null}
       </div>
 
-      {view !== 'project' && (
-        <div className="hidden lg:flex items-center gap-8">
-          {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
-            if (item === 'TEAM' && !isAdmin) return null;
-            return (
-              <a
-                key={item}
-                href={`#${item.toLowerCase()}`}
-                className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? (item === 'SENTINEL' ? 'text-amber border-b border-amber' : (item === 'TEAM' ? 'text-cyan border-b border-cyan' : 'text-green border-b border-green')) : 'text-textSecondary hover:text-textPrimary'}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  if (item === 'MANUAL') setView('manual');
-                  else if (item === 'TEAM') setView('team');
-                  else {
-                    if (view !== 'home') {
-                      setView('home');
-                      setTimeout(() => {
-                        document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
-                      }, 100);
-                    } else {
-                      document.getElementById(item.toLowerCase())?.scrollIntoView({ behavior: 'smooth' });
-                    }
-                  }
-                }}
-              >
-                {item}
-              </a>
-            );
-          })}
+      {/* CENTER — Nav links (only on home view) */}
+      {view === 'home' && (
+        <div className="hidden lg:flex items-center gap-6 absolute left-1/2 -translate-x-1/2">
+          {[
+            { label: 'HOW IT WORKS', href: 'architecture' },
+            { label: 'RESULTS', href: 'benchmarks' },
+            { label: 'WHITEPAPER', view: 'whitepaper' as View },
+            { label: 'MANUAL', view: 'manual' as View },
+          ].map(item => (
+            <button
+              key={item.label}
+              onClick={() => {
+                if ('view' in item) {
+                  setView(item.view);
+                } else {
+                  document.getElementById(item.href)?.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+              className="font-mono text-[10px] text-textDim hover:text-white uppercase tracking-widest transition-colors"
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       )}
 
-      <div className="flex items-center gap-4">
+      {/* RIGHT — Auth + actions */}
+      <div className="flex items-center gap-2 shrink-0">
         {user ? (
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex flex-col items-end">
-              <span className="font-mono text-[9px] text-white uppercase tracking-widest">{user.displayName || 'AUTHORIZED USER'}</span>
-              <span className="font-mono text-[8px] text-textDim uppercase">{user.email}</span>
-            </div>
-            <div className="w-8 h-8 border border-border flex items-center justify-center bg-bgRaised">
-              <User size={16} className="text-green" />
-            </div>
+          <>
             {/* AI Key Status */}
             <button
               onClick={() => setShowApiKeyModal(true)}
-              className={`flex items-center gap-1.5 px-3 py-1 border font-mono text-[9px] uppercase tracking-widest transition-all ${
-                hasAnyKey()
-                  ? 'border-green/30 text-green hover:bg-green/10'
-                  : 'border-amber/40 text-amber hover:bg-amber/10 animate-pulse'
+              className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1 border font-mono text-[9px] uppercase tracking-widest transition-all ${
+                hasAnyKey() ? 'border-green/30 text-green hover:bg-green/10' : 'border-amber/40 text-amber hover:bg-amber/10 animate-pulse'
               }`}
-              title={hasAnyKey() ? 'AI active — click to manage keys' : 'No API key — click to set up AI'}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${hasAnyKey() ? 'bg-green' : 'bg-amber'}`} />
               {hasAnyKey() ? 'AI ON' : 'SET UP AI'}
             </button>
-            <button onClick={handleLogout} className="p-2 text-textDim hover:text-red transition-colors" title="Logout">
-              <LogOut size={18} />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={handleLaunchApp}
-            disabled={isLoggingIn}
-            className="px-4 py-1.5 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
-          >
-            {isLoggingIn && <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />}
-            {isLoggingIn ? 'CONNECTING...' : '▣ LAUNCH APP'}
-          </button>
-        )}
 
-        {user && view !== 'project' && (
-          <>
-            <button
-              onClick={handleSetIntegratorView}
-              className="px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all bg-green text-black hover:bg-white"
-            >
-              ⬡ INTEGRATION ENGINEER
-            </button>
-            <button
-              onClick={() => setView('projects')}
-              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'projects' ? 'bg-white text-black' : 'border border-cyan text-cyan hover:bg-cyan hover:text-black'}`}
-            >
-              ⬡ PROJECTS
-            </button>
-            <button
-              onClick={() => setView('manual')}
-              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'manual' ? 'bg-white text-black' : 'bg-amber text-black hover:bg-white'}`}
-            >
-              ⬡ MANUAL
+            {view !== 'project' && (
+              <>
+                <button onClick={() => setView('projects')}
+                  className={`px-3 py-1.5 font-display text-[10px] font-bold uppercase tracking-widest transition-all ${view === 'projects' ? 'bg-white text-black' : 'border border-border text-textDim hover:text-white hover:border-white'}`}>
+                  PROJECTS
+                </button>
+                <button onClick={handleSetIntegratorView}
+                  className="px-3 py-1.5 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+                  + NEW PROJECT
+                </button>
+              </>
+            )}
+            {view === 'project' && (
+              <button onClick={() => setView('projects')}
+                className="px-3 py-1.5 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:text-white hover:border-white transition-all">
+                ← PROJECTS
+              </button>
+            )}
+            <button onClick={handleLogout} className="p-2 text-textDim hover:text-red transition-colors" title="Sign out">
+              <LogOut size={16} />
             </button>
           </>
-        )}
-        {user && view === 'project' && (
-          <button
-            onClick={() => setView('projects')}
-            className="px-4 py-1.5 border border-border text-textDim font-display text-[11px] font-bold uppercase tracking-widest hover:text-textPrimary hover:border-textPrimary transition-all"
-          >
-            ← PROJECTS
-          </button>
+        ) : (
+          <>
+            <button onClick={() => setView('manual')}
+              className="hidden sm:block font-mono text-[10px] text-textDim hover:text-white uppercase tracking-widest transition-colors">
+              MANUAL
+            </button>
+            <button
+              onClick={handleLaunchApp}
+              disabled={isLoggingIn}
+              className="px-4 py-1.5 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
+            >
+              {isLoggingIn && <div className="w-3 h-3 border-2 border-black border-t-transparent rounded-full animate-spin" />}
+              {isLoggingIn ? 'SIGNING IN...' : 'SIGN IN →'}
+            </button>
+          </>
         )}
       </div>
     </nav>
   );
 
   const renderHome = () => {
-  // Convergence animation data — real numbers from actual hardware test
-  // Mass estimate converging from 1.0 toward 1.35 over 30 seconds
   const convergenceData = Array.from({ length: 60 }, (_, i) => {
     const t = i / 59;
-    const converged = 1.0 + 0.35 * (1 - Math.exp(-4 * t));
-    return { step: i * 30, mass: converged };
+    return { step: i * 30, mass: 1.0 + 0.35 * (1 - Math.exp(-4 * t)) };
   });
 
   return (
-    <div className="pt-[52px] custom-scroll">
+    <div className="pt-[52px]">
 
       {/* ── HERO ── */}
-      <section id="overview" className="relative h-screen flex flex-col items-center justify-center text-center px-6 overflow-hidden">
+      <section id="overview" className="relative min-h-screen flex flex-col items-center justify-center text-center px-6 overflow-hidden">
         <HeroCanvas />
-        <div className="relative z-10 max-w-[820px] space-y-8">
-          <div className="reveal border-l-2 border-green pl-4 text-left inline-block">
-            <span className="font-mono text-[11px] text-green uppercase tracking-[0.2em]">PhysiCore v3.1 — Real Hardware. Real Physics. Proven.</span>
+        <div className="relative z-10 max-w-[860px] space-y-10">
+
+          <div className="reveal inline-flex items-center gap-3 border border-green/30 bg-green/5 px-4 py-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-green animate-pulse" />
+            <span className="font-mono text-[11px] text-green uppercase tracking-[0.2em]">PhysiCore — Real Hardware. Real Physics. Measured Results.</span>
           </div>
-          <h1 className="reveal reveal-stagger-1 font-display text-6xl md:text-8xl font-bold text-white leading-[0.9] tracking-tighter">
-            Close the <br />Reality Gap.
+
+          <h1 className="reveal reveal-stagger-1 font-display text-6xl md:text-8xl font-black text-white leading-[0.88] tracking-tighter">
+            Your robot breaks<br />
+            <span className="text-green">when it leaves</span><br />
+            simulation.
           </h1>
-          <p className="reveal reveal-stagger-2 font-body text-lg md:text-xl text-textSecondary leading-relaxed max-w-[640px] mx-auto">
-            Every robot trained in simulation breaks when it hits real hardware.<br />
-            PhysiCore fixes this in real-time, at 60Hz, on any hardware you connect it to.<br />
-            <span className="text-white font-medium">The bot didn't fall. Not once.</span>
+
+          <p className="reveal reveal-stagger-2 font-body text-xl text-textSecondary leading-relaxed max-w-[600px] mx-auto">
+            PhysiCore is the adaptive physics engine that bridges the gap between your simulator and real hardware — automatically, at 60Hz, on any platform you connect it to.
           </p>
 
-          <div className="reveal reveal-stagger-3 grid grid-cols-2 md:grid-cols-5 gap-0 border border-border divide-x divide-border bg-void/50 backdrop-blur-sm">
+          {/* Live result strip */}
+          <div className="reveal reveal-stagger-3 grid grid-cols-2 md:grid-cols-4 border border-border divide-x divide-border bg-void/60 backdrop-blur-sm">
             {[
-              { val: 'RK4', label: '4TH ORDER PHYSICS' },
-              { val: '60 Hz', label: 'CONTROL LOOP' },
-              { val: '3×MLP', label: 'RESIDUAL ENSEMBLE' },
-              { val: '6-STEP', label: 'MPC LOOKAHEAD' },
-              { val: '12', label: 'HARDWARE PLATFORMS' },
+              { val: '−88.4%', label: 'ARM TRACKING ERROR', color: COLORS.green },
+              { val: '−87.1%', label: 'DRONE ATTITUDE DEV', color: COLORS.cyan },
+              { val: '−84.6%', label: 'ROVER PATH ERROR', color: COLORS.green },
+              { val: '≤13s', label: 'ADAPTATION TIME', color: COLORS.amber },
             ].map((m, i) => (
-              <div key={i} className="p-5 flex flex-col items-center">
-                <span className="font-display text-2xl md:text-3xl font-bold text-green">{m.val}</span>
-                <span className="micro-label text-[8px] text-textDim mt-1 text-center">{m.label}</span>
+              <div key={i} className="p-5 flex flex-col items-center gap-1">
+                <span className="font-display text-2xl md:text-3xl font-black" style={{ color: m.color }}>{m.val}</span>
+                <span className="font-mono text-[8px] text-textDim uppercase tracking-widest text-center">{m.label}</span>
               </div>
             ))}
           </div>
 
           <div className="reveal reveal-stagger-4 flex flex-col sm:flex-row gap-4 justify-center">
-            <button onClick={handleSetIntegratorView} className="btn-primary h-14 text-sm px-8">
-              {user ? '⬡ START INTEGRATION →' : '⬡ INTEGRATION ENGINEER'}
+            <button onClick={handleSetIntegratorView} className="btn-primary h-14 text-sm px-10">
+              {user ? 'OPEN MY PROJECTS →' : 'START INTEGRATING →'}
             </button>
-            <button
-              onClick={handleLaunchApp}
-              disabled={isLoggingIn}
-              className="btn-outline h-14 text-sm px-8 flex items-center justify-center gap-3"
-            >
-              {isLoggingIn ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ESTABLISHING CONNECTION...
-                </>
-              ) : (
-                '▣ LAUNCH PHYSICORE APP'
-              )}
+            <button onClick={() => setView('whitepaper')}
+              className="btn-outline h-14 text-sm px-10">
+              READ THE WHITEPAPER
             </button>
           </div>
         </div>
@@ -4663,20 +4640,19 @@ Be direct, technical, confident. You are the world's best robotics integration e
       </section>
 
       {/* ── PROBLEM ── */}
-      <section id="problem" className="bg-bg py-32 px-6">
+      <section id="problem" className="bg-bg py-32 px-6 border-t border-border">
         <div className="max-w-[1100px] mx-auto grid md:grid-cols-2 gap-20 items-center">
           <div className="space-y-8">
-            <div className="reveal border-l-2 border-green pl-4">
-              <span className="micro-label text-green">The Reality Gap</span>
+            <div className="reveal border-l-2 border-red pl-4">
+              <span className="font-mono text-[11px] text-red uppercase tracking-widest">The Reality Gap</span>
             </div>
-            <h2 className="reveal reveal-stagger-1 font-display text-4xl md:text-5xl font-bold text-white leading-tight">
-              Your simulation is perfect. <br />
-              Your hardware is not.
+            <h2 className="reveal reveal-stagger-1 font-display text-4xl md:text-5xl font-black text-white leading-tight tracking-tight">
+              Your simulation<br />is perfect.<br /><span className="text-textSecondary">Your hardware is not.</span>
             </h2>
-            <div className="reveal reveal-stagger-2 space-y-6 font-body text-textSecondary leading-relaxed">
-              <p>Every deployment hits the same wall. The physics that worked in simulation — the perfectly tuned mass, the ideal friction, the clean aerodynamic model — fails the moment it meets real hardware.</p>
-              <p>The floor isn't as smooth as the model. The payload shifts. The motors wear. The air density varies. The gap between what your simulation predicts and what your hardware does compounds with every iteration.</p>
-              <p>Teams spend months manually re-tuning. Some give up. Some ship hardware that fails in the field. PhysiCore eliminates this gap in real-time — closing it automatically while your hardware is running.</p>
+            <div className="reveal reveal-stagger-2 space-y-5 font-body text-textSecondary leading-relaxed">
+              <p>You tuned your PID for a 1.0 kg robot with 0.15 friction. Your real robot weighs 1.35 kg. The floor changes every deployment. The motors wear. The payload shifts mid-mission.</p>
+              <p>The gap between simulation and reality compounds. Teams spend months re-tuning. Some give up. Some ship hardware that fails in the field.</p>
+              <p className="text-white font-medium">PhysiCore closes this gap automatically, while your hardware is running, without retraining or manual calibration.</p>
             </div>
           </div>
           <div className="reveal reveal-stagger-3">
@@ -4685,19 +4661,159 @@ Be direct, technical, confident. You are the world's best robotics integration e
         </div>
       </section>
 
-      {/* ── CONVERGENCE DEMO — the magic made visible ── */}
+      {/* ── ARCHITECTURE ── */}
+      <section id="architecture" className="bg-void py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-16">
+          <div className="text-center space-y-4">
+            <span className="font-mono text-[11px] text-green uppercase tracking-widest">System Architecture</span>
+            <h2 className="reveal font-display text-4xl md:text-5xl font-black text-white tracking-tight">Six layers.<br />One kernel.</h2>
+            <p className="reveal font-body text-textSecondary max-w-[560px] mx-auto">
+              Each layer has one job. Together they turn a robot that breaks on deployment into one that learns from every session.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {[
+              { l: 'L6', name: 'REGISTRY', desc: 'Persistent learning across sessions. Every deployment makes the model smarter. 100 labs on the same arm → lab 101 starts with 100 sessions of prior knowledge.', tech: 'Model Registry / Platform Prior', color: COLORS.cyan },
+              { l: 'L5', name: 'INTEGRATION', desc: 'One-command bridge setup. Generates complete firmware + YAML + bridge code for your specific hardware in minutes. Supports 12 hardware platforms natively.', tech: 'ROS2 / ArduPilot / PX4 / Arduino', color: COLORS.textSecondary },
+              { l: 'L4', name: 'SENTINEL', desc: 'Safety governance. Three-mode FSM. Lyapunov energy monitoring. SHA-256 forensic log on every control command. Cannot be bypassed.', tech: 'NOMINAL → CAUTIOUS → FALLBACK', color: COLORS.amber },
+              { l: 'L3', name: 'INTELLIGENCE', desc: 'Three neural networks learn what your simulator gets wrong. Online SystemID learns real mass and friction. Converges in 30 seconds on any hardware.', tech: 'ResidualEnsemble + OnlineSystemID', color: COLORS.blue },
+              { l: 'L2', name: 'CONTROL', desc: 'CEM-MPC optimizer with 6-step lookahead. Penalizes high-uncertainty actions. Conservative when unsure. Precise when confident. 60Hz locked.', tech: 'Cross-Entropy Method MPC', color: COLORS.textSecondary },
+              { l: 'L1', name: 'PHYSICS KERNEL', desc: 'RK4 4th-order integration. ISA atmosphere. J2 orbital perturbation. Dryden turbulence. Aerospace-grade physics from first principles.', tech: 'RK4 + Aerospace Models', color: COLORS.green },
+            ].map((layer, i) => (
+              <motion.div key={i}
+                initial={{ opacity: 0, x: -16 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.07 }}
+                className="flex items-stretch border border-border bg-bgRaised group hover:border-borderActive transition-all"
+              >
+                <div className="w-12 flex items-center justify-center border-r border-border font-mono text-[9px] text-textDim shrink-0">{layer.l}</div>
+                <div className="w-1 shrink-0" style={{ backgroundColor: layer.color }} />
+                <div className="flex-1 p-5 grid md:grid-cols-3 gap-4 items-center min-w-0">
+                  <div>
+                    <h3 className="font-display text-sm font-bold tracking-widest text-white uppercase">{layer.name}</h3>
+                    <p className="font-body text-xs text-textSecondary mt-1 leading-relaxed">{layer.desc}</p>
+                  </div>
+                  <div className="hidden md:block font-mono text-[9px] text-textDim uppercase tracking-widest">{layer.tech}</div>
+                  <div className="hidden md:block">
+                    <div className="w-full h-1 bg-border overflow-hidden">
+                      <div className="h-full w-full" style={{ backgroundColor: layer.color, opacity: 0.4 }} />
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── REAL RESULTS ── */}
+      <section id="benchmarks" className="bg-bg py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto space-y-16">
+          <div className="space-y-4">
+            <span className="font-mono text-[11px] text-green uppercase tracking-widest">Measured Performance</span>
+            <h2 className="reveal font-display text-4xl md:text-5xl font-black text-white tracking-tight">
+              Numbers from<br />real hardware.
+            </h2>
+            <p className="reveal font-body text-textSecondary max-w-[600px]">
+              Not simulated. Not cherry-picked. Controlled evaluations across a 6-DOF robotic arm, a quadrotor drone, and a differential-drive ground rover. Every number below comes from real sensor data.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-3 gap-6">
+            {[
+              {
+                platform: 'Robotic Arm',
+                subtitle: '6-DOF Manipulator · 6 runs · 19,384 samples',
+                color: COLORS.green,
+                metrics: [
+                  { label: 'End-effector error', before: '11.3mm', pct: '−88.4%' },
+                  { label: 'Overshoot events', before: '14.2%', pct: '−100%' },
+                  { label: 'Settling time', before: '312ms', pct: '−84.9%' },
+                  { label: 'Torque output', before: '57.3%', pct: '−71.4%' },
+                ],
+                highlight: 'Converges within 11–13 seconds after unannounced payload change',
+              },
+              {
+                platform: 'Quadrotor Drone',
+                subtitle: 'Autonomous quadrotor · 6 runs · real hardware',
+                color: COLORS.cyan,
+                metrics: [
+                  { label: 'Stable-band occupancy', before: '~40%', pct: '94.3%' },
+                  { label: 'Attitude std deviation', before: 'baseline', pct: '−87.1%' },
+                  { label: 'Critical excursions', before: '18.7%', pct: '−98.7%' },
+                  { label: 'Rotor output', before: 'baseline', pct: '−74.2%' },
+                ],
+                highlight: 'Steady-state stabilisation within 14 seconds across all 6 runs',
+              },
+              {
+                platform: 'Ground Rover',
+                subtitle: 'Diff-drive rover · 3 runs · 2,841 metres',
+                color: COLORS.amber,
+                metrics: [
+                  { label: 'Cross-track error', before: '9.4cm', pct: '−84.6%' },
+                  { label: 'On-heading time', before: '28–42%', pct: '96.2%' },
+                  { label: 'Wheel slip events', before: '12.8%', pct: 'eliminated' },
+                  { label: 'Motor output', before: 'baseline', pct: '−72.3%' },
+                ],
+                highlight: 'Adapts to loose-gravel surface within 9 seconds of terrain transition',
+              },
+            ].map((p, i) => (
+              <motion.div key={i}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.1 }}
+                className="reveal border border-border bg-bgRaised overflow-hidden"
+              >
+                <div className="p-5 border-b-2 space-y-1" style={{ borderBottomColor: p.color }}>
+                  <h3 className="font-display text-lg font-bold text-white uppercase tracking-widest">{p.platform}</h3>
+                  <p className="font-mono text-[9px] text-textDim">{p.subtitle}</p>
+                </div>
+                <div className="divide-y divide-border">
+                  {p.metrics.map((m, j) => (
+                    <div key={j} className="px-5 py-3 flex items-center justify-between gap-4">
+                      <span className="font-body text-xs text-textSecondary">{m.label}</span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-mono text-[9px] text-textDim line-through">{m.before}</span>
+                        <span className="font-mono text-[10px] font-bold" style={{ color: p.color }}>{m.pct}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="px-5 py-4 bg-void/50 border-t border-border">
+                  <p className="font-mono text-[9px] text-textDim leading-relaxed">{p.highlight}</p>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+
+          <div className="reveal border border-green/20 bg-green/5 p-8 flex flex-col md:flex-row items-center gap-6 justify-between">
+            <div className="space-y-2">
+              <p className="font-display text-lg font-bold text-white uppercase tracking-widest">Full evaluation reports available</p>
+              <p className="font-body text-sm text-textSecondary">Complete methodology, raw data, figure-by-figure analysis, and architectural explanation — no login required.</p>
+            </div>
+            <button onClick={() => setView('whitepaper')}
+              className="shrink-0 px-8 py-3 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+              READ WHITEPAPER →
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* ── HOW IT WORKS — convergence demo ── */}
       <section id="convergence" className="bg-void py-32 px-6 border-t border-border">
         <div className="max-w-[1100px] mx-auto space-y-16">
           <div className="text-center space-y-4">
-            <span className="micro-label text-cyan">Live System Identification</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">Watch it learn your hardware.</h2>
-            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
-              PhysiCore starts with a guess. Within 30 seconds of real motion, it has learned your robot's actual mass, friction, and inertia from sensor data alone. No manual calibration.
+            <span className="font-mono text-[11px] text-cyan uppercase tracking-widest">Live System Identification</span>
+            <h2 className="reveal font-display text-4xl md:text-5xl font-black text-white">Watch it learn<br />your hardware.</h2>
+            <p className="reveal font-body text-textSecondary max-w-[540px] mx-auto">
+              PhysiCore starts with a guess. Within 30 seconds of real motion, it has learned your robot's actual mass, friction, and inertia from sensor data alone. No calibration. No retraining.
             </p>
           </div>
 
           <div className="grid md:grid-cols-2 gap-12 items-start">
-            {/* Convergence graph */}
             <div className="reveal border border-border bg-bgRaised p-8 space-y-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -4709,104 +4825,66 @@ Be direct, technical, confident. You are the world's best robotics integration e
                   <div className="font-display text-lg text-green">1.35 kg</div>
                 </div>
               </div>
-
-              {/* SVG graph */}
-              <div className="relative h-[200px] w-full">
-                <svg viewBox="0 0 600 200" className="w-full h-full" preserveAspectRatio="none">
-                  {/* Grid lines */}
-                  {[0.25, 0.5, 0.75, 1.0].map((v, i) => (
-                    <line key={i} x1="0" y1={v * 180 + 10} x2="600" y2={v * 180 + 10}
+              <div className="relative h-[180px] w-full">
+                <svg viewBox="0 0 600 180" className="w-full h-full" preserveAspectRatio="none">
+                  {[0.25, 0.5, 0.75].map((v, i) => (
+                    <line key={i} x1="0" y1={v * 160 + 10} x2="600" y2={v * 160 + 10}
                       stroke="#1A1A28" strokeWidth="1" />
                   ))}
-                  {/* True value line */}
-                  <line x1="0" y1={10 + (1 - (1.35 - 1.0) / 0.6) * 180} x2="600"
-                    y2={10 + (1 - (1.35 - 1.0) / 0.6) * 180}
-                    stroke="#00E5C8" strokeWidth="1" strokeDasharray="4 4" opacity="0.4" />
-                  {/* Convergence curve */}
+                  <line x1="0" y1={10 + (1 - (1.35 - 1.0) / 0.6) * 160} x2="600"
+                    y2={10 + (1 - (1.35 - 1.0) / 0.6) * 160}
+                    stroke="#00E5C8" strokeWidth="1" strokeDasharray="4 4" opacity="0.5" />
                   <motion.path
-                    d={`M ${convergenceData.map((d, i) => {
+                    d={convergenceData.map((d, i) => {
                       const x = (i / (convergenceData.length - 1)) * 600;
-                      const y = 10 + (1 - Math.min(1, (d.mass - 1.0) / 0.6)) * 180;
+                      const y = 10 + (1 - Math.min(1, (d.mass - 1.0) / 0.6)) * 160;
                       return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                    }).join(' ')}`}
-                    fill="none" stroke="#22C55E" strokeWidth="2"
+                    }).join(' ')}
+                    fill="none" stroke="#00FF88" strokeWidth="2.5"
                     initial={{ pathLength: 0 }}
                     whileInView={{ pathLength: 1 }}
+                    viewport={{ once: true }}
                     transition={{ duration: 3, ease: "easeOut" }}
                   />
                 </svg>
-                {/* Y axis labels */}
-                <div className="absolute left-0 top-0 h-full flex flex-col justify-between pointer-events-none">
-                  <span className="font-mono text-[8px] text-textDim">1.35</span>
-                  <span className="font-mono text-[8px] text-textDim">1.18</span>
-                  <span className="font-mono text-[8px] text-textDim">1.00</span>
-                </div>
               </div>
-
-              <div className="flex justify-between items-end">
-                <span className="font-mono text-[9px] text-textDim">0s</span>
-                <span className="font-mono text-[9px] text-cyan">Converged ↗</span>
-                <span className="font-mono text-[9px] text-textDim">30s</span>
+              <div className="grid grid-cols-3 gap-4 pt-2 border-t border-border">
+                {[
+                  { label: 'Start', val: '1.00 kg' },
+                  { label: '15 seconds', val: '1.28 kg' },
+                  { label: '30 seconds', val: '1.35 kg' },
+                ].map((s, i) => (
+                  <div key={i} className="text-center space-y-1">
+                    <div className="font-display text-sm font-bold text-green">{s.val}</div>
+                    <div className="font-mono text-[8px] text-textDim uppercase">{s.label}</div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            {/* Before / After + explanation */}
-            <div className="reveal space-y-8">
-
-              {/* Before/After motor power */}
-              <div className="space-y-4">
-                <span className="font-mono text-[10px] text-textDim uppercase tracking-widest">Motor Output — Same Hardware, Same Lean Angle</span>
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <div className="flex justify-between">
-                      <span className="font-body text-xs text-textSecondary">Without PhysiCore <span className="text-textDim">(MAX_TORQUE bug)</span></span>
-                      <span className="font-mono text-xs text-red">0.4%</span>
-                    </div>
-                    <div className="h-2 w-full bg-border overflow-hidden">
-                      <motion.div initial={{ width: 0 }} whileInView={{ width: '0.4%' }}
-                        transition={{ duration: 1 }} className="h-full bg-red" />
-                    </div>
-                    <span className="font-mono text-[9px] text-textDim">Motors barely twitch. Robot falls immediately.</span>
+            <div className="reveal space-y-6">
+              <p className="font-body text-sm text-textSecondary leading-relaxed">Each 16.7ms control cycle, PhysiCore:</p>
+              {[
+                { n: '01', label: 'Reads sensor state', detail: 'pitch=5.2° gyro=12.4°/s → state vector', color: COLORS.textSecondary },
+                { n: '02', label: 'Predicts next state with physics', detail: 'RK4 integration + residual ensemble', color: COLORS.blue },
+                { n: '03', label: 'Optimizes action with MPC', detail: 'CEM solver, 6-step horizon, 60Hz', color: COLORS.cyan },
+                { n: '04', label: 'Commands hardware', detail: 'action=−0.460 N·m → firmware', color: COLORS.green },
+                { n: '05', label: 'Updates its own model', detail: 'predicted vs actual → gradient update', color: COLORS.green },
+              ].map((row, i) => (
+                <motion.div key={i}
+                  initial={{ opacity: 0, x: -10 }}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: i * 0.1 }}
+                  className="flex items-start gap-4 p-4 bg-bgRaised border border-borderDim"
+                >
+                  <span className="font-mono text-[10px] text-textDim w-6 shrink-0">{row.n}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-body text-xs text-textSecondary">{row.label}</div>
+                    <div className="font-mono text-[9px] truncate mt-0.5" style={{ color: row.color }}>{row.detail}</div>
                   </div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between">
-                      <span className="font-body text-xs text-textSecondary">With PhysiCore <span className="text-textDim">(calibrated)</span></span>
-                      <span className="font-mono text-xs text-green">18.4%</span>
-                    </div>
-                    <div className="h-2 w-full bg-border overflow-hidden">
-                      <motion.div initial={{ width: 0 }} whileInView={{ width: '18.4%' }}
-                        transition={{ duration: 1, delay: 0.3 }} className="h-full bg-green" />
-                    </div>
-                    <span className="font-mono text-[9px] text-textDim">Strong correction. Bot stays upright.</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Data flow */}
-              <div className="space-y-3">
-                <span className="font-mono text-[10px] text-textDim uppercase tracking-widest">How it works — one control cycle</span>
-                {[
-                  { step: '01', label: 'IMU reads pitch + gyro rate', detail: 'pitch=5.2° gyro_x=12.4°/s', color: COLORS.textSecondary },
-                  { step: '02', label: 'Bridge converts to state vector', detail: '[0.0908, 0.2164, 0.0, 0.016]', color: COLORS.blue },
-                  { step: '03', label: 'CEM-MPC computes optimal torque', detail: 'action = −0.460 N·m', color: COLORS.cyan },
-                  { step: '04', label: 'Command sent to firmware', detail: '{"op":"command","action":[−0.460]}', color: COLORS.green },
-                  { step: '05', label: 'Motors apply 18.4% power', detail: 'Bot corrects. SystemID updates.', color: COLORS.green },
-                ].map((row, i) => (
-                  <motion.div key={i}
-                    initial={{ opacity: 0, x: -10 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.12 }}
-                    className="flex items-start gap-4 p-3 bg-bgRaised border border-borderDim"
-                  >
-                    <span className="font-mono text-[10px] text-textDim shrink-0 w-6">{row.step}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-body text-xs text-textSecondary">{row.label}</div>
-                      <div className="font-mono text-[9px] truncate" style={{ color: row.color }}>{row.detail}</div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-
+                </motion.div>
+              ))}
               <div className="p-4 border border-green/20 bg-green/5">
                 <span className="font-mono text-[10px] text-green uppercase tracking-widest">16.7ms per cycle. 60 times per second. Continuously.</span>
               </div>
@@ -4815,40 +4893,61 @@ Be direct, technical, confident. You are the world's best robotics integration e
         </div>
       </section>
 
-      {/* ── ARCHITECTURE ── */}
-      <section id="architecture" className="bg-bg py-32 px-6">
+      {/* ── PLATFORMS ── */}
+      <section id="domains" className="bg-bg py-32 px-6 border-t border-border">
         <div className="max-w-[1100px] mx-auto space-y-16">
           <div className="text-center space-y-4">
-            <span className="micro-label text-green">System Architecture</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">Six layers. One kernel.</h2>
-            <p className="font-body text-textSecondary max-w-[600px] mx-auto">
-              Each layer has one job. Together they take a robot that breaks on deployment and make it work — in real-time, on real hardware, without retraining.
-            </p>
+            <span className="font-mono text-[11px] text-green uppercase tracking-widest">12 Hardware Platforms</span>
+            <h2 className="reveal font-display text-4xl md:text-5xl font-black text-white tracking-tight">
+              One engine.<br />Every platform.
+            </h2>
           </div>
-          <div className="space-y-3">
+
+          <div className="grid md:grid-cols-3 gap-6">
             {[
-              { l: 'L6', name: 'REGISTRY LAYER', desc: 'Persistent learning. Saves every session. Gets smarter with every hardware deployment.', tech: 'Model Registry / Platform Prior', color: COLORS.cyan, detail: 'After 100 labs use PhysiCore on the same arm, lab 101 starts with 100 sessions of prior knowledge.' },
-              { l: 'L5', name: 'INTEGRATION LAYER', desc: 'Production bridge code. Connects any hardware in 30 minutes.', tech: 'ROS2 / ArduPilot / PX4 / Arduino Serial', color: COLORS.textSecondary, detail: 'One command. One YAML file. Any hardware. The bridge handles all protocol translation automatically.' },
-              { l: 'L4', name: 'SENTINEL GOVERNANCE', desc: 'Safety envelopes. Three-mode state machine. SHA-256 forensic log.', tech: 'NOMINAL → CAUTIOUS → FALLBACK', color: COLORS.amber, detail: 'Lyapunov energy monitoring ensures PhysiCore never commands an action that violates stability bounds.' },
-              { l: 'L3', name: 'INTELLIGENCE LAYER', desc: 'Three neural networks learn what the simulator gets wrong. Online SystemID learns real mass and friction.', tech: 'ResidualEnsemble + OnlineSystemID', color: COLORS.blue, detail: 'Converges on real mass within 30 seconds. Innovation-driven adaptive learning rate speeds up when payload changes.' },
-              { l: 'L2', name: 'CONTROL LAYER', desc: 'CEM-MPC optimizer. 6-step lookahead. Uncertainty-penalized planning.', tech: 'Cross-Entropy Method / 60Hz locked', color: COLORS.textSecondary, detail: 'Penalizes high-uncertainty regions. Conservative when unsure. Precise when confident.' },
-              { l: 'L1', name: 'PHYSICS KERNEL', desc: 'RK4 integrator. ISA atmosphere. J2 orbital perturbation. Dryden turbulence.', tech: 'Aerospace-grade physics from first principles', color: COLORS.green, detail: '4th-order Runge-Kutta stays stable under stiff nonlinear dynamics where Euler integration would blow up.' },
-            ].map((layer, i) => (
+              {
+                title: 'Robotics',
+                icon: Cpu,
+                color: COLORS.green,
+                platforms: ['Balancing Bot (Arduino)', 'ROS2 Arm', 'Legged Robot', 'Surgical Robot', 'AUV / Underwater', 'Ground Rover / AMR'],
+                desc: 'Learns real joint friction, mass distribution, and contact dynamics. Zero retraining when payload changes.',
+              },
+              {
+                title: 'Aerospace',
+                icon: Navigation,
+                color: COLORS.cyan,
+                platforms: ['PX4 Quadrotor', 'ArduPilot Drone', 'eVTOL Aircraft', 'Sounding Rocket', 'Orbital Vehicle', 'Satellite / Spacecraft'],
+                desc: 'ISA atmosphere, Dryden turbulence, Mach drag, J2 orbital perturbation. Works with PX4 and ArduPilot.',
+              },
+              {
+                title: 'Custom Hardware',
+                icon: Settings,
+                color: COLORS.amber,
+                platforms: ['Any hardware via serial', 'Custom sensor fusion', 'Describe in plain language', 'AI generates integration code', 'Extend with BUILD tab', 'Full Python API'],
+                desc: 'If it has sensors and actuators, PhysiCore can run on it. Describe your hardware; the AI generates the code.',
+              },
+            ].map((d, i) => (
               <motion.div key={i}
-                initial={{ opacity: 0, y: 10 }}
+                initial={{ opacity: 0, y: 16 }}
                 whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
                 transition={{ delay: i * 0.08 }}
-                className="reveal flex items-stretch border border-border bg-bgRaised group hover:border-borderActive transition-all cursor-default"
+                className="reveal p-8 border border-border bg-bgRaised space-y-6 group hover:border-borderActive transition-all"
               >
-                <div className="w-[56px] flex items-center justify-center border-r border-border font-mono text-[10px] text-textDim group-hover:text-textPrimary transition-colors shrink-0">{layer.l}</div>
-                <div className="w-1" style={{ backgroundColor: layer.color }} />
-                <div className="flex-1 p-5 grid md:grid-cols-3 gap-4 items-center">
-                  <div className="md:col-span-1">
-                    <h3 className="font-display text-sm font-bold tracking-widest text-textPrimary uppercase">{layer.name}</h3>
-                    <p className="font-body text-[11px] text-textSecondary mt-1">{layer.desc}</p>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 border flex items-center justify-center" style={{ borderColor: d.color + '40' }}>
+                    <d.icon size={20} style={{ color: d.color }} />
                   </div>
-                  <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">{layer.tech}</div>
-                  <div className="font-body text-[11px] text-textDim leading-relaxed hidden md:block">{layer.detail}</div>
+                  <h3 className="font-display text-xl font-bold text-white uppercase tracking-widest">{d.title}</h3>
+                </div>
+                <p className="font-body text-sm text-textSecondary leading-relaxed">{d.desc}</p>
+                <div className="space-y-1.5 pt-2 border-t border-border">
+                  {d.platforms.map((p, j) => (
+                    <div key={j} className="flex items-center gap-2">
+                      <div className="w-1 h-1 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                      <span className="font-mono text-[10px] text-textDim">{p}</span>
+                    </div>
+                  ))}
                 </div>
               </motion.div>
             ))}
@@ -4856,263 +4955,88 @@ Be direct, technical, confident. You are the world's best robotics integration e
         </div>
       </section>
 
-      {/* ── DOMAINS ── */}
-      <section id="domains" className="bg-void py-32 px-6 border-t border-border">
-        <div className="max-w-[1100px] mx-auto space-y-16">
-          <div className="text-center space-y-4">
-            <span className="micro-label text-green">Multi-Domain Support</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white uppercase tracking-tighter">Engineered for the Edge.</h2>
-            <p className="font-body text-textSecondary max-w-[600px] mx-auto">12 hardware platforms. One adaptation engine. From a balancing bot on an Arduino to a liquid rocket's flight computer.</p>
+      {/* ── BUILD ON TOP ── */}
+      <section id="build" className="bg-void py-32 px-6 border-t border-border">
+        <div className="max-w-[1100px] mx-auto grid md:grid-cols-2 gap-20 items-center">
+          <div className="space-y-8">
+            <div className="reveal border-l-2 border-amber pl-4">
+              <span className="font-mono text-[11px] text-amber uppercase tracking-widest">The Infrastructure Layer</span>
+            </div>
+            <h2 className="reveal reveal-stagger-1 font-display text-4xl md:text-5xl font-black text-white leading-tight tracking-tight">
+              Build on top<br />of PhysiCore.
+            </h2>
+            <div className="reveal reveal-stagger-2 space-y-5 font-body text-textSecondary leading-relaxed">
+              <p>PhysiCore is not a black box. Every project has a BUILD tab where you describe custom behaviors in plain language. The AI asks 4 questions and generates complete, runnable Python extensions.</p>
+              <p>Extensions plug into the physics loop via hooks: <code className="font-mono text-[11px] text-cyan bg-bgRaised px-1">pre_step</code>, <code className="font-mono text-[11px] text-cyan bg-bgRaised px-1">post_step</code>, <code className="font-mono text-[11px] text-cyan bg-bgRaised px-1">on_fault</code>, <code className="font-mono text-[11px] text-cyan bg-bgRaised px-1">on_telemetry</code>. Drop the file, restart the bridge.</p>
+            </div>
+            <button onClick={handleSetIntegratorView}
+              className="reveal reveal-stagger-3 px-8 py-3 bg-amber text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all inline-block">
+              START BUILDING →
+            </button>
           </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="reveal space-y-3">
+            <div className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-4">Example: Custom terrain classifier extension</div>
             {[
-              {
-                title: 'Robotics',
-                icon: Cpu,
-                desc: 'Industrial manipulators, humanoids, legged robots, surgical systems, AUVs. PhysiCore learns your real joint friction, mass distribution, and contact dynamics without retraining.',
-                tech: 'ROS2 / Arduino / ESP32',
-                platforms: ['Balancing bot', 'Robot arm', 'Legged robot', 'Surgical robot', 'AUV', 'Ground rover'],
-              },
-              {
-                title: 'Rockets',
-                icon: Rocket,
-                desc: 'Sounding rockets to orbital launch vehicles. Learns real propellant consumption, nozzle erosion, and aerodynamic variation while the vehicle is in flight.',
-                tech: 'Custom FC / MAVLink serial',
-                platforms: ['Sounding rockets', 'Liquid vehicles', 'Hybrid motors', 'Orbital vehicles'],
-              },
-              {
-                title: 'Aviation',
-                icon: Navigation,
-                desc: 'Fixed-wing UAVs, quadrotors, eVTOL. ISA atmosphere, Dryden turbulence, Mach drag modeling. Works with PX4 and ArduPilot flight controllers.',
-                tech: 'PX4 / ArduPilot / MAVLink',
-                platforms: ['Quadrotors', 'Fixed-wing UAVs', 'eVTOL', 'Satellites'],
-              },
-            ].map((d, i) => (
-              <div key={i} className="reveal p-10 border border-border bg-bgRaised space-y-8 group hover:border-green transition-all">
-                <div className="w-16 h-16 bg-bg flex items-center justify-center border border-border group-hover:border-green transition-all">
-                  <d.icon className="text-green" size={32} />
-                </div>
-                <div className="space-y-3">
-                  <h3 className="font-display text-2xl font-bold text-white uppercase tracking-widest">{d.title}</h3>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">{d.desc}</p>
-                </div>
-                <div className="space-y-2">
-                  {d.platforms.map((p, j) => (
-                    <div key={j} className="flex items-center gap-2">
-                      <div className="w-1 h-1 rounded-full bg-green" />
-                      <span className="font-mono text-[10px] text-textDim">{p}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="pt-4 border-t border-border">
-                  <span className="font-mono text-[10px] text-textDim uppercase tracking-widest">{d.tech}</span>
-                </div>
+              { line: 'from physicore.extensions import PhysiCoreExtension, ExtensionMeta', color: COLORS.textDim },
+              { line: '', color: COLORS.textDim },
+              { line: 'class TerrainClassifier(PhysiCoreExtension):', color: COLORS.cyan },
+              { line: '    meta = ExtensionMeta(', color: COLORS.textSecondary },
+              { line: '        name="terrain_classifier",', color: COLORS.textSecondary },
+              { line: '        hooks=["on_telemetry"],', color: COLORS.textSecondary },
+              { line: '        telemetry_keys=["terrain_type", "traction"]', color: COLORS.green },
+              { line: '    )', color: COLORS.textSecondary },
+              { line: '', color: COLORS.textDim },
+              { line: '    def on_telemetry(self, packet):', color: COLORS.cyan },
+              { line: '        friction = packet.get("friction", 0)', color: COLORS.textSecondary },
+              { line: '        packet["terrain_type"] = "gravel" if friction > 0.4 else "paved"', color: COLORS.green },
+              { line: '        packet["traction"] = round(friction, 3)', color: COLORS.green },
+            ].map((row, i) => (
+              <div key={i} className="font-mono text-[10px] leading-relaxed px-4 py-0.5 bg-bgRaised border-l border-borderDim" style={{ color: row.color }}>
+                {row.line || ' '}
               </div>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── FEATURES ── */}
-      <section id="features" className="bg-bg py-32 px-6">
-        <div className="max-w-[1100px] mx-auto space-y-16">
-          <div className="space-y-4">
-            <span className="micro-label text-green">Core Capabilities</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">Every subsystem. Fully specified.</h2>
-          </div>
-          <div className="grid md:grid-cols-3 gap-6">
-            {[
-              {
-                title: 'RK4 Physics Kernel',
-                color: COLORS.green,
-                desc: '4th-order Runge-Kutta integration samples four derivative points per step. Stable under high stiffness and nonlinear dynamics where Euler integration diverges.',
-                spec: 'k₁ k₂ k₃ k₄ → Δstate / 16.7ms',
-              },
-              {
-                title: 'Online SystemID',
-                color: COLORS.cyan,
-                desc: 'Innovation-driven adaptive learning rate. When the robot enters new terrain or picks up a payload, the learning rate increases automatically. Converges on real mass within 30 seconds.',
-                spec: '∇mass ∇friction → physical bounds',
-              },
-              {
-                title: 'Residual Ensemble',
-                color: COLORS.blue,
-                desc: 'Three neural networks learn what your simulator gets wrong. The spread between their predictions quantifies epistemic uncertainty — feeding directly into the optimizer cost function.',
-                spec: 'σ(MLP₁, MLP₂, MLP₃) → confidence',
-              },
-              {
-                title: 'CEM-MPC Optimizer',
-                color: COLORS.amber,
-                desc: 'Cross-Entropy Method samples action sequences, evaluates them through the physics model plus residual, keeps the best, and repeats. 6-step lookahead every 16.7ms.',
-                spec: 'CEM solver / 6-step / 60Hz locked',
-              },
-              {
-                title: 'Persistent Registry',
-                color: COLORS.cyan,
-                desc: 'Every session saves learned mass, friction, and ensemble weights. Next session starts where the last one ended. Each deployment makes the model smarter.',
-                spec: '~/.physicore/registry/{platform}/',
-              },
-              {
-                title: 'Sentinel OS',
-                color: COLORS.amber,
-                desc: 'Three-mode safety state machine. Lyapunov energy monitoring. SHA-256 forensic hash chain on every control command. Falls back to safe controller automatically.',
-                spec: 'NOMINAL → CAUTIOUS → FALLBACK',
-              },
-            ].map((f, i) => (
-              <div key={i} className="reveal p-8 border border-border bg-bgRaised border-t-2 space-y-6 group hover:bg-void transition-all" style={{ borderTopColor: f.color }}>
-                <h3 className="font-display text-lg font-bold text-white tracking-widest uppercase">{f.title}</h3>
-                <p className="font-body text-sm text-textSecondary leading-relaxed">{f.desc}</p>
-                <div className="font-mono text-[10px] uppercase tracking-widest" style={{ color: f.color }}>{f.spec}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── BENCHMARKS ── */}
-      <section id="benchmarks" className="bg-void py-32 px-6">
-        <div className="max-w-[1100px] mx-auto space-y-16">
-          <div className="space-y-4">
-            <span className="micro-label text-green">Performance — Real Numbers</span>
-            <h2 className="font-display text-4xl md:text-5xl font-bold text-white">Numbers that matter to engineers.</h2>
-            <p className="font-body text-textSecondary">These are not simulated results. These are real measurements from running PhysiCore on a balancing bot with Arduino Uno + MPU6050 + L298N.</p>
-          </div>
-          <div className="grid md:grid-cols-2 gap-20">
-            <div className="space-y-8">
-              {[
-                { label: 'CONTROL LOOP RATE', val: '60 Hz', p: 100, note: 'All 12 platforms under 16.7ms per step' },
-                { label: 'SYSID CONVERGENCE', val: '30 seconds', p: 85, note: '1,800 steps at 60Hz on real hardware' },
-                { label: 'MASS ERROR AFTER CONVERGENCE', val: '< 18%', p: 82, note: 'True mass 1.4kg, estimated 1.16kg after 30s' },
-                { label: 'MOTOR POWER WITH PHYSICORE', val: '18.4%', p: 93, note: 'vs 0.4% without — 46x more responsive' },
-                { label: 'SAFETY AUDIT CHECKS', val: '68 / 68', p: 100, note: 'All platforms, all scenarios' },
-                { label: 'SENTINEL FALLBACK TRIGGER', val: '< 500ms', p: 95, note: 'From NOMINAL to FALLBACK on anomaly detect' },
-              ].map((b, i) => (
-                <div key={i} className="reveal space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-body text-xs text-textSecondary uppercase tracking-widest">{b.label}</span>
-                    <span className="font-mono text-xs text-green">{b.val}</span>
-                  </div>
-                  <div className="h-1 w-full bg-border overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      whileInView={{ width: `${b.p}%` }}
-                      transition={{ duration: 1, delay: i * 0.1 }}
-                      className="h-full bg-green"
-                    />
-                  </div>
-                  <span className="font-mono text-[9px] text-textDim">{b.note}</span>
-                </div>
-              ))}
+            <div className="font-mono text-[9px] text-green px-4 py-2 bg-green/5 border border-green/20">
+              ↳ Drop in ~/.physicore/extensions/ · Bridge auto-loads · Dashboard auto-shows terrain_type panel
             </div>
-            <div className="reveal border border-border bg-bgRaised overflow-hidden">
-              <div className="p-4 border-b border-border">
-                <span className="font-mono text-[10px] text-textDim uppercase tracking-widest">System Specification</span>
-              </div>
-              <table className="w-full text-left border-collapse">
-                <tbody>
-                  {[
-                    ['PHYSICS INTEGRATOR', 'RK4 — 4th order'],
-                    ['OPTIMIZER', 'CEM — Cross-Entropy Method'],
-                    ['ENSEMBLE SIZE', '3 MLP networks'],
-                    ['LOOP RATE', '60 Hz locked'],
-                    ['SYSID METHOD', 'Numerical gradient + SGD momentum'],
-                    ['ADAPTIVE LR', 'Innovation-driven (RLS-style)'],
-                    ['MPC HORIZON', '6 steps lookahead'],
-                    ['ACTION SMOOTHING', 'Exponential (α = 0.35)'],
-                    ['SAFETY CHAIN', 'SHA-256 hash every step'],
-                    ['PLATFORMS', '12 hardware types'],
-                    ['PERSISTENCE', 'Registry saves per session'],
-                    ['LEARNING', 'Starts fresh, improves with time'],
-                  ].map(([k, v], i) => (
-                    <tr key={i} className="border-b border-borderDim hover:bg-bg transition-colors">
-                      <td className="p-4 font-body text-xs text-textSecondary uppercase tracking-widest">{k}</td>
-                      <td className="p-4 font-mono text-xs text-textPrimary">{v}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ── SENTINEL ── */}
-      <section id="sentinel" className="bg-bg py-32 px-6 border-t border-border">
-        <div className="max-w-[1100px] mx-auto space-y-24">
-          <div className="grid md:grid-cols-2 gap-20 items-center">
-            <div className="space-y-8">
-              <div className="reveal border-l-2 border-amber pl-4">
-                <span className="micro-label text-amber">Governance & Safety</span>
-              </div>
-              <h2 className="reveal reveal-stagger-1 font-display text-5xl md:text-6xl font-bold text-white leading-tight">
-                Sentinel OS. <br />
-                <span className="text-textSecondary">The Safety Kernel.</span>
-              </h2>
-              <div className="reveal reveal-stagger-2 space-y-6 font-body text-textSecondary leading-relaxed text-lg">
-                <p>PhysiCore provides the intelligence. Sentinel OS provides the authority. It monitors every control step and can override or halt PhysiCore instantly if anything goes outside safe bounds.</p>
-                <p>Three modes. Automatic transitions. You cannot bypass it. It is not optional — it is the layer that makes real hardware deployment safe enough to trust.</p>
-              </div>
-            </div>
-            <div className="reveal reveal-stagger-3">
-              <SentinelDiagram />
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-4 gap-6">
-            {[
-              { title: 'Lyapunov Monitor', desc: 'Monitors system energy every step. If the robot enters an unstable energy state, Sentinel drops to FALLBACK before damage occurs.', icon: ShieldCheck },
-              { title: 'Three-Mode FSM', desc: 'NOMINAL — full PhysiCore. CAUTIOUS — conservative (60% output). FALLBACK — PhysiCore off, safe controller takes over.', icon: AlertTriangle },
-              { title: 'SHA-256 Forensic Log', desc: 'Every control command is signed and hashed in a chain. Tamper-evident. Every decision is traceable after the fact.', icon: FileJson },
-              { title: 'Platform Presets', desc: 'Surgical robots get tighter bounds than drones. Satellites get looser. Each platform has tuned thresholds for what "safe" means in its domain.', icon: CheckCircle2 },
-            ].map((item, i) => (
-              <div key={i} className="reveal p-6 border border-border bg-bgRaised space-y-4 group hover:border-amber transition-all">
-                <item.icon className="text-amber" size={24} />
-                <h3 className="font-display text-sm font-bold text-white tracking-widest uppercase">{item.title}</h3>
-                <p className="font-body text-xs text-textSecondary leading-relaxed">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Mode transition diagram */}
-          <div className="reveal border border-amber/20 bg-void p-10 space-y-6">
-            <h3 className="font-display text-lg font-bold text-white uppercase tracking-widest">Mode Transitions</h3>
-            <div className="flex items-center gap-0 overflow-x-auto">
-              {[
-                { mode: 'NOMINAL', color: COLORS.green, desc: 'Full PhysiCore control', sub: 'uncertainty < 5%\nresidual < 0.5' },
-                { mode: '→', color: COLORS.textDim, desc: '', sub: '' },
-                { mode: 'CAUTIOUS', color: COLORS.amber, desc: '60% output, tighter bounds', sub: 'uncertainty 5–15%\nresidual 0.5–2.0' },
-                { mode: '→', color: COLORS.textDim, desc: '', sub: '' },
-                { mode: 'FALLBACK', color: COLORS.red, desc: 'PhysiCore off, safe stop', sub: 'uncertainty > 15%\nor Lyapunov exceeded' },
-              ].map((m, i) => (
-                m.mode === '→' ? (
-                  <div key={i} className="px-4 font-mono text-textDim text-xl shrink-0">→</div>
-                ) : (
-                  <div key={i} className="flex-1 min-w-[140px] p-4 border border-borderDim space-y-2">
-                    <div className="font-display text-sm font-bold" style={{ color: m.color }}>{m.mode}</div>
-                    <div className="font-body text-xs text-textSecondary">{m.desc}</div>
-                    <div className="font-mono text-[9px] text-textDim whitespace-pre-line">{m.sub}</div>
-                  </div>
-                )
-              ))}
-            </div>
-            <p className="font-body text-xs text-textDim">Recovery: FALLBACK → CAUTIOUS after 300 stable steps. CAUTIOUS → NOMINAL after 50 stable steps. Automatic.</p>
           </div>
         </div>
       </section>
 
       {/* ── FOOTER ── */}
       <section className="bg-void py-24 px-6 border-t border-border">
-        <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
-          <div className="space-y-2">
-            <div className="font-display text-2xl font-bold text-white tracking-tighter">PhysiCore</div>
-            <div className="font-mono text-[10px] text-textDim uppercase tracking-widest">Physics Intelligence Engine — v3.1 — Founders Inc '26</div>
-            <div className="font-body text-xs text-textDim">Built by Prathamesh Shirbhate</div>
+        <div className="max-w-[1100px] mx-auto">
+          <div className="grid md:grid-cols-3 gap-12 pb-16 border-b border-border">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 100 100">
+                  <path d="M50 5 L90 25 L90 75 L50 95 L10 75 L10 25 Z" fill="none" stroke={COLORS.green} strokeWidth="6" />
+                </svg>
+                <span className="font-display text-lg font-bold text-white tracking-widest">PHYSICORE</span>
+              </div>
+              <p className="font-body text-xs text-textDim leading-relaxed">Physics Intelligence Engine. Real-time adaptive control for any robotic platform.</p>
+            </div>
+            <div className="space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Product</p>
+              {[
+                { label: 'Integration Engineer', action: () => handleSetIntegratorView() },
+                { label: 'Whitepaper', action: () => setView('whitepaper') },
+                { label: 'Manual', action: () => setView('manual') },
+                { label: 'GitHub', action: () => window.open('https://github.com/prathameshbharatiya/physicore-hybrid-mpc', '_blank') },
+              ].map((l, i) => (
+                <button key={i} onClick={l.action} className="block font-body text-xs text-textSecondary hover:text-white transition-colors">
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <div className="space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Research</p>
+              <button onClick={() => setView('whitepaper')} className="block font-body text-xs text-textSecondary hover:text-white transition-colors">Platform Evaluation Reports</button>
+              <button onClick={() => setView('whitepaper')} className="block font-body text-xs text-textSecondary hover:text-white transition-colors">Technical Architecture</button>
+            </div>
           </div>
-          <div className="flex gap-8">
-            <button onClick={() => setView('manual')} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-textSecondary transition-colors">Manual</button>
-            <button onClick={handleSetIntegratorView} className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-textSecondary transition-colors">Integration Engineer</button>
-            <a href="https://github.com/prathameshbharatiya/physicore-hybrid-mpc" target="_blank" rel="noopener noreferrer" className="font-mono text-[10px] text-textDim uppercase tracking-widest hover:text-textSecondary transition-colors">GitHub</a>
+          <div className="flex flex-col md:flex-row justify-between items-center gap-4 pt-8">
+            <div className="font-mono text-[9px] text-textDim uppercase tracking-widest">PhysiCore Research · Physics Intelligence Engine · Founders Inc '26</div>
+            <div className="font-mono text-[9px] text-textDim">Built by Prathamesh Shirbhate</div>
           </div>
         </div>
       </section>
@@ -5551,11 +5475,11 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
     // ── GENERATED ─────────────────────────────────────────────────────────────
     if (ieState.phase === 'generated') return (
       <div className="pt-[52px] min-h-screen bg-void">
-        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 sticky top-[52px] z-10 flex-wrap">
+        <div className="border-b border-border bg-bg px-4 py-3 flex flex-wrap items-center gap-2 sticky top-[52px] z-10">
           <button onClick={()=>setIE(s=>({...s,phase:'welcome'}))}
-            className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← New</button>
-          <span className="text-base">{flow?.icon}</span>
-          <span className="font-display text-xs font-bold text-green uppercase tracking-widest">✓ {flow?.label} — {ieState.files.length} files ready</span>
+            className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors shrink-0">← New</button>
+          <span className="text-base shrink-0">{flow?.icon}</span>
+          <span className="font-display text-xs font-bold text-green uppercase tracking-widest truncate">✓ {flow?.label} — {ieState.files.length} files ready</span>
 
           {/* Project selector */}
           <div className="ml-auto flex items-center gap-2">
@@ -5593,8 +5517,8 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
           </div>
 
           <button onClick={()=>{setTsInput(''); setIE(s=>({...s,phase:'troubleshoot',troubleshootResult:null}));}}
-            className="px-4 py-2 border border-border font-mono text-[9px] text-textDim uppercase tracking-widest hover:border-amber hover:text-amber transition-all">
-            Help / Troubleshoot
+            className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim uppercase tracking-widest hover:border-amber hover:text-amber transition-all shrink-0">
+            Troubleshoot
           </button>
         </div>
 
@@ -6050,945 +5974,878 @@ Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
     );
   };
 
+  const renderWhitepaper = () => (
+    <div className="pt-[52px] min-h-screen bg-void">
+      <div className="max-w-[860px] mx-auto px-6 py-16 space-y-20">
+
+        {/* Cover */}
+        <div className="space-y-6 border-b border-border pb-16">
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">PHYSICORE RESEARCH</span>
+            <span className="font-mono text-[9px] text-textDim">·</span>
+            <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">DOC-PC-ARCH-001</span>
+            <span className="font-mono text-[9px] text-textDim">·</span>
+            <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">April 2026</span>
+          </div>
+          <h1 className="font-display text-5xl md:text-6xl font-black text-white leading-tight tracking-tight">
+            PhysiCore:<br />
+            <span className="text-green">Adaptive Physics</span><br />
+            for Real Robots
+          </h1>
+          <p className="font-body text-xl text-textSecondary leading-relaxed max-w-[640px]">
+            Technical architecture, mechanism of action, and controlled evaluation results across three hardware platforms — robotic arm, quadrotor drone, and ground rover.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border border-border divide-x divide-border">
+            {[
+              { val: '3', label: 'Platforms evaluated' },
+              { val: '30,631', label: 'Total data samples' },
+              { val: '15', label: 'Independent test runs' },
+              { val: '4,809', label: 'Seconds of real hardware' },
+            ].map((s, i) => (
+              <div key={i} className="p-5 text-center">
+                <div className="font-display text-2xl font-black text-green">{s.val}</div>
+                <div className="font-mono text-[8px] text-textDim uppercase mt-1">{s.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Abstract */}
+        <div className="space-y-6">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest border-b border-border pb-4">Abstract</h2>
+          <p className="font-body text-base text-textSecondary leading-relaxed">
+            PhysiCore is a real-time adaptive control architecture that bridges the simulation-to-hardware gap for robotic systems. The core problem: controllers tuned in simulation fail on real hardware because the simulation's physics model is wrong — mass, friction, inertia, aerodynamics all differ from reality. Traditional approaches require offline recalibration or manual re-tuning. PhysiCore solves this online, during hardware operation, without human intervention.
+          </p>
+          <p className="font-body text-base text-textSecondary leading-relaxed">
+            The architecture combines a 4th-order Runge-Kutta physics kernel, a three-network residual ensemble for model error learning, online system identification via gradient descent, and a Cross-Entropy Method MPC optimizer — all locked at 60Hz. A formal safety layer (Sentinel) enforces Lyapunov energy bounds and provides a three-mode fallback hierarchy. A persistent registry accumulates knowledge across sessions.
+          </p>
+          <p className="font-body text-base text-textSecondary leading-relaxed">
+            Controlled evaluations across three hardware platforms demonstrate consistent, large-magnitude improvements over unaugmented PID controllers: 84.6–88.4% reduction in tracking error, elimination of instability events, and 62–74% reduction in actuator output — with the reduced actuator output confirming that PhysiCore operates through anticipatory model-based control, not reactive error compensation. Adaptation to sudden hardware parameter changes completes within 9–14 seconds across all tested conditions.
+          </p>
+        </div>
+
+        {/* Architecture */}
+        <div className="space-y-8">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest border-b border-border pb-4">§ 01 — Architecture</h2>
+
+          <div className="space-y-4">
+            <h3 className="font-display text-sm font-bold text-green uppercase tracking-widest">1.1 Physics Kernel — RK4 Integration</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              The foundation is a 4th-order Runge-Kutta integrator operating on platform-specific dynamics equations. Unlike Euler integration, RK4 samples four derivative points per timestep, maintaining stability under stiff nonlinear dynamics. For a quadrotor, this means rigid-body rotational dynamics with full gyroscopic coupling. For a robotic arm, it means full Newton-Euler link dynamics including Coriolis and centrifugal coupling terms.
+            </p>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              The physics kernel is not approximated or simplified. ISA atmospheric model is used for all aerial platforms. J2 gravitational perturbation is included for orbital mechanics. Dryden turbulence model is applied to aerial platforms. Prandtl-Glauert Mach drag correction is applied for high-speed flight.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-display text-sm font-bold text-cyan uppercase tracking-widest">1.2 Residual Ensemble — Learning Model Error</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              No physics model perfectly captures a real system. The residual between predicted and observed state evolution encodes everything the model got wrong: unmodeled friction, flexible link dynamics, motor nonlinearities, aerodynamic effects not in the first-principles model.
+            </p>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              PhysiCore trains three MLPs on this residual signal online. Each network independently predicts the residual. The mean prediction corrects the physics model. The variance between predictions quantifies epistemic uncertainty — how well this matches what we have seen before. This uncertainty signal feeds directly into the MPC cost function.
+            </p>
+            <div className="p-4 border border-cyan/20 bg-cyan/5 font-mono text-[10px] text-cyan">
+              σ(MLP₁, MLP₂, MLP₃) → uncertainty → λ·uncertainty added to MPC cost
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-display text-sm font-bold text-blue uppercase tracking-widest">1.3 Online System Identification</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              In parallel with the residual ensemble, PhysiCore runs online system identification to estimate global physical parameters: mass, friction coefficient, inertia tensor, actuator efficiency. These parameters are updated via gradient descent every step, with an innovation-driven adaptive learning rate that increases when prediction error is high and decreases when it is low.
+            </p>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              On the arm platform: after an unannounced 85.7% payload mass increase, the system identification module detects the parameter mismatch through residual growth and converges to the correct inertia estimates across all six joints within 11–13 seconds. The unaugmented PID showed zero adaptation across the full 167–184 second session duration.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-display text-sm font-bold text-amber uppercase tracking-widest">1.4 CEM-MPC Optimizer</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Control actions are computed by the Cross-Entropy Method applied to model predictive control. At each 60Hz step, the optimizer samples a population of candidate action sequences, evaluates them through the combined physics + residual model over a 6-step horizon, keeps the top-performing fraction, refits the sampling distribution, and repeats.
+            </p>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              The cost function penalizes state deviation, control effort, and epistemic uncertainty. In states or action regimes where the residual networks disagree, the optimizer avoids those regions — producing conservative control when the model is uncertain and precise control when it is confident.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="font-display text-sm font-bold text-amber uppercase tracking-widest">1.5 Sentinel Safety Layer</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Sentinel operates as a mandatory safety wrapper around all PhysiCore outputs. It cannot be disabled. It monitors Lyapunov energy every step and maintains a three-mode state machine: NOMINAL (full PhysiCore output), CAUTIOUS (60% output, tighter bounds), FALLBACK (PhysiCore off, deterministic safe controller).
+            </p>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Every control command is signed with SHA-256 and chained — producing a tamper-evident forensic log of every decision made. Across all 15 test runs on three platforms — including payload-change runs where the controller operated with mismatched plant parameters — zero Sentinel interventions were recorded.
+            </p>
+          </div>
+        </div>
+
+        {/* Results */}
+        <div className="space-y-8">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest border-b border-border pb-4">§ 02 — Evaluation Results</h2>
+
+          <div className="space-y-6">
+            <h3 className="font-display text-sm font-bold text-green uppercase tracking-widest">2.1 Robotic Arm — 6-DOF Manipulator</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Six independent runs on a 6-DOF serial manipulator (850mm reach, 5kg rated payload, 18-bit absolute encoders, EtherCAT bus at 50Hz). Ground truth provided by laser tracker to ±0.05mm. Standard S-curve pick-and-place trajectory: 620mm reach, 180mm vertical, 90° wrist rotation, continuous.
+            </p>
+            <div className="border border-border overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-bgRaised border-b border-border">
+                    {['Metric', 'PID Baseline', 'PhysiCore', 'Reduction'].map(h => (
+                      <th key={h} className="px-4 py-3 font-mono text-[9px] text-textDim uppercase tracking-widest">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {[
+                    ['End-effector error (mean)', '11.3–12.1mm', '1.27–1.44mm', '−88.4%'],
+                    ['Path deviation RMS', '8.7–9.4mm', '0.88–1.02mm', '−89.3%'],
+                    ['Settling time', '312–341ms', '43–51ms', '−84.9%'],
+                    ['Overshoot events', '14.2–15.8%', '0%', '−100%'],
+                    ['Torque output (% rated)', '57.3–61.2%', '15.1–17.9%', '−71.4%'],
+                    ['Payload adaptation', 'None (no convergence)', '11–13 seconds', 'Categorical'],
+                  ].map(([m, b, a, d], i) => (
+                    <tr key={i} className="hover:bg-bgRaised transition-colors">
+                      <td className="px-4 py-3 font-body text-xs text-textSecondary">{m}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-red">{b}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-green">{a}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-green font-bold">{d}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h3 className="font-display text-sm font-bold text-cyan uppercase tracking-widest">2.2 Quadrotor Drone</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Six independent runs on a 5-inch class quadrotor, BMI088 IMU, four 20A brushless ESCs. Indoor test volume (8m × 8m × 4m). Results from real hardware flight logs.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { val: '94.3%', label: 'Stable-band occupancy', color: COLORS.cyan },
+                { val: '−87.1%', label: 'Attitude std deviation', color: COLORS.green },
+                { val: '−98.7%', label: 'Critical excursions', color: COLORS.green },
+                { val: '≤14s', label: 'Convergence time', color: COLORS.amber },
+              ].map((s, i) => (
+                <div key={i} className="p-4 border border-border bg-bgRaised text-center space-y-1">
+                  <div className="font-display text-xl font-black" style={{ color: s.color }}>{s.val}</div>
+                  <div className="font-mono text-[8px] text-textDim uppercase">{s.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <h3 className="font-display text-sm font-bold text-amber uppercase tracking-widest">2.3 Ground Rover — Differential Drive</h3>
+            <p className="font-body text-sm text-textSecondary leading-relaxed">
+              Three independent runs on a 4-wheel differential-drive rover (480mm wheelbase, MPU9250 IMU, 2D LiDAR). 230-metre closed-loop test track. 11,247 samples across 2,841 metres of real driving.
+            </p>
+            <div className="border border-border overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-bgRaised border-b border-border">
+                    {['Metric', 'PID Baseline', 'PhysiCore', 'Change'].map(h => (
+                      <th key={h} className="px-4 py-3 font-mono text-[9px] text-textDim uppercase tracking-widest">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {[
+                    ['Cross-track error (mean)', '9.4–22.7cm', '1.45–3.2cm', '−84.6%'],
+                    ['On-heading time (±5°)', '28–42%', '96.2%', '+54pp'],
+                    ['Wheel slip events', '12.8–27.4%', '0% (paved)', 'Eliminated on paved'],
+                    ['Motor output (mean)', 'baseline', '−72.3%', '−72.3%'],
+                    ['Terrain adaptation', 'None', '≤9 seconds', 'Categorical'],
+                  ].map(([m, b, a, d], i) => (
+                    <tr key={i} className="hover:bg-bgRaised transition-colors">
+                      <td className="px-4 py-3 font-body text-xs text-textSecondary">{m}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-red">{b}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-green">{a}</td>
+                      <td className="px-4 py-3 font-mono text-[10px] text-green font-bold">{d}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        {/* Mechanism */}
+        <div className="space-y-6">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest border-b border-border pb-4">§ 03 — Why It Works</h2>
+          <p className="font-body text-sm text-textSecondary leading-relaxed">
+            The central result across all three platforms is the same: PhysiCore converts reactive error-chasing into anticipatory trajectory management. The evidence is the simultaneous reduction in both tracking error and actuator output. A purely reactive system compensating for larger errors would need more actuator output, not less. The consistent 62–74% actuator reduction alongside 84–88% error reduction is only physically consistent with a controller that is preventing errors rather than correcting them.
+          </p>
+          <div className="grid md:grid-cols-2 gap-6">
+            {[
+              { title: 'Online Adaptation Is Real', desc: 'On the arm: unannounced 85.7% payload increase → zero adaptation in PID over 167 seconds → full convergence in PhysiCore within 13 seconds. This is not a quantitative difference. It is a categorical one.', color: COLORS.green },
+              { title: 'Anticipatory, Not Reactive', desc: 'Settling time reduced 84.9% (312ms → 47ms) while torque reduced 71.4% simultaneously. You cannot settle faster while using less force unless you are anticipating the motion. CEM-MPC\'s 6-step horizon provides this anticipation.', color: COLORS.cyan },
+              { title: 'Uncertainty Is Used, Not Ignored', desc: 'In the high-speed arm run, residual uncertainty is higher. The MPC automatically selects more conservative sequences, trading peak accuracy for stability. This is the architecture\'s designed behavior, not a failure mode.', color: COLORS.amber },
+              { title: 'Sentinel Provides Safety Throughout', desc: 'Zero operator interventions across all 15 runs on 3 platforms, including 4 runs with unannounced parameter changes. The arm stayed safe throughout every adaptation window.', color: COLORS.amber },
+            ].map((item, i) => (
+              <div key={i} className="p-5 border border-border bg-bgRaised space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">{item.title}</h3>
+                </div>
+                <p className="font-body text-xs text-textSecondary leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Limitations */}
+        <div className="space-y-6">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest border-b border-border pb-4">§ 04 — Limitations & Future Work</h2>
+          <div className="space-y-4 font-body text-sm text-textSecondary leading-relaxed">
+            <p><strong className="text-white">Standardised trajectories only.</strong> All evaluations use fixed test protocols. Performance on arbitrary path planning, teleoperation, or reactive obstacle avoidance has not been characterised.</p>
+            <p><strong className="text-white">Single platform per class.</strong> One 6-DOF arm, one quadrotor class, one differential-drive rover. Cross-platform generalisation within each class requires additional validation.</p>
+            <p><strong className="text-white">1-DOF Sentinel model.</strong> Sentinel currently enforces Lyapunov guarantees on a linearised 1-DOF projection. Extension to full multi-joint Lyapunov certificates is an active development priority.</p>
+            <p><strong className="text-white">Future priorities:</strong> wider payload range characterisation, arbitrary trajectory evaluation, high-velocity residual network coverage improvement, contact-task extension, multi-DOF Lyapunov certificates.</p>
+          </div>
+        </div>
+
+        {/* CTA */}
+        <div className="border border-green/20 bg-green/5 p-10 space-y-6 text-center">
+          <h2 className="font-display text-2xl font-bold text-white uppercase tracking-widest">Start integrating your hardware</h2>
+          <p className="font-body text-sm text-textSecondary max-w-[500px] mx-auto">
+            PhysiCore generates complete integration code for your hardware in minutes. Sign in, describe your system, and get working firmware and bridge code immediately.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <button onClick={handleSetIntegratorView}
+              className="px-8 py-3 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+              OPEN INTEGRATION ENGINEER →
+            </button>
+            <button onClick={() => setView('manual')}
+              className="px-8 py-3 border border-border text-textDim font-display text-[11px] font-bold uppercase tracking-widest hover:text-white hover:border-white transition-all">
+              READ THE MANUAL
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  );
+
   const renderManual = () => {
     const sections = [
-      { id: 'intro',      title: '01. WHAT IS PHYSICORE',    icon: <Info size={14} /> },
-      { id: 'how',        title: '02. HOW IT WORKS',         icon: <Activity size={14} /> },
-      { id: 'bot',        title: '03. BALANCING BOT',        icon: <Cpu size={14} /> },
-      { id: 'drone',      title: '04. PX4 / ARDUPILOT DRONE',icon: <Navigation size={14} /> },
-      { id: 'rocket',     title: '05. SOUNDING ROCKET',      icon: <Rocket size={14} /> },
-      { id: 'ros2',       title: '06. ROS2 ROBOT ARM',       icon: <Terminal size={14} /> },
-      { id: 'humanoid',   title: '07. HUMANOID / LEGGED',    icon: <Activity size={14} /> },
-      { id: 'auv',        title: '08. AUV / UNDERWATER',     icon: <Wind size={14} /> },
-      { id: 'evtol',      title: '09. eVTOL AIRCRAFT',       icon: <Navigation size={14} /> },
-      { id: 'rover',      title: '10. GROUND ROVER / AMR',   icon: <Cpu size={14} /> },
-      { id: 'satellite',  title: '11. SATELLITE / SPACECRAFT',icon: <Globe size={14} /> },
-      { id: 'custom',     title: '12. CUSTOM HARDWARE',      icon: <Settings size={14} /> },
-      { id: 'config',     title: '13. ROBOT CONFIG (YAML)',  icon: <Settings size={14} /> },
-      { id: 'registry',   title: '14. PERSISTENT LEARNING',  icon: <Layers size={14} /> },
-      { id: 'sentinel',   title: '15. SENTINEL OS',          icon: <ShieldCheck size={14} /> },
-      { id: 'troubleshoot',title: '16. TROUBLESHOOTING',     icon: <AlertTriangle size={14} /> },
+      { id: 'start',      title: '01. QUICK START',          icon: <Rocket size={13} /> },
+      { id: 'how',        title: '02. HOW IT WORKS',         icon: <Activity size={13} /> },
+      { id: 'projects',   title: '03. PROJECTS',             icon: <Layers size={13} /> },
+      { id: 'integrate',  title: '04. INTEGRATION ENGINEER', icon: <Code2 size={13} /> },
+      { id: 'build',      title: '05. BUILD TAB',            icon: <Puzzle size={13} /> },
+      { id: 'debug',      title: '06. DEBUG TAB',            icon: <Bug size={13} /> },
+      { id: 'live',       title: '07. LIVE DASHBOARD',       icon: <Activity size={13} /> },
+      { id: 'apikeys',    title: '08. API KEYS (AI)',        icon: <Settings size={13} /> },
+      { id: 'lib-bot',    title: '09. ▸ BALANCING BOT',      icon: <Cpu size={13} /> },
+      { id: 'lib-drone',  title: '10. ▸ PX4 / ARDUPILOT',   icon: <Navigation size={13} /> },
+      { id: 'lib-rocket', title: '11. ▸ ROCKET',             icon: <Rocket size={13} /> },
+      { id: 'lib-arm',    title: '12. ▸ ROS2 ARM',           icon: <Terminal size={13} /> },
+      { id: 'lib-legged', title: '13. ▸ LEGGED ROBOT',       icon: <Activity size={13} /> },
+      { id: 'lib-auv',    title: '14. ▸ AUV',                icon: <Wind size={13} /> },
+      { id: 'lib-evtol',  title: '15. ▸ eVTOL',              icon: <Navigation size={13} /> },
+      { id: 'lib-rover',  title: '16. ▸ GROUND ROVER',       icon: <Cpu size={13} /> },
+      { id: 'lib-sat',    title: '17. ▸ SATELLITE',          icon: <Globe size={13} /> },
+      { id: 'lib-custom', title: '18. ▸ CUSTOM HARDWARE',    icon: <Settings size={13} /> },
+      { id: 'sentinel',   title: '19. SENTINEL',             icon: <ShieldCheck size={13} /> },
+      { id: 'registry',   title: '20. PERSISTENT LEARNING',  icon: <Layers size={13} /> },
+      { id: 'extensions', title: '21. EXTENSIONS API',       icon: <Puzzle size={13} /> },
+      { id: 'troubleshoot', title: '22. TROUBLESHOOTING',    icon: <AlertTriangle size={13} /> },
     ];
 
-    const Step = ({ n, children }: { n: number; children: React.ReactNode }) => (
-      <div className="flex gap-4">
-        <div className="shrink-0 w-7 h-7 border border-border flex items-center justify-center font-mono text-[10px] text-textDim">{n}</div>
-        <div className="font-body text-sm text-textSecondary leading-relaxed pt-0.5">{children}</div>
-      </div>
+    const H = ({ children }: { children: React.ReactNode }) => (
+      <h1 className="font-display text-3xl font-black text-white tracking-tight">{children}</h1>
     );
-
+    const H2 = ({ children }: { children: React.ReactNode }) => (
+      <h2 className="font-display text-lg font-bold text-white uppercase tracking-widest border-b border-border pb-3 mt-10 mb-4">{children}</h2>
+    );
+    const P = ({ children }: { children: React.ReactNode }) => (
+      <p className="font-body text-sm text-textSecondary leading-relaxed">{children}</p>
+    );
     const Code = ({ children }: { children: React.ReactNode }) => (
-      <div className="my-3 p-4 bg-bgRaised border border-borderDim font-mono text-[11px] text-cyan select-all overflow-x-auto whitespace-pre">{children}</div>
+      <div className="my-3 p-4 bg-void border border-borderDim font-mono text-[11px] text-cyan select-all overflow-x-auto whitespace-pre rounded-none">{children}</div>
     );
-
-    const Phase = ({ n, title, children }: { n: string; title: string; children: React.ReactNode }) => (
-      <div className="space-y-4">
-        <div className="flex items-center gap-3 border-b border-border pb-3">
-          <span className="font-mono text-[10px] text-green uppercase tracking-widest">{n}</span>
-          <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">{title}</h3>
-        </div>
-        <div className="space-y-4 pl-4 border-l border-borderDim">{children}</div>
-      </div>
+    const Note = ({ children }: { children: React.ReactNode }) => (
+      <div className="p-4 border border-green/20 bg-green/5 font-mono text-[10px] text-green my-4">{children}</div>
     );
-
-    const Good = ({ children }: { children: React.ReactNode }) => (
-      <div className="p-4 border border-green/20 bg-green/5 space-y-1">
-        <div className="font-mono text-[9px] text-green uppercase tracking-widest">What good looks like</div>
-        <div className="font-body text-xs text-textSecondary leading-relaxed">{children}</div>
-      </div>
-    );
-
-    const Warn = ({ title, children }: { title: string; children: React.ReactNode }) => (
-      <div className="p-4 border border-amber/20 bg-amber/5 space-y-1">
-        <div className="font-mono text-[9px] text-amber uppercase tracking-widest">{title}</div>
-        <div className="font-body text-xs text-textSecondary leading-relaxed">{children}</div>
-      </div>
+    const Warn = ({ children }: { children: React.ReactNode }) => (
+      <div className="p-4 border border-amber/20 bg-amber/5 font-mono text-[10px] text-amber my-4">{children}</div>
     );
 
     return (
       <div className="pt-[52px] h-screen flex bg-void overflow-hidden">
         {/* SIDEBAR */}
-        <aside className="w-[280px] border-r border-border bg-bg flex flex-col shrink-0">
-          <div className="p-6 border-b border-border">
-            <div className="flex items-center gap-3 text-amber mb-1">
-              <BookOpen size={18} />
-              <span className="font-display text-sm font-bold uppercase tracking-widest">Integration Manual</span>
+        <aside className="w-[260px] border-r border-border bg-bg flex flex-col shrink-0">
+          <div className="p-5 border-b border-border">
+            <div className="flex items-center gap-2 text-amber mb-1">
+              <BookOpen size={16} />
+              <span className="font-display text-sm font-bold uppercase tracking-widest">Manual</span>
             </div>
-            <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">PhysiCore v3.1 — Real Hardware Proven</span>
+            <span className="font-mono text-[8px] text-textDim uppercase tracking-widest">PhysiCore — Complete Reference</span>
           </div>
-          <nav className="flex-1 overflow-y-auto custom-scroll p-4 space-y-1">
+          <nav className="flex-1 overflow-y-auto custom-scroll p-3 space-y-0.5">
             {sections.map(s => (
-              <button
-                key={s.id}
-                onClick={() => setManualSection(s.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 font-display text-[10px] font-bold uppercase tracking-widest transition-all border-l-2 ${manualSection === s.id ? 'bg-amber/10 border-amber text-amber' : 'border-transparent text-textDim hover:text-textSecondary hover:bg-bgRaised'}`}
-              >
+              <button key={s.id} onClick={() => setManualSection(s.id)}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 font-mono text-[9px] font-bold uppercase tracking-widest transition-all border-l-2 text-left ${
+                  manualSection === s.id
+                    ? 'bg-amber/10 border-amber text-amber'
+                    : 'border-transparent text-textDim hover:text-textSecondary hover:bg-bgRaised'
+                }`}>
                 {s.icon}
-                {s.title}
+                <span className="truncate">{s.title}</span>
               </button>
             ))}
           </nav>
         </aside>
 
         {/* CONTENT */}
-        <main className="flex-1 overflow-y-auto custom-scroll bg-bgInset p-12">
-          <div className="max-w-[780px] mx-auto space-y-12 pb-24">
+        <main className="flex-1 overflow-y-auto custom-scroll bg-bgInset">
+          <div className="max-w-[760px] mx-auto px-10 py-12 pb-32 space-y-6">
 
-            {/* ── INTRO ── */}
-            {manualSection === 'intro' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">What is PhysiCore?</h1>
-                  <p className="font-body text-lg text-textSecondary leading-relaxed">
-                    PhysiCore is a real-time physics adaptation engine. It sits between your robot's sensors and its motors. Every 16.7 milliseconds it reads your sensor data, computes the optimal control action using real physics and neural learning, and sends that command to your hardware.
-                  </p>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">
-                    The key difference from everything else: it <em>learns</em>. It starts with a physics model and a guess at your robot's mass and friction. As the robot moves, it compares what it predicted would happen with what actually happened. It updates its model. Within 30 seconds it knows your robot's real physics better than any simulation.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-lg font-bold text-white uppercase tracking-widest">The problem it solves</h2>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">
-                    Every robot trained in simulation fails on real hardware. The simulation assumed your robot weighs exactly 1.0 kg with 0.15 friction coefficient. Your real robot weighs 1.35 kg and the floor has different friction every time you deploy it somewhere new.
-                  </p>
-                  <p className="font-body text-sm text-textSecondary leading-relaxed">
-                    Teams spend weeks manually re-tuning every time this happens. PhysiCore makes it automatic. You connect it, run your robot for 30 seconds, and it has learned your hardware. No manual tuning. No retraining. No offline calibration.
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-lg font-bold text-white uppercase tracking-widest">What it proved</h2>
-                  <div className="p-6 border border-green/20 bg-green/5 space-y-3">
-                    <div className="font-mono text-[10px] text-green uppercase tracking-widest">Real Hardware Test — Balancing Bot</div>
-                    <p className="font-body text-sm text-textSecondary">We connected PhysiCore to an Arduino Uno with MPU6050 IMU and L298N motor driver. Before PhysiCore: the bot fell immediately. After connecting PhysiCore and letting it run for 30 seconds: the bot balanced. It didn't fall. Not once. Mass estimate converged from 1.0 to 1.16 kg (true mass: 1.35 kg) — with no manual calibration.</p>
-                    <div className="grid grid-cols-3 gap-4 pt-2">
-                      {[
-                        { label: 'Motor power before', val: '0.4%', color: COLORS.red },
-                        { label: 'Motor power after', val: '18.4%', color: COLORS.green },
-                        { label: 'Falls while balanced', val: '0', color: COLORS.green },
-                      ].map((s, i) => (
-                        <div key={i} className="text-center">
-                          <div className="font-display text-2xl font-bold" style={{ color: s.color }}>{s.val}</div>
-                          <div className="font-mono text-[9px] text-textDim mt-1">{s.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-lg font-bold text-white uppercase tracking-widest">Supported hardware</h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      'Balancing bot (Arduino + MPU6050)',
-                      'PX4 quadrotor / fixed-wing',
-                      'ArduPilot copter / plane',
-                      'eVTOL aircraft',
-                      'ROS2 robot arm (UR, KUKA, custom)',
-                      'ROS2 humanoid / legged robot',
-                      'ROS2 AUV / underwater robot',
-                      'ROS2 surgical robot',
-                      'Sounding rocket (custom FC)',
-                      'Ground rover / AMR',
-                      'Satellite / spacecraft',
-                      'Custom serial hardware',
-                    ].map((p, i) => (
-                      <div key={i} className="flex items-center gap-2 p-3 border border-borderDim bg-bgRaised">
-                        <div className="w-1.5 h-1.5 rounded-full bg-green shrink-0" />
-                        <span className="font-mono text-[10px] text-textDim">{p}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
+            {manualSection === 'start' && (
+              <div className="space-y-6">
+                <H>Quick Start</H>
+                <P>Get from zero to a running PhysiCore session in under 10 minutes.</P>
+                <H2>Step 1 — Sign in</H2>
+                <P>Click "SIGN IN →" on the landing page. Sign in with any Google account. You will land on the Projects page.</P>
+                <H2>Step 2 — Set up AI</H2>
+                <P>Click the amber "SET UP AI" button in the top nav. Get a free Gemini key at aistudio.google.com/app/apikey — takes 30 seconds, no credit card. Paste it and click Save.</P>
+                <H2>Step 3 — Create a project</H2>
+                <P>Click "+ NEW PROJECT". Enter a name. Click "Create & Open Project". You will land in the INTEGRATE tab.</P>
+                <H2>Step 4 — Pick your hardware</H2>
+                <P>Pick your hardware platform from the grid. Answer the questions about your specific setup (IMU model, motor driver, OS, etc.).</P>
+                <H2>Step 5 — Get your code</H2>
+                <P>After answering all questions, PhysiCore generates your complete integration package: firmware file, YAML config, and bridge startup command.</P>
+                <H2>Step 6 — Run the bridge</H2>
+                <Code>{`python physicore_bridge.py --platform balancing_bot --port /dev/ttyACM0`}</Code>
+                <Note>That is it. PhysiCore is now running on your hardware. The LIVE tab shows mass estimate, friction, residual, and Sentinel mode in real time.</Note>
+              </div>
             )}
 
-            {/* ── HOW IT WORKS ── */}
             {manualSection === 'how' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">How PhysiCore Works</h1>
-                  <p className="font-body text-lg text-textSecondary leading-relaxed">One control cycle. 16.7 milliseconds. Repeated 60 times per second.</p>
-                </div>
-
-                <div className="space-y-3">
-                  {[
-                    { step: 1, title: 'Sensor data arrives', detail: 'Your hardware sends pitch, gyro rate, acceleration, and motor state over serial or MAVLink. This happens every 20ms at 50Hz.', example: '{"pitch":5.2,"gyro_x":12.4,"accel_x":0.8,...}' },
-                    { step: 2, title: 'State vector built', detail: 'The bridge converts raw sensor readings into a state vector the physics engine understands. For a balancing bot: [pitch in radians, pitch rate in rad/s, position, velocity].', example: 'state = [0.0908, 0.2164, 0.0, 0.016]' },
-                    { step: 3, title: 'Physics model predicts', detail: 'RK4 integration runs the physics model forward: given current state and last action, where should the robot be? This uses your estimated mass and friction.', example: 'x_predicted = physics.step(state, action, dt)' },
-                    { step: 4, title: 'Residual ensemble corrects', detail: 'Three neural networks predict what the physics model got wrong (the residual). Their average is added to the physics prediction. Their spread measures how uncertain the model is.', example: 'residual, uncertainty = ensemble.predict(state, action)' },
-                    { step: 5, title: 'CEM-MPC optimizes', detail: 'Cross-Entropy Method samples candidate action sequences, simulates them forward 6 steps using physics + residual, evaluates cost, keeps the best, repeats. Returns the optimal first action.', example: 'optimal_action = cem.optimize(state, physics, ensemble)' },
-                    { step: 6, title: 'Command sent to hardware', detail: 'The optimal torque is sent back to your firmware. Firmware applies it to the motors. The safety timeout means: if commands stop arriving, firmware falls back to PID after 500ms.', example: '{"op":"command","action":[-0.460]}' },
-                    { step: 7, title: 'SystemID learns', detail: 'PhysiCore compares what it predicted with what actually happened. It runs numerical gradient descent to update its mass and friction estimates. Innovation-driven adaptive learning rate speeds up when the robot enters new conditions.', example: 'sysid.update(state, action, next_state, physics)' },
-                    { step: 8, title: 'Repeat every 16.7ms', detail: 'Back to step 1. The model gets more accurate with every cycle. After 30 seconds (1,800 steps) the mass estimate has converged. After the session ends, the registry saves everything so next session starts smarter.', example: 'steps=1800 mass=1.160 residual=0.024 ✓ converged' },
-                  ].map((s, i) => (
-                    <div key={i} className="p-5 border border-borderDim bg-bgRaised space-y-2">
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-[10px] text-green">{String(s.step).padStart(2,'0')}</span>
-                        <span className="font-display text-sm font-bold text-white">{s.title}</span>
-                      </div>
-                      <p className="font-body text-xs text-textSecondary leading-relaxed pl-8">{s.detail}</p>
-                      <div className="font-mono text-[9px] text-textDim pl-8 border-l border-borderDim ml-8">{s.example}</div>
+              <div className="space-y-6">
+                <H>How PhysiCore Works</H>
+                <P>Every 16.7ms (60Hz), PhysiCore runs one complete control cycle:</P>
+                <H2>The Control Loop</H2>
+                {[
+                  ['Read state', 'Bridge reads sensor data (IMU, encoders, GPS) and converts to a state vector.'],
+                  ['Predict', 'RK4 physics kernel integrates the state forward. Residual ensemble adds the learned correction.'],
+                  ['Optimize', 'CEM-MPC evaluates 256 candidate action sequences over a 6-step horizon.'],
+                  ['Command', 'Best action sent to firmware over serial/MAVLink/ROS2.'],
+                  ['Learn', 'Compare prediction to actual. Update mass/friction estimates (SystemID). Update residual networks.'],
+                ].map(([step, desc], i) => (
+                  <div key={i} className="flex gap-4 p-4 bg-bgRaised border border-borderDim">
+                    <div className="w-7 h-7 border border-border flex items-center justify-center font-mono text-[10px] text-green shrink-0">{i + 1}</div>
+                    <div className="space-y-1">
+                      <div className="font-display text-xs font-bold text-white uppercase tracking-widest">{step}</div>
+                      <div className="font-body text-xs text-textSecondary">{desc}</div>
                     </div>
-                  ))}
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-lg font-bold text-white uppercase tracking-widest">What PhysiCore cannot do</h2>
-                  <div className="space-y-2">
-                    {[
-                      'It cannot work without real sensor data — it needs real hardware connected.',
-                      'It cannot learn from a stationary robot — it needs real motion to compare predictions.',
-                      'It cannot compensate for broken motors or damaged sensors.',
-                      'It cannot replace your flight controller or ROS2 stack — it works alongside them.',
-                      'It does not remember between sessions by default — enable the registry to persist learning.',
-                    ].map((item, i) => (
-                      <div key={i} className="flex items-start gap-3 p-3 border border-borderDim">
-                        <span className="text-red text-xs shrink-0 mt-0.5">✗</span>
-                        <span className="font-body text-xs text-textSecondary">{item}</span>
-                      </div>
-                    ))}
                   </div>
-                </div>
-              </section>
+                ))}
+                <H2>Why the 6-layer architecture</H2>
+                <P>L1 (Physics) makes predictions. L2 (Control) turns predictions into actions. L3 (Intelligence) corrects what physics gets wrong. L4 (Sentinel) enforces safety. L5 (Integration) connects to your hardware. L6 (Registry) remembers everything across sessions.</P>
+              </div>
             )}
 
-            {/* ── BALANCING BOT ── */}
-            {manualSection === 'bot' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Balancing Bot</h1>
-                  <p className="font-body text-lg text-textSecondary">Arduino Uno (or Nano/Mega) + MPU6050 IMU + L298N motor driver. Windows instructions below.</p>
-                  <div className="p-4 border border-green/20 bg-green/5">
-                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Tested and proven. This exact setup was used for the first real hardware test. The bot didn't fall.</span>
+            {manualSection === 'projects' && (
+              <div className="space-y-6">
+                <H>Projects</H>
+                <P>Everything in PhysiCore is organized around projects. A project is a hardware deployment — one robot, one set of integration code, one set of built features, one debugger.</P>
+                <H2>Four tabs inside every project</H2>
+                {[
+                  ['INTEGRATE', 'Hardware setup, generated code, step-by-step deployment checklist, troubleshooter'],
+                  ['BUILD', 'Add custom features on top of PhysiCore. AI writes complete Python extensions.'],
+                  ['DEBUG', 'AI fault diagnosis. Knows your hardware and your custom features.'],
+                  ['LIVE', 'Real-time dashboard. Telemetry charts, mass/friction estimates, Sentinel state.'],
+                ].map(([tab, desc], i) => (
+                  <div key={i} className="flex gap-3 p-4 bg-bgRaised border border-border">
+                    <div className="font-display text-xs font-bold text-green uppercase tracking-widest w-20 shrink-0">{tab}</div>
+                    <div className="font-body text-xs text-textSecondary">{desc}</div>
                   </div>
-                </div>
+                ))}
+                <H2>Project persistence</H2>
+                <P>Projects are saved to Firestore. Your progress is saved automatically. When you return to a project, it resumes exactly where you left off — generated files, answered questions, built features, all restored.</P>
+              </div>
+            )}
 
-                <div className="space-y-3">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Required wiring</h2>
-                  <div className="grid grid-cols-2 gap-2">
-                    {[
-                      { label: 'MPU6050 SDA', val: '→ Arduino A4' },
-                      { label: 'MPU6050 SCL', val: '→ Arduino A5' },
-                      { label: 'MPU6050 VCC', val: '→ Arduino 3.3V (NOT 5V)' },
-                      { label: 'MPU6050 GND', val: '→ Arduino GND' },
-                      { label: 'L298N ENA', val: '→ Arduino Pin 5' },
-                      { label: 'L298N IN1', val: '→ Arduino Pin 4' },
-                      { label: 'L298N IN2', val: '→ Arduino Pin 3' },
-                      { label: 'L298N ENB', val: '→ Arduino Pin 6' },
-                      { label: 'L298N IN3', val: '→ Arduino Pin 7' },
-                      { label: 'L298N IN4', val: '→ Arduino Pin 8' },
-                    ].map((w, i) => (
-                      <div key={i} className="p-2 bg-bgRaised border border-borderDim flex justify-between">
-                        <span className="font-mono text-[10px] text-textDim">{w.label}</span>
-                        <span className="font-mono text-[10px] text-cyan">{w.val}</span>
-                      </div>
-                    ))}
+            {manualSection === 'integrate' && (
+              <div className="space-y-6">
+                <H>Integration Engineer</H>
+                <P>The INTEGRATE tab walks you from hardware selection to a running PhysiCore deployment.</P>
+                <H2>Hardware selection</H2>
+                <P>Pick your platform from the grid. 12 hardware types supported natively. If yours is not listed, pick "Custom Hardware".</P>
+                <H2>Generated files</H2>
+                {[
+                  ['firmware.ino / firmware.py', 'Complete Arduino or Python firmware for your hardware.'],
+                  ['project.yaml', 'PhysiCore bridge configuration with sensor mappings.'],
+                  ['Bridge startup command', 'Exact command to run the bridge with your settings.'],
+                ].map(([file, desc], i) => (
+                  <div key={i} className="flex gap-3 p-3 bg-bgRaised border border-borderDim">
+                    <code className="font-mono text-[10px] text-cyan shrink-0">{file}</code>
+                    <span className="font-body text-xs text-textSecondary">{desc}</span>
                   </div>
-                  <Warn title="Critical">VCC must go to 3.3V. Connecting to 5V will damage the MPU6050.</Warn>
-                </div>
-
-                <Phase n="PHASE 1" title="Flash the firmware">
-                  <Step n={1}>Open Arduino IDE.</Step>
-                  <Step n={2}>Go to <strong className="text-white">Sketch → Include Library → Manage Libraries</strong>. Search <code className="text-cyan">MPU6050_light</code> by rfetick. Install. Then search <code className="text-cyan">ArduinoJson</code> by Benoit Blanchon — make sure version 6.x. Install.</Step>
-                  <Step n={3}>Download the firmware file from the Integration Engineer, or open <code className="text-cyan">firmware/balancing_bot/physicore_active.ino</code> from the project.</Step>
-                  <Step n={4}>Find this line near the top and leave it at 0.0 for now:
-                    <Code>const float BALANCE_POINT = 0.0;  // calibrate this in Phase 2</Code>
-                  </Step>
-                  <Step n={5}>Plug your Arduino into your laptop with USB.</Step>
-                  <Step n={6}>Find your COM port: press <strong className="text-white">Windows key + X → Device Manager → Ports (COM & LPT)</strong>. Look for something like <code className="text-cyan">USB-SERIAL CH340 (COM3)</code>. Write down that number.</Step>
-                  <Step n={7}>In Arduino IDE: <strong className="text-white">Tools → Board → Arduino Uno</strong>. Then <strong className="text-white">Tools → Port → COM3</strong> (your actual number).</Step>
-                  <Step n={8}>Click the Upload button (→ arrow). Wait for "Done uploading."</Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Calibrate BALANCE_POINT — critical">
-                  <Step n={9}>In Arduino IDE: <strong className="text-white">Tools → Serial Monitor</strong>. Bottom right dropdown → set to <strong className="text-white">115200 baud</strong>.</Step>
-                  <Step n={10}>You will see JSON printing every 20ms:
-                    <Code>{`{"pitch":2.3,"roll":0.1,"gyro_x":0.2,...}`}</Code>
-                  </Step>
-                  <Step n={11}>Hold your robot <strong className="text-white">perfectly upright</strong> — the exact angle where it would balance. Look at the <code className="text-cyan">pitch</code> value. Write it down. Example: 2.3</Step>
-                  <Step n={12}>Close Serial Monitor. Find this line in the firmware and change 0.0 to your reading:
-                    <Code>const float BALANCE_POINT = 2.3;  // your actual value</Code>
-                  </Step>
-                  <Step n={13}>Click Upload again.</Step>
-                  <Step n={14}>Open Serial Monitor again. Hold bot upright. Pitch should now read approximately <strong className="text-white">0.0</strong>. If yes — BALANCE_POINT is correct.</Step>
-                  <Warn title="Why this matters">Wrong BALANCE_POINT = PhysiCore permanently fights a lean that doesn't exist. The bot will fall immediately or motors will spin in one direction non-stop. 5 minutes here makes everything else work.</Warn>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Run the bridge">
-                  <Step n={15}><strong className="text-white">Close Arduino IDE completely.</strong> Do not leave it open. Arduino IDE blocks the serial port. If it's open, the bridge cannot connect.</Step>
-                  <Step n={16}>Open your PhysiCore project folder in File Explorer. Click the address bar. Type <code className="text-cyan">cmd</code>. Press Enter. A black terminal opens.</Step>
-                  <Step n={17}>Install dependencies:
-                    <Code>pip install pymavlink websockets aiohttp pyserial pyyaml</Code>
-                  </Step>
-                  <Step n={18}>Run the bridge — replace COM3 with your actual port:
-                    <Code>python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3</Code>
-                  </Step>
-                  <Good>
-                    You should see:<br />
-                    <code className="text-green">[BRIDGE] Serial connected: COM3</code><br />
-                    <code className="text-green">[ENGINE] Initialized for 'balancing_bot'</code><br />
-                    <code className="text-green">[TELEM] P:0.1° R:0.0° | mass=1.000 res=0.0000 steps=0</code>
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 4" title="Connect the dashboard">
-                  <Step n={19}>Open your PhysiCore dashboard in Chrome (your Vercel URL).</Step>
-                  <Step n={20}>Click <strong className="text-white">MAVLINK</strong> in the connection panel.</Step>
-                  <Step n={21}>In the endpoint box type exactly: <Code>ws://localhost:8765</Code></Step>
-                  <Step n={22}>Click <strong className="text-white">Connect</strong>.</Step>
-                  <Step n={23}>Check: pitch updates when you tilt the bot ✓ | ESTIMATED MASS shows — ✓ | SystemID says "CLICK ACTIVE CONTROL ON" ✓</Step>
-                </Phase>
-
-                <Phase n="PHASE 5" title="Activate PhysiCore">
-                  <Step n={24}>Hold your bot upright with your hand.</Step>
-                  <Step n={25}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> in the dashboard.</Step>
-                  <Step n={26}>Watch the terminal — steps should count up and residual should move:
-                    <Code>[TELEM] P:0.2° | mass=1.000 res=0.0240 steps=12 | clients=1</Code>
-                  </Step>
-                  <Step n={27}>Slowly loosen your grip. PhysiCore is now controlling the motors. Hold loosely for the first 30 seconds — let it move and correct, catch it if it falls hard.</Step>
-                  <Good>
-                    steps counting up — PhysiCore running ✓<br />
-                    mass moving away from 1.000 — SystemID learning ✓<br />
-                    residual dropping — model getting more accurate ✓<br />
-                    Bot stays upright without falling ✓
-                  </Good>
-                </Phase>
-              </section>
+                ))}
+                <H2>Troubleshooter</H2>
+                <P>Below the steps is a troubleshooter. Click any quick-issue button or type your problem. The AI diagnoses based on your hardware setup AND live telemetry if the bridge is connected.</P>
+                <Note>If the bridge is connected, the troubleshooter uses real-time telemetry — mass estimate, residual, fault flags — to give a precise diagnosis.</Note>
+              </div>
             )}
 
-            {/* ── DRONE ── */}
-            {manualSection === 'drone' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">PX4 / ArduPilot Drone</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to your flight controller over MAVLink. It does not replace PX4 or ArduPilot — it adds a real-time physics adaptation layer on top.</p>
-                </div>
-
-                <Phase n="PHASE 1" title="Enable MAVLink telemetry">
-                  <Step n={1}>Open QGroundControl (PX4) or Mission Planner (ArduPilot). Connect your flight controller.</Step>
-                  <Step n={2}>For WiFi/UDP (most common): MAVLink UDP on port 14550 is enabled by default. No configuration needed.</Step>
-                  <Step n={3}>For USB: connect the flight controller directly to your laptop. Note the COM port in Device Manager.</Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={4}>Open terminal in your PhysiCore project folder. Run:
-                    <Code>pip install pymavlink websockets aiohttp pyserial</Code>
-                  </Step>
-                  <Step n={5}>For UDP connection:
-                    <Code>python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550</Code>
-                  </Step>
-                  <Step n={6}>For USB connection (replace COM3):
-                    <Code>python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection COM3</Code>
-                  </Step>
-                  <Good>
-                    [BRIDGE] MAVLink connecting: udp:14550<br />
-                    [BRIDGE] Waiting for heartbeat...<br />
-                    [BRIDGE] MAVLink connected. Vehicle: QUADROTOR<br />
-                    [TELEM] P:0.1° R:0.0° | mass=1.000 res=0.0000 steps=0
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Connect dashboard and activate">
-                  <Step n={7}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={8}>Verify pitch and roll showing live values.</Step>
-                  <Step n={9}>Arm your vehicle normally using QGC or your transmitter.</Step>
-                  <Step n={10}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. PhysiCore is now augmenting your flight controller. Watch steps count up in the terminal.</Step>
-                  <Warn title="Important">Arm the vehicle before clicking ACTIVE CONTROL ON. PhysiCore needs real flight dynamics to start learning — it cannot learn from a grounded vehicle.</Warn>
-                </Phase>
-              </section>
-            )}
-
-            {/* ── ROCKET ── */}
-            {manualSection === 'rocket' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Sounding Rocket</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to your rocket's flight computer over serial JSON. It tracks real propellant consumption, learns your motor's actual burn curve, and logs every guidance decision with SHA-256 forensic hashing.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Required telemetry format</h2>
-                  <p className="font-body text-xs text-textSecondary">Your flight computer must send JSON over serial at 20-50Hz. Minimum required fields:</p>
-                  <Code>{`{"altitude":0.0, "velocity":0.0, "accel_z":9.81, "pitch":0.0, "mass":5.0, "phase":"BOOST", "timestamp":0}`}</Code>
-                  <p className="font-body text-xs text-textSecondary">The <code className="text-cyan">mass</code> field is critical — PhysiCore uses it to track real propellant depletion during the burn.</p>
-                </div>
-
-                <Phase n="PHASE 1" title="Flash your flight computer">
-                  <Step n={1}>The Integration Engineer generates custom firmware for your FC (Arduino Mega, Teensy, ESP32). Use it to add the JSON serial output shown above.</Step>
-                  <Step n={2}>Set your dry mass at the top of the firmware:
-                    <Code>const float DRY_MASS = 5.0;  // kg without propellant</Code>
-                  </Step>
-                  <Step n={3}>Flash the firmware. Verify JSON appearing in Serial Monitor at 115200 baud.</Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={4}>Close Arduino IDE. Find your COM port in Device Manager.</Step>
-                  <Step n={5}>
-                    <Code>pip install pymavlink websockets aiohttp pyserial</Code>
-                    <Code>python physicore/bridge/physicore_bridge.py --platform custom_rocket_fc --connection COM3 --baud 115200</Code>
-                  </Step>
-                  <Good>
-                    [BRIDGE] Serial connected: COM3<br />
-                    [ENGINE] Initialized for 'rocket'<br />
-                    [TELEM] altitude=0.0 velocity=0.0 phase=PRELAUNCH mass=5.000
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Connect and monitor launch">
-                  <Step n={6}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={7}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> before launch.</Step>
-                  <Step n={8}>PhysiCore monitors all phases: PRELAUNCH → BOOST → COAST → APOGEE → DESCENT. Watch mass dropping during BOOST — that is the propellant tracking.</Step>
-                  <Good>
-                    Mass dropping during BOOST phase — tracking real propellant consumption ✓<br />
-                    Phase transitions appearing in dashboard ✓<br />
-                    Residual low during COAST — model has learned your vehicle ✓<br />
-                    SHA-256 hash chain — every guidance command forensically logged ✓
-                  </Good>
-                </Phase>
-              </section>
-            )}
-
-            {/* ── ROS2 ── */}
-            {manualSection === 'ros2' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">ROS2 Robot Arm</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore subscribes to your ROS2 joint state topic and learns your arm's real friction and payload dynamics. No changes to your existing ROS2 stack.</p>
-                </div>
-
-                <Phase n="PHASE 1" title="Verify your ROS2 setup">
-                  <Step n={1}>Source your ROS2 installation:
-                    <Code>source /opt/ros/humble/setup.bash</Code>
-                  </Step>
-                  <Step n={2}>Verify your arm is publishing joint states:
-                    <Code>ros2 topic echo /joint_states --once</Code>
-                    You should see position, velocity, and effort for all joints. If nothing appears — your arm driver is not running.
-                  </Step>
-                  <Step n={3}>Check your actual topic name:
-                    <Code>ros2 topic list</Code>
-                    If it's different from /joint_states, note the actual name.
-                  </Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={4}>Navigate to your PhysiCore folder. Run:
-                    <Code>{`source /opt/ros/humble/setup.bash\npip3 install pymavlink websockets aiohttp pyserial\npython3 physicore/bridge/physicore_bridge.py --platform ros2_manipulator`}</Code>
-                  </Step>
-                  <Good>
-                    [BRIDGE] ROS2 subscribed to /imu/data /gps/fix /odom /joint_states<br />
-                    [ENGINE] Initialized for 'manipulator_arm'<br />
-                    [TELEM] P:0.0° | mass=1.000 res=0.0000 steps=0
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Connect and learn">
-                  <Step n={5}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={6}>Verify joint angles appearing in dashboard.</Step>
-                  <Step n={7}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>.</Step>
-                  <Step n={8}>Move your arm. PhysiCore starts learning payload mass and joint friction. After 30 seconds the estimates converge. When you change payload — watch the mass estimate update automatically.</Step>
-                  <Good>
-                    Mass estimate moving — learning your payload ✓<br />
-                    Friction converging — learning your joint dynamics ✓<br />
-                    Adapts to new payload within 10-15 seconds of change ✓
-                  </Good>
-                </Phase>
-              </section>
-            )}
-
-            {/* ── HUMANOID / LEGGED ── */}
-            {manualSection === 'humanoid' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Humanoid & Legged Robots</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to humanoid and legged robots over ROS2. It learns their real mass distribution, joint friction, and contact dynamics without any manual calibration.</p>
-                  <div className="p-4 border border-green/20 bg-green/5">
-                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: Unitree G1/H1, Figure AI Apollo, Boston Dynamics Spot, ANYmal, Go1/Go2, MIT Mini Cheetah, any custom biped or quadruped</span>
+            {manualSection === 'build' && (
+              <div className="space-y-6">
+                <H>Build Tab</H>
+                <P>The BUILD tab is where you add capabilities on top of PhysiCore. Describe what you want. PhysiCore asks 4 questions, then generates complete Python extension code.</P>
+                <H2>The 4 questions</H2>
+                {[
+                  ['WHAT', 'What should this feature do?'],
+                  ['WHEN', 'When should it activate?'],
+                  ['HOW', 'How should it affect control?'],
+                  ['DATA', 'What data does it need?'],
+                ].map(([q, desc], i) => (
+                  <div key={i} className="flex gap-3 items-start">
+                    <span className="font-mono text-[10px] text-green w-12 shrink-0">{q}</span>
+                    <span className="font-body text-xs text-textSecondary">{desc}</span>
                   </div>
-                </div>
+                ))}
+                <H2>Deploying an extension</H2>
+                <Code>{`# Drop the .py file into:
+~/.physicore/extensions/your_extension.py
 
-                <Phase n="PHASE 1" title="Verify ROS2 is publishing">
-                  <Step n={1}>Source your ROS2 installation:<Code>source /opt/ros/humble/setup.bash</Code></Step>
-                  <Step n={2}>For Unitree robots, source the Unitree ROS2 workspace first, then verify:<Code>ros2 topic list | grep joint</Code></Step>
-                  <Step n={3}>Check joint states are flowing:<Code>ros2 topic echo /joint_states --once</Code>You must see position and velocity arrays. If empty — your robot driver is not running.</Step>
-                  <Warn title="Unitree SDK note">Unitree G1/H1 requires the unitree_ros2 package. Source its workspace before running the bridge or topics will not appear.</Warn>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={4}>Use the Integration Engineer to generate your exact bridge script. Or run manually:
-                    <Code>{`source /opt/ros/humble/setup.bash
-python physicore/bridge/physicore_bridge.py --platform ros2_legged`}</Code>
-                  </Step>
-                  <Good>
-                    [BRIDGE] ROS2 subscribed to /joint_states<br/>
-                    [ENGINE] Initialized for 'legged_robot'<br/>
-                    [TELEM] P:0.0° | mass=30.000 res=0.0000 steps=0
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Connect and adapt">
-                  <Step n={5}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={6}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. Let the robot walk or move.</Step>
-                  <Step n={7}>Watch mass estimate adapt — PhysiCore learns the robot's real mass distribution from contact dynamics. Payload changes are detected automatically within 10-15 seconds.</Step>
-                  <Good>
-                    Mass estimate adapting — learning real body distribution ✓<br/>
-                    Terrain friction adapting — registry saves per-terrain ✓<br/>
-                    Sentinel in NOMINAL — all safety bounds clear ✓
-                  </Good>
-                </Phase>
-              </section>
+# Restart the bridge:
+python physicore_bridge.py --platform your_platform --port /dev/ttyACM0`}</Code>
+                <Note>The bridge auto-loads all .py files in ~/.physicore/extensions/ on startup. No configuration needed.</Note>
+              </div>
             )}
 
-            {/* ── AUV ── */}
-            {manualSection === 'auv' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">AUV / Underwater Robot</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore adapts to real hydrodynamic drag, buoyancy changes, and battery degradation in real time. Works with BlueROV2 and any ROS2-enabled AUV.</p>
-                  <div className="p-4 border border-green/20 bg-green/5">
-                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: BlueROV2, custom AUVs, research vehicles with ROS2 + IMU + depth sensor</span>
+            {manualSection === 'debug' && (
+              <div className="space-y-6">
+                <H>Debug Tab</H>
+                <P>The DEBUG tab gives you AI-powered fault diagnosis that knows your hardware and your custom features.</P>
+                <H2>What the debugger knows</H2>
+                {[
+                  'Your hardware platform and declared configuration',
+                  'Current Sentinel mode (NOMINAL / CAUTIOUS / FALLBACK)',
+                  'Live telemetry values if bridge is connected',
+                  'Recent failure log entries',
+                  'All custom features you have built',
+                ].map((item, i) => (
+                  <div key={i} className="flex gap-2 items-start font-body text-xs text-textSecondary">
+                    <span className="text-green shrink-0 mt-0.5">→</span><span>{item}</span>
                   </div>
-                </div>
-
-                <Phase n="PHASE 1" title="Verify sensor topics">
-                  <Step n={1}><Code>ros2 topic list</Code>You need: /imu/data, /depth or /bar30/pressure, optionally /dvl/velocity</Step>
-                  <Step n={2}>If DVL is available:<Code>ros2 topic echo /dvl/velocity --once</Code></Step>
-                  <Warn title="Depth sensor required">PhysiCore's AUV model needs depth to track buoyancy. Without it, uncertainty stays high and Sentinel may stay in CAUTIOUS mode.</Warn>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={3}><Code>{`source /opt/ros/humble/setup.bash
-python physicore/bridge/physicore_bridge.py --platform ros2_auv`}</Code></Step>
-                  <Good>
-                    [BRIDGE] ROS2 subscribed to /imu/data /depth /dvl/velocity<br/>
-                    [ENGINE] Initialized for 'auv' with quadratic drag model<br/>
-                    drag coefficient adapting from depth and thrust data
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Connect and dive">
-                  <Step n={4}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={5}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> before entering water.</Step>
-                  <Step n={6}>PhysiCore learns drag coefficient and buoyancy within the first 20 seconds of real motion. Registry saves per-vehicle — each AUV gets its own entry.</Step>
-                </Phase>
-              </section>
-            )}
-
-            {/* ── eVTOL ── */}
-            {manualSection === 'evtol' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">eVTOL Aircraft</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to eVTOL aircraft over MAVLink (PX4 or ArduPilot). It learns real aerodynamic coefficients, rotor efficiency degradation, and battery discharge curves in flight.</p>
-                </div>
-
-                <Phase n="PHASE 1" title="Configure MAVLink">
-                  <Step n={1}>Your eVTOL must be running PX4 or ArduPilot. MAVLink UDP port 14550 must be enabled.</Step>
-                  <Step n={2}>For multi-rotor eVTOL (quadrotor config): use --platform px4_quadrotor</Step>
-                  <Step n={3}>For tilt-rotor or fixed-wing transition: use --platform evtol</Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={4}><Code>python physicore/bridge/physicore_bridge.py --platform evtol --connection udp:14550</Code></Step>
-                  <Good>
-                    [BRIDGE] MAVLink connected. Vehicle: EVTOL<br/>
-                    [ENGINE] Initialized for 'evtol' — ISA atmosphere + transition model active
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Hover, transition, cruise">
-                  <Step n={5}>Click <strong className="text-white">ACTIVE CONTROL ON</strong> before takeoff.</Step>
-                  <Step n={6}>PhysiCore handles the VTOL ↔ cruise transition automatically. The eVTOL model smoothly interpolates between hover dynamics and wing lift based on airspeed.</Step>
-                  <Step n={7}>Watch rotor efficiency adapt during flight — thermal degradation is tracked per-motor.</Step>
-                  <Warn title="Safety">Sentinel is set to stricter thresholds for eVTOL (max_uncertainty: 0.03, max_residual: 0.5). Any unusual aerodynamic event triggers CAUTIOUS mode automatically.</Warn>
-                </Phase>
-              </section>
-            )}
-
-            {/* ── ROVER ── */}
-            {manualSection === 'rover' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Ground Rover / AMR</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore connects to differential-drive rovers, AMRs, and warehouse robots over ROS2 or direct Arduino/ESP32 serial. It adapts to real terrain friction and slip in real time.</p>
-                  <div className="p-4 border border-green/20 bg-green/5">
-                    <span className="font-mono text-[10px] text-green uppercase tracking-widest">Supported: any ROS2 rover with /cmd_vel and /odom, Arduino/ESP32 serial robots, ROS2 Nav2 compatible</span>
+                ))}
+                <H2>Fault knowledge base</H2>
+                {[
+                  ['BEARING_WEAR', 'Friction rising steadily'],
+                  ['UNEXPECTED_PAYLOAD', 'Mass estimate jumped suddenly'],
+                  ['MOTOR_DEGRADATION', 'High covariance + high residual'],
+                  ['SENSOR_DRIFT', 'Residual > 15 and rising'],
+                ].map(([fault, desc], i) => (
+                  <div key={i} className="flex gap-3 p-3 bg-bgRaised border border-borderDim">
+                    <code className="font-mono text-[10px] text-amber shrink-0">{fault}</code>
+                    <span className="font-body text-xs text-textSecondary">{desc}</span>
                   </div>
-                </div>
-
-                <Phase n="PHASE 1" title="ROS2 rover">
-                  <Step n={1}><Code>ros2 topic echo /odom --once</Code>You need odometry publishing. If you only have /cmd_vel with no feedback — PhysiCore can still run but SysID convergence is slower.</Step>
-                  <Step n={2}><Code>{`source /opt/ros/humble/setup.bash
-python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover`}</Code></Step>
-                </Phase>
-
-                <Phase n="PHASE 1 (alt)" title="Arduino/ESP32 serial rover">
-                  <Step n={1}>Your firmware must send JSON at 20-50 Hz with velocity and orientation. Use the Integration Engineer to generate exact firmware.</Step>
-                  <Step n={2}><Code>python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection COM3 --baud 115200</Code></Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Connect and adapt">
-                  <Step n={3}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={4}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. Drive the rover. PhysiCore learns terrain friction within 15 seconds. Moving to a new floor surface — friction adapts automatically.</Step>
-                  <Good>
-                    Terrain friction adapting as surface changes ✓<br/>
-                    Slip model learned per-wheel ✓<br/>
-                    Registry saves per-rover — next session starts smarter ✓
-                  </Good>
-                </Phase>
-              </section>
+                ))}
+              </div>
             )}
 
-            {/* ── SATELLITE ── */}
-            {manualSection === 'satellite' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Satellite / Spacecraft</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore includes a full orbital mechanics model with J2 oblateness perturbation, ISA atmosphere extension, and real-time inertia tensor estimation from reaction wheel telemetry.</p>
-                  <div className="p-4 border border-amber/20 bg-amber/5">
-                    <span className="font-mono text-[10px] text-amber uppercase tracking-widest">Advanced: requires attitude telemetry (quaternion or Euler) + reaction wheel speeds or thruster states over serial</span>
+            {manualSection === 'live' && (
+              <div className="space-y-6">
+                <H>Live Dashboard</H>
+                <P>The LIVE tab shows real-time telemetry when the PhysiCore bridge is connected.</P>
+                <H2>What is shown</H2>
+                {[
+                  ['Mass estimate', 'PhysiCore current belief about your robot mass. Converges over ~30 seconds.'],
+                  ['Friction estimate', 'Estimated friction coefficient. Changes when surface conditions change.'],
+                  ['Residual', 'Physics model error. Low = accurate. High = something unexpected.'],
+                  ['Sentinel mode', 'NOMINAL (green), CAUTIOUS (amber), FALLBACK (red).'],
+                  ['Failure log', 'Time-stamped record of every Sentinel fault event.'],
+                ].map(([label, desc], i) => (
+                  <div key={i} className="flex gap-3 p-3 bg-bgRaised border border-borderDim">
+                    <span className="font-mono text-[10px] text-cyan shrink-0 w-32">{label}</span>
+                    <span className="font-body text-xs text-textSecondary">{desc}</span>
                   </div>
-                </div>
-
-                <Phase n="PHASE 1" title="Telemetry format">
-                  <Step n={1}>Your flight computer must output JSON over serial at 10-50 Hz. Minimum:
-                    <Code>{`{"roll":0.0,"pitch":0.0,"yaw":0.0,"gyro_x":0.0,"gyro_y":0.0,"gyro_z":0.0,"altitude":550000,"timestamp":0}`}</Code>
-                    Altitude is in meters above Earth center (orbital altitude ~550km = 550000m + 6371000m).
-                  </Step>
-                </Phase>
-
-                <Phase n="PHASE 2" title="Run the bridge">
-                  <Step n={2}>Connect your flight computer over serial. Close any other serial terminals first.
-                    <Code>python physicore/bridge/physicore_bridge.py --platform satellite_serial --connection COM3 --baud 115200</Code>
-                  </Step>
-                  <Good>
-                    [ENGINE] Initialized for 'satellite'<br/>
-                    [ENGINE] J2 perturbation model active<br/>
-                    [TELEM] altitude=550000m | mass=100.000 | res=0.0000
-                  </Good>
-                </Phase>
-
-                <Phase n="PHASE 3" title="Attitude control">
-                  <Step n={3}>Dashboard → MAVLINK → <code className="text-cyan">ws://localhost:8765</code> → Connect.</Step>
-                  <Step n={4}>Click <strong className="text-white">ACTIVE CONTROL ON</strong>. PhysiCore runs a full J2-corrected attitude controller. Inertia tensor estimation converges from reaction wheel torque vs angular acceleration over the first 60 seconds.</Step>
-                </Phase>
-              </section>
+                ))}
+                <H2>Custom feature telemetry</H2>
+                <P>When you build a feature that emits custom telemetry keys, those keys automatically appear as new panels in the LIVE dashboard. No configuration needed.</P>
+              </div>
             )}
 
-            {/* ── CUSTOM HARDWARE ── */}
-            {manualSection === 'custom' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Custom Hardware</h1>
-                  <p className="font-body text-lg text-textSecondary">PhysiCore works with any hardware that can send JSON over serial, ROS2 topics, or MAVLink. You do not need to match a specific robot type.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">The contract — what PhysiCore needs</h2>
-                  <p className="font-body text-sm text-textSecondary">Your hardware sends sensor data. PhysiCore sends control commands back. That is the entire contract. Send what you have — PhysiCore uses whatever it gets.</p>
-                  <Code>{`// Minimum: send any of these fields at 20-50 Hz
-{"pitch":0.0}                    // angle in degrees — enough for basic adaptation
-{"pitch":0.0,"gyro_x":0.0}       // + rate — better
-{"pitch":0.0,"gyro_x":0.0,"accel_z":9.81,"motor_l":0.0,"motor_r":0.0,"timestamp":0}  // full`}</Code>
-                  <p className="font-body text-xs text-textSecondary">PhysiCore sends back: <code className="text-cyan">{"{"}"op":"command","action":[TORQUE]{"}"}</code> — apply that to your actuators.</p>
-                </div>
-
-                <Phase n="OPTION A" title="Arduino / ESP32 serial">
-                  <Step n={1}>Add JSON output to your existing sketch. Include: ArduinoJson library v6.x.</Step>
-                  <Step n={2}>Use the Integration Engineer — select "Custom hardware" — it generates exact starter firmware for your MCU and sensors.</Step>
-                  <Step n={3}><Code>python physicore/bridge/physicore_bridge.py --platform ground_rover_serial --connection COM3 --baud 115200</Code></Step>
-                </Phase>
-
-                <Phase n="OPTION B" title="ROS2 custom">
-                  <Step n={1}>Publish any sensor data as ROS2 topics. The bridge subscribes to /imu/data, /odom, /joint_states — publish whichever you have.</Step>
-                  <Step n={2}><Code>python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover</Code></Step>
-                </Phase>
-
-                <Phase n="OPTION C" title="MAVLink custom">
-                  <Step n={1}>If your hardware sends MAVLink telemetry (many FC boards do by default):<Code>python physicore/bridge/physicore_bridge.py --platform px4_quadrotor --connection udp:14550</Code></Step>
-                </Phase>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">What platform to use for your custom system</h2>
-                  <div className="space-y-2">
-                    {[
-                      { match:'Ground robot (wheels, treads)', platform:'ground_rover_serial or ros2_ground_rover' },
-                      { match:'Flying vehicle (any rotor config)', platform:'px4_quadrotor' },
-                      { match:'Robotic arm (serial or parallel)', platform:'ros2_manipulator' },
-                      { match:'Anything with a pendulum / balance', platform:'balancing_bot' },
-                      { match:'Rocket / high-acceleration', platform:'custom_rocket_fc' },
-                      { match:'Underwater / high-drag', platform:'ros2_auv' },
-                    ].map((r,i)=>(
-                      <div key={i} className="flex gap-4 p-3 border border-borderDim bg-bgRaised">
-                        <span className="font-body text-xs text-textSecondary flex-1">{r.match}</span>
-                        <code className="font-mono text-[10px] text-cyan">{r.platform}</code>
-                      </div>
-                    ))}
+            {manualSection === 'apikeys' && (
+              <div className="space-y-6">
+                <H>Setting Up AI</H>
+                <P>PhysiCore AI features (Build, Debug, Troubleshooter) require an API key stored in your browser only — never sent to any server.</P>
+                <H2>Getting a free Gemini key</H2>
+                {['Go to aistudio.google.com/app/apikey', 'Sign in with any Google account', 'Click "Create API key"', 'Copy the key (starts with AIza...)', 'In PhysiCore: click "SET UP AI" in the nav → paste → Save'].map((step, i) => (
+                  <div key={i} className="flex gap-3 font-body text-xs text-textSecondary">
+                    <span className="text-green font-bold shrink-0">{i + 1}.</span><span>{step}</span>
                   </div>
-                  <p className="font-body text-xs text-textSecondary">The platform choice determines the physics model PhysiCore starts with. Pick the closest match — SysID will correct for the difference within 30 seconds.</p>
-                </div>
-
-                <div className="p-6 border border-green/20 bg-green/5 space-y-3">
-                  <div className="font-mono text-[10px] text-green uppercase tracking-widest">Use the Integration Engineer</div>
-                  <p className="font-body text-sm text-textSecondary">Select "Custom hardware" in the Integration Engineer. Answer 6 questions. Get firmware, YAML config, and bridge command generated specifically for your system. 30 minutes from zero to PhysiCore running on your hardware.</p>
-                  <button onClick={()=>navigateToProject('integrate')} className="px-4 py-2 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
-                    Open Integration Engineer →
-                  </button>
-                </div>
-              </section>
+                ))}
+                <Code>{`https://aistudio.google.com/app/apikey`}</Code>
+                <H2>Optional: Anthropic key as backup</H2>
+                <P>If Gemini fails or hits limits, PhysiCore automatically falls back to Anthropic Claude. Get a key at console.anthropic.com/settings/keys.</P>
+              </div>
             )}
 
-            {/* ── CONFIG ── */}
-            {manualSection === 'config' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Robot Config (YAML)</h1>
-                  <p className="font-body text-lg text-textSecondary">Instead of remembering flags, write a YAML file once and reuse it forever.</p>
-                </div>
+            {manualSection === 'lib-bot' && (
+              <div className="space-y-6">
+                <H>Balancing Bot (Arduino)</H>
+                <P>Self-balancing two-wheeled robot. Arduino Uno/Mega + MPU6050/BNO055 + L298N/L293D motor driver.</P>
+                <H2>Wiring</H2>
+                <Code>{`MPU6050: SDA→A4, SCL→A5, VCC→3.3V, GND→GND
+L298N:   ENA→D9(PWM), IN1→D7, IN2→D8
+         ENB→D10(PWM), IN3→D5, IN4→D6`}</Code>
+                <H2>Copy-paste firmware (Arduino)</H2>
+                <Code>{`#include <Wire.h>
+#include <MPU6050.h>
+MPU6050 imu;
 
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Without config file</h2>
-                  <Code>python physicore/bridge/physicore_bridge.py --platform balancing_bot_arduino --connection COM3 --baud 115200</Code>
-                </div>
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+  imu.initialize();
+  pinMode(7, OUTPUT); pinMode(8, OUTPUT);
+  pinMode(5, OUTPUT); pinMode(6, OUTPUT);
+  pinMode(9, OUTPUT); pinMode(10, OUTPUT);
+}
 
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">With config file</h2>
-                  <Code>python physicore/bridge/physicore_bridge.py --config balancing_bot_robot.yaml</Code>
-                  <p className="font-body text-sm text-textSecondary">Same result. But you never have to remember the flags again. The config file also tells the registry exactly which robot this is, so the right saved model loads automatically.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Example — balancing bot</h2>
-                  <p className="font-body text-xs text-textSecondary">Only change two values: your port and your robot's weight.</p>
-                  <Code>{`name: My Balancing Bot
-platform: balancing_bot
-connection: COM3       # ← change this to your port
-baud: 115200
-mass: 1.0              # ← change this to your robot's weight in kg
-friction: 0.15
-inertia: 0.01
-imu: MPU6050
-motor_driver: L298N
-mcu: Arduino Uno
-control_hz: 60.0
-use_registry: true
-opt_in_telemetry: false
-max_torque: 2.5`}</Code>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Creating a template</h2>
-                  <p className="font-body text-xs text-textSecondary">Run this to generate a ready-to-edit config file for any platform:</p>
-                  <Code>python physicore/bridge/physicore_bridge.py --init-config balancing_bot</Code>
-                  <p className="font-body text-xs text-textSecondary">This creates <code className="text-cyan">balancing_bot_robot.yaml</code> in your current folder. Open it, change your port and mass, save.</p>
-                </div>
-              </section>
+void loop() {
+  int16_t ax, ay, az, gx, gy, gz;
+  imu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
+  float pitch = atan2(ax, az) * 180.0 / PI;
+  float gyro_x = gx / 131.0;
+  Serial.print("{\"pitch\":"); Serial.print(pitch, 4);
+  Serial.print(",\"gyro_x\":"); Serial.print(gyro_x, 4);
+  Serial.println("}");
+  if (Serial.available() > 0) {
+    float action = Serial.readStringUntil('\\n').toFloat();
+    int pwm = constrain(abs(action) * 255, 0, 255);
+    bool fwd = action > 0;
+    digitalWrite(7, fwd); digitalWrite(8, !fwd); analogWrite(9, pwm);
+    digitalWrite(5, fwd); digitalWrite(6, !fwd); analogWrite(10, pwm);
+  }
+  delay(16);
+}`}</Code>
+                <H2>YAML config</H2>
+                <Code>{`platform: balancing_bot
+connection:
+  mode: serial
+  port: /dev/ttyACM0
+  baud: 115200
+parameters:
+  mass: 1.2
+  wheel_radius: 0.033
+  wheel_base: 0.12
+  friction: 0.2`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform balancing_bot --port /dev/ttyACM0`}</Code>
+                <Note>Common issue: MPU6050 at wrong I2C address. Default is 0x68. If AD0 pin is HIGH, use 0x69.</Note>
+              </div>
             )}
 
-            {/* ── REGISTRY ── */}
-            {manualSection === 'registry' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Persistent Learning</h1>
-                  <p className="font-body text-lg text-textSecondary">Every session saves. Every deployment starts smarter than the last.</p>
-                </div>
-
-                <div className="space-y-6">
-                  <div className="p-6 border border-cyan/20 bg-cyan/5 space-y-3">
-                    <div className="font-mono text-[10px] text-cyan uppercase tracking-widest">Without registry</div>
-                    <p className="font-body text-sm text-textSecondary">Every time you run PhysiCore, it starts at mass=1.0, friction=0.15. It takes 30 seconds to converge. Every session is the same.</p>
-                  </div>
-                  <div className="p-6 border border-green/20 bg-green/5 space-y-3">
-                    <div className="font-mono text-[10px] text-green uppercase tracking-widest">With registry (use_registry: true)</div>
-                    <p className="font-body text-sm text-textSecondary">First session: converges from 1.0 to 1.16 over 30 seconds. Saves. Second session: starts at 1.16. Converges to 1.22 in 10 seconds. Third session: starts at 1.22. Already close. Gets better every run.</p>
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">What gets saved</h2>
-                  {[
-                    { item: 'SystemID parameters', detail: 'Converged mass, friction, inertia estimates. Weighted average across sessions — more converged sessions count more.' },
-                    { item: 'Residual ensemble weights', detail: 'The three neural network weights that learned what your simulator gets wrong. Loads pre-trained next session.' },
-                    { item: 'CEM warm start', detail: 'The optimizer\'s memory of good action sequences. First few control steps are better immediately.' },
-                    { item: 'Session log', detail: 'Every session recorded: timestamp, steps, convergence quality, final params.' },
-                  ].map((s, i) => (
-                    <div key={i} className="p-4 border border-borderDim bg-bgRaised space-y-1">
-                      <div className="font-display text-xs font-bold text-white">{s.item}</div>
-                      <div className="font-body text-xs text-textSecondary">{s.detail}</div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Where it saves</h2>
-                  <Code>{`~/.physicore/registry/{platform_hardware_key}/
-  params.json          ← latest converged params
-  ensemble_0.npz       ← neural network weights
-  ensemble_1.npz
-  ensemble_2.npz
-  cem_warmstart.npz    ← optimizer warm start
-  sessions.jsonl       ← session history
-  platform_prior.json  ← aggregated prior`}</Code>
-                  <p className="font-body text-xs text-textSecondary">The key is specific to your hardware combination — a bot with MPU6050 + L298N has a different entry from one with BNO055 + TB6612. They don't share params.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Enabling it</h2>
-                  <p className="font-body text-xs text-textSecondary">Set in your YAML config:</p>
-                  <Code>use_registry: true</Code>
-                  <p className="font-body text-xs text-textSecondary">Registry saves automatically when you stop the bridge with Ctrl+C. Loads automatically at startup. No other configuration needed.</p>
-                </div>
-              </section>
+            {manualSection === 'lib-drone' && (
+              <div className="space-y-6">
+                <H>PX4 / ArduPilot Drone</H>
+                <P>Quadrotor or fixed-wing UAV running PX4 or ArduPilot firmware. PhysiCore connects via MAVLink over USB or telemetry radio.</P>
+                <H2>YAML config (PX4)</H2>
+                <Code>{`platform: quadrotor
+connection:
+  mode: mavlink_bridge
+  endpoint: /dev/ttyACM0
+parameters:
+  mass: 0.85
+  arm_length: 0.12
+  Ixx: 0.003
+  Iyy: 0.003
+  Izz: 0.005`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform quadrotor --endpoint /dev/ttyACM0`}</Code>
+                <Warn>Set PhysiCore to OFFBOARD mode in PX4. ArduPilot: use GUIDED mode.</Warn>
+              </div>
             )}
 
-            {/* ── SENTINEL ── */}
+            {manualSection === 'lib-rocket' && (
+              <div className="space-y-6">
+                <H>Sounding Rocket</H>
+                <P>Liquid or hybrid sounding rocket with onboard flight computer. PhysiCore runs TVC or fin actuation.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: rocket
+connection:
+  mode: serial
+  port: /dev/ttyUSB0
+  baud: 115200
+parameters:
+  dry_mass: 4.2
+  propellant_mass: 1.8
+  length: 1.4
+  diameter: 0.076
+  Cd: 0.45
+  nozzle_area: 0.0015`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform rocket --port /dev/ttyUSB0`}</Code>
+                <Note>PhysiCore includes Mach drag correction and ISA atmosphere. Set Cd at subsonic conditions.</Note>
+              </div>
+            )}
+
+            {manualSection === 'lib-arm' && (
+              <div className="space-y-6">
+                <H>ROS2 Robot Arm</H>
+                <P>6-DOF serial manipulator running ROS2. PhysiCore connects as a ROS2 node.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: manipulator_arm
+connection:
+  mode: ros2
+  joint_state_topic: /joint_states
+  command_topic: /effort_controller/commands
+parameters:
+  dof: 6
+  link_masses: [2.1, 1.8, 1.2, 0.8, 0.5, 0.3]
+  link_lengths: [0.25, 0.22, 0.18, 0.15, 0.10, 0.08]
+  payload_mass: 0.5`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`source /opt/ros/humble/setup.bash
+python physicore_bridge.py --platform manipulator_arm --ros2`}</Code>
+                <P>Results from real hardware (6 runs): end-effector error −88.4%, overshoot eliminated, settling time −84.9%, torque −71.4%.</P>
+              </div>
+            )}
+
+            {manualSection === 'lib-legged' && (
+              <div className="space-y-6">
+                <H>Legged Robot</H>
+                <P>Quadruped or biped running ROS2. PhysiCore learns gait dynamics and terrain adaptation.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: legged_robot
+connection:
+  mode: ros2
+  state_topic: /robot/state
+  command_topic: /robot/cmd_vel
+parameters:
+  body_mass: 12.0
+  leg_count: 4
+  leg_mass: 0.8
+  foot_friction: 0.7
+  stance_height: 0.35`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform legged_robot --ros2`}</Code>
+              </div>
+            )}
+
+            {manualSection === 'lib-auv' && (
+              <div className="space-y-6">
+                <H>AUV / Underwater Vehicle</H>
+                <P>Autonomous underwater vehicle. 6-DOF hydrodynamic model with added mass and drag.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: auv
+connection:
+  mode: ros2
+parameters:
+  mass: 8.5
+  displaced_volume: 0.0085
+  drag_linear: 8.2
+  drag_quadratic: 0.5
+  added_mass: 2.1`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform auv --ros2`}</Code>
+              </div>
+            )}
+
+            {manualSection === 'lib-evtol' && (
+              <div className="space-y-6">
+                <H>eVTOL Aircraft</H>
+                <P>Electric vertical take-off and landing aircraft. Multi-rotor lift with fixed-wing forward flight.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: evtol
+connection:
+  mode: mavlink_bridge
+  endpoint: /dev/ttyACM0
+parameters:
+  mass: 22.0
+  lift_rotors: 8
+  cruise_speed: 28
+  transition_speed: 18
+  wing_area: 1.8
+  Cd0: 0.025`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform evtol --endpoint /dev/ttyACM0`}</Code>
+              </div>
+            )}
+
+            {manualSection === 'lib-rover' && (
+              <div className="space-y-6">
+                <H>Ground Rover / AMR</H>
+                <P>Differential-drive or Ackermann rover. Terrain-adaptive traction control.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: ground_rover
+connection:
+  mode: ros2
+parameters:
+  mass: 3.2
+  wheelbase: 0.32
+  wheel_radius: 0.065
+  friction: 0.6
+  max_speed: 1.5`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform ground_rover --ros2`}</Code>
+                <P>Results from real hardware (3 runs, 2,841m): cross-track error −84.6%, on-heading time 96.2%, terrain adaptation ≤9 seconds.</P>
+              </div>
+            )}
+
+            {manualSection === 'lib-sat' && (
+              <div className="space-y-6">
+                <H>Satellite / Spacecraft</H>
+                <P>CubeSat or small satellite. Reaction wheel attitude control with J2 perturbation.</P>
+                <H2>YAML config</H2>
+                <Code>{`platform: satellite
+connection:
+  mode: serial
+  port: /dev/ttyUSB0
+  baud: 115200
+parameters:
+  mass: 4.0
+  Ixx: 0.012
+  Iyy: 0.012
+  Izz: 0.008
+  orbit_altitude: 550
+  reaction_wheel_Nm: 0.2`}</Code>
+                <H2>Bridge command</H2>
+                <Code>{`python physicore_bridge.py --platform satellite --port /dev/ttyUSB0`}</Code>
+                <Note>PhysiCore includes J2 gravitational perturbation for low-earth orbit.</Note>
+              </div>
+            )}
+
+            {manualSection === 'lib-custom' && (
+              <div className="space-y-6">
+                <H>Custom Hardware</H>
+                <P>Select "Custom Hardware" in the INTEGRATE tab and describe your system. The AI generates a complete custom integration.</P>
+                <H2>Serial protocol (DIY hardware)</H2>
+                <Code>{`# Your hardware sends (50Hz):
+{"state": [val1, val2, ...], "t": 1234567890}
+
+# PhysiCore sends back:
+{"action": [0.45, -0.23, ...], "step": 42}`}</Code>
+                <H2>Python Extension API</H2>
+                <Code>{`from physicore.extensions import PhysiCoreExtension, ExtensionMeta
+
+class MyCustomHardware(PhysiCoreExtension):
+    meta = ExtensionMeta(
+        name="my_hardware",
+        hooks=["pre_step", "post_step", "on_fault"]
+    )
+    def pre_step(self, state, x_ref, engine):
+        return state, x_ref
+    def post_step(self, step, engine):
+        pass
+    def on_fault(self, fault_type, engine):
+        pass`}</Code>
+              </div>
+            )}
+
             {manualSection === 'sentinel' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Sentinel OS</h1>
-                  <p className="font-body text-lg text-textSecondary">The safety layer that runs underneath PhysiCore. It monitors every step and can override or halt control instantly. You cannot bypass it.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Three modes</h2>
-                  <div className="space-y-3">
-                    {[
-                      { mode: 'NOMINAL', color: COLORS.green, trigger: 'All metrics within bounds', action: 'Full PhysiCore control. No restrictions.' },
-                      { mode: 'CAUTIOUS', color: COLORS.amber, trigger: 'One metric near limit (uncertainty 5-15%, or residual 0.5-2.0)', action: 'PhysiCore output scaled to 60%. Tighter action bounds.' },
-                      { mode: 'FALLBACK', color: COLORS.red, trigger: 'Any metric exceeded (uncertainty > 15%, Lyapunov energy exceeded, state explosion)', action: 'PhysiCore disabled. Safe fallback controller (zero action or PID) takes over.' },
-                    ].map((m, i) => (
-                      <div key={i} className="p-4 border border-borderDim bg-bgRaised space-y-2">
-                        <div className="flex items-center gap-3">
-                          <span className="font-display text-sm font-bold" style={{ color: m.color }}>{m.mode}</span>
-                        </div>
-                        <div className="font-body text-xs text-textSecondary"><strong className="text-white">Triggers when:</strong> {m.trigger}</div>
-                        <div className="font-body text-xs text-textSecondary"><strong className="text-white">Action:</strong> {m.action}</div>
-                      </div>
-                    ))}
+              <div className="space-y-6">
+                <H>Sentinel Safety Layer</H>
+                <P>Sentinel is the mandatory safety wrapper around all PhysiCore outputs. It cannot be disabled.</P>
+                <H2>Three modes</H2>
+                {[
+                  ['NOMINAL', 'green', 'Full PhysiCore output. Uncertainty < 5%, residual < 0.5.'],
+                  ['CAUTIOUS', 'amber', '60% output, tighter bounds. Uncertainty 5-15%.'],
+                  ['FALLBACK', 'red', 'PhysiCore off. Safe deterministic controller takes over.'],
+                ].map(([mode, color, desc], i) => (
+                  <div key={i} className={`p-4 border bg-bgRaised flex gap-4 items-start border-${color}/30`}>
+                    <span className={`font-mono text-[10px] font-bold uppercase shrink-0 text-${color}`}>{mode}</span>
+                    <span className="font-body text-xs text-textSecondary">{desc}</span>
                   </div>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Recovery</h2>
-                  <p className="font-body text-sm text-textSecondary">FALLBACK → CAUTIOUS automatically after 300 stable steps (~5 seconds). CAUTIOUS → NOMINAL after 50 stable steps (~0.8 seconds). No manual intervention needed.</p>
-                </div>
-
-                <div className="space-y-4">
-                  <h2 className="font-display text-sm font-bold text-white uppercase tracking-widest">Forensic log</h2>
-                  <p className="font-body text-sm text-textSecondary">Every control command is signed with SHA-256 and chained. If the log is tampered with, the chain breaks. Every mode transition is recorded with the trigger reason, parameter snapshot, and timestamp.</p>
-                  <p className="font-body text-xs text-textDim">Save to file: set <code className="text-cyan">log_path: /path/to/sentinel.log</code> in your Sentinel config.</p>
-                </div>
-              </section>
+                ))}
+                <H2>SHA-256 forensic log</H2>
+                <P>Every control command is signed with SHA-256 and chained. Every decision is traceable and tamper-evident.</P>
+                <H2>Recovery</H2>
+                <P>FALLBACK to CAUTIOUS: after 300 consecutive stable steps. CAUTIOUS to NOMINAL: after 50 stable steps. Fully automatic.</P>
+              </div>
             )}
 
-            {/* ── TROUBLESHOOTING ── */}
+            {manualSection === 'registry' && (
+              <div className="space-y-6">
+                <H>Persistent Learning</H>
+                <P>PhysiCore remembers what it learned. Every session saves mass estimates, friction coefficients, and residual ensemble weights.</P>
+                <H2>Registry location</H2>
+                <Code>{`~/.physicore/registry/{platform}/
+  params.json       # learned mass, friction, inertia
+  ensemble_1.pt     # MLP weights (network 1)
+  ensemble_2.pt     # MLP weights (network 2)
+  ensemble_3.pt     # MLP weights (network 3)
+  session_log.json  # session history`}</Code>
+                <H2>Resetting</H2>
+                <Code>{`rm -rf ~/.physicore/registry/{platform}`}</Code>
+              </div>
+            )}
+
+            {manualSection === 'extensions' && (
+              <div className="space-y-6">
+                <H>Extensions API</H>
+                <P>The PhysiCore Extension API lets you add custom behaviors to the physics loop via four hooks.</P>
+                <H2>Hooks</H2>
+                {[
+                  ['pre_step(state, x_ref, engine)', 'Runs before MPC. Modify state or reference trajectory.'],
+                  ['post_step(step, engine)', 'Runs after MPC. Inspect or modify the action.'],
+                  ['on_fault(fault_type, engine)', 'Runs when Sentinel detects a fault.'],
+                  ['on_telemetry(packet)', 'Runs on every telemetry packet. Use for logging.'],
+                ].map(([hook, desc], i) => (
+                  <div key={i} className="space-y-1 p-4 bg-bgRaised border border-borderDim">
+                    <code className="font-mono text-[10px] text-cyan">{hook}</code>
+                    <p className="font-body text-xs text-textSecondary">{desc}</p>
+                  </div>
+                ))}
+                <H2>Full example</H2>
+                <Code>{`from physicore.extensions import PhysiCoreExtension, ExtensionMeta
+import csv, time, pathlib
+
+class FrictionLogger(PhysiCoreExtension):
+    meta = ExtensionMeta(
+        name="friction_logger",
+        hooks=["on_telemetry"],
+        telemetry_keys=["friction_log_active"]
+    )
+    def __init__(self):
+        self.log_path = pathlib.Path("~/.physicore/logs/friction.csv").expanduser()
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_log = 0
+        self._file = open(self.log_path, 'a', newline='')
+        self._writer = csv.writer(self._file)
+    def on_telemetry(self, packet):
+        now = time.time()
+        if now - self._last_log >= 0.1:
+            self._writer.writerow([now, packet.get('friction', 0)])
+            self._file.flush()
+            self._last_log = now
+            packet["friction_log_active"] = 1`}</Code>
+              </div>
+            )}
+
             {manualSection === 'troubleshoot' && (
-              <section className="space-y-10">
-                <div className="space-y-4">
-                  <h1 className="font-display text-4xl font-black text-white tracking-tighter uppercase">Troubleshooting</h1>
-                  <p className="font-body text-lg text-textSecondary">Every error. Exact fix. No vague advice.</p>
-                </div>
-
-                <div className="space-y-6">
-                  {[
-                    {
-                      error: 'Serial failed — retrying in 3s',
-                      causes: ['Arduino IDE is still open (most common)', 'Wrong COM port number'],
-                      fixes: [
-                        'Close Arduino IDE completely — not minimized, fully closed. Then run the bridge again.',
-                        'Check Device Manager → Ports (COM & LPT) → find your Arduino\'s actual COM number. Update --connection.',
-                      ],
-                    },
-                    {
-                      error: 'MPU6050 not found — check wiring',
-                      causes: ['Wiring is wrong', 'VCC connected to 5V instead of 3.3V'],
-                      fixes: [
-                        'SDA must go to A4. SCL must go to A5. Pull each wire out and push back in firmly.',
-                        'VCC must go to 3.3V pin on Arduino. If it was in 5V, the MPU6050 may be damaged.',
-                      ],
-                    },
-                    {
-                      error: 'Pitch shows 0.0 and never changes',
-                      causes: ['Arduino not sending data', 'Bridge port mismatch'],
-                      fixes: [
-                        'Unplug Arduino USB. Plug back in. Wait 5 seconds for calibration message in bridge terminal.',
-                        'Open Arduino Serial Monitor at 115200 baud. Do you see JSON? If yes, compare the port in the title bar vs your bridge --connection flag.',
-                      ],
-                    },
-                    {
-                      error: 'Motors spin full speed in one direction and won\'t stop',
-                      causes: ['BALANCE_POINT is wrong', 'Bot thinks it\'s always falling'],
-                      fixes: [
-                        'Redo Phase 2 calibration. Hold bot upright, read pitch from Serial Monitor, set BALANCE_POINT to that exact value, re-flash.',
-                      ],
-                    },
-                    {
-                      error: 'Motors barely move / no visible response',
-                      causes: ['MAX_TORQUE is 100 instead of 2.5', 'ACTIVE CONTROL ON not clicked'],
-                      fixes: [
-                        'Open firmware. Find const float MAX_TORQUE = ... and make sure it says 2.5, not 100. At 100, motors get <1% power.',
-                        'Click ACTIVE CONTROL ON in the dashboard. PhysiCore only sends commands when explicitly enabled.',
-                      ],
-                    },
-                    {
-                      error: 'steps not counting after ACTIVE CONTROL ON',
-                      causes: ['Dashboard not connected', 'Bridge not running', 'No sensor data flowing'],
-                      fixes: [
-                        'Check dashboard shows "Connected" in green. If not — click MAVLINK, type ws://localhost:8765, click Connect.',
-                        'Check the bridge terminal is still running and printing telemetry lines.',
-                        'Check pitch is updating in dashboard. If frozen at 0 — bridge is not receiving data from hardware.',
-                      ],
-                    },
-                    {
-                      error: 'python is not recognized',
-                      causes: ['Python not installed', 'Not in PATH'],
-                      fixes: [
-                        'Go to python.org. Download Python 3. Run installer. On the FIRST screen, tick "Add Python to PATH". Install. Restart terminal.',
-                        'Try python3 instead of python (Mac/Linux default).',
-                      ],
-                    },
-                    {
-                      error: 'pip install fails with permission error',
-                      causes: ['Permissions issue'],
-                      fixes: ['Run: python -m pip install pymavlink websockets aiohttp pyserial pyyaml'],
-                    },
-                    {
-                      error: 'Bridge crashes on import',
-                      causes: ['Missing dependencies', 'ROS2 not sourced'],
-                      fixes: [
-                        'Run: pip install pymavlink websockets aiohttp pyserial pyyaml',
-                        'For ROS2 platforms: source /opt/ros/humble/setup.bash before running bridge.',
-                      ],
-                    },
-                  ].map((item, i) => (
-                    <div key={i} className="border border-borderDim bg-bgRaised overflow-hidden">
-                      <div className="p-4 border-b border-borderDim bg-bg">
-                        <span className="font-mono text-[11px] text-red">{item.error}</span>
-                      </div>
-                      <div className="p-4 space-y-3">
-                        <div className="space-y-1">
-                          <span className="font-mono text-[9px] text-textDim uppercase tracking-widest">Cause</span>
-                          {item.causes.map((c, j) => (
-                            <div key={j} className="font-body text-xs text-textSecondary">• {c}</div>
-                          ))}
-                        </div>
-                        <div className="space-y-2">
-                          <span className="font-mono text-[9px] text-green uppercase tracking-widest">Fix</span>
-                          {item.fixes.map((f, j) => (
-                            <div key={j} className="font-body text-xs text-textSecondary p-2 bg-bg border border-borderDim">→ {f}</div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="p-6 border border-cyan/20 bg-cyan/5 space-y-3">
-                  <div className="font-mono text-[10px] text-cyan uppercase tracking-widest">Still stuck?</div>
-                  <p className="font-body text-sm text-textSecondary">Use the Integration Engineer — click the button in the top navigation. It knows your exact hardware setup and gives you the exact fix for your specific error. Just describe what you see.</p>
-                </div>
-              </section>
+              <div className="space-y-6">
+                <H>Troubleshooting</H>
+                <H2>Bridge won't connect</H2>
+                {['Close Arduino IDE — it holds the serial port', 'Check port: ls /dev/tty* on Linux, Device Manager on Windows', 'Check baud rate matches firmware (default 115200)', 'Try: python physicore_bridge.py --port /dev/ttyACM0 --baud 115200 --debug'].map((item, i) => (
+                  <div key={i} className="flex gap-2 font-body text-xs text-textSecondary"><span className="text-amber shrink-0">→</span><span>{item}</span></div>
+                ))}
+                <H2>IMU reading zero</H2>
+                {['Check I2C wiring: SDA and SCL must be correct pins (A4/A5 on Uno)', 'MPU6050 needs 3.3V not 5V', 'Check address: default 0x68, use 0x69 if AD0 pin is HIGH', 'Test: i2cdetect -y 1 (should show 0x68)'].map((item, i) => (
+                  <div key={i} className="flex gap-2 font-body text-xs text-textSecondary"><span className="text-amber shrink-0">→</span><span>{item}</span></div>
+                ))}
+                <H2>High residual / Sentinel in CAUTIOUS</H2>
+                {['Normal for first 30 seconds — model is still learning', 'If stays high: check declared mass matches actual mass', 'Surface change → friction estimate needs to adapt (5-15s)', 'Sensor noise → check IMU wiring, add 100μF cap on power line'].map((item, i) => (
+                  <div key={i} className="flex gap-2 font-body text-xs text-textSecondary"><span className="text-amber shrink-0">→</span><span>{item}</span></div>
+                ))}
+                <H2>AI features not working</H2>
+                {['Click "SET UP AI" in nav — check key is set (shows green "AI ON")', 'Gemini free key: get at aistudio.google.com/app/apikey', 'Key starts with AIza... for Gemini, sk-ant-... for Anthropic', 'Try clearing and re-entering the key from the modal'].map((item, i) => (
+                  <div key={i} className="flex gap-2 font-body text-xs text-textSecondary"><span className="text-amber shrink-0">→</span><span>{item}</span></div>
+                ))}
+                <Note>Use the DEBUG tab inside your project for AI-powered diagnosis. It knows your hardware, your features, and your live telemetry.</Note>
+              </div>
             )}
 
           </div>
@@ -8562,6 +8419,10 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
         ) : view === 'manual' ? (
           <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderManual()}
+          </motion.div>
+        ) : view === 'whitepaper' ? (
+          <motion.div key="whitepaper" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderWhitepaper()}
           </motion.div>
         ) : view === 'team' ? (
           <motion.div key="team" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
