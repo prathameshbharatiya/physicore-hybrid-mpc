@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SimMode, StateVector, ControlInput, PhysicalParams, SimState, TelemetryPoint, MetaAnalysisResponse, Project, FailureLog } from './src/types';
+import { SimMode, StateVector, ControlInput, PhysicalParams, SimState, TelemetryPoint, MetaAnalysisResponse, Project, FailureLog, FeatureManifest } from './src/types';
 import { stepDynamicsRK4 } from './src/services/physicsLogic';
 import { computeMPCAction } from './src/services/optimizer';
 import { updateSystemID } from './src/services/systemID';
@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import SimulationCanvas from './src/components/SimulationCanvas';
+import PhysiEditor from './src/components/PhysiEditor';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -360,18 +361,12 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-// Lazy initializer for Gemini
-// Key is read from Vite env (VITE_GEMINI_API_KEY in Vercel environment variables)
+// Lazy initializer for Gemini — key is read fresh on every call so hot-reloading works
 let aiInstance: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI | null {
-  if (!aiInstance) {
-    const key = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
-    if (!key) {
-      // No key — AI features degrade gracefully to local narration
-      return null;
-    }
-    aiInstance = new GoogleGenAI({ apiKey: key });
-  }
+  const key = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+  if (!key) { aiInstance = null; return null; }
+  if (!aiInstance) { aiInstance = new GoogleGenAI({ apiKey: key }); }
   return aiInstance;
 }
 
@@ -405,7 +400,8 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team' | 'projects' | 'debugger';
+type View = 'home' | 'project' | 'manual' | 'team' | 'projects';
+type ProjectTab = 'integrate' | 'build' | 'debug' | 'live';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -2737,9 +2733,32 @@ function AppContent() {
   }, [isAdmin, allUsers.length, isBootstrapping, user]);
 
   const [view, setView] = useState<View>('home');
+  const [projectTab, setProjectTab] = useState<ProjectTab>('integrate');
+  const [editingFileKey, setEditingFileKey] = useState<string | null>(null);
+  const [originalFiles, setOriginalFiles] = useState<Record<string, string>>({});
+
+  const navigateToProject = (tab: ProjectTab = 'integrate') => {
+    setProjectTab(tab);
+    setView('project');
+  };
+
+  // Redirect logged-in users from home to projects
+  useEffect(() => {
+    if (user && view === 'home') {
+      setView('projects');
+    }
+  }, [user]);
+
   const [activeSection, setActiveSection] = useState('overview');
   const [manualSection, setManualSection] = useState('intro');
   const [isControlActive, setIsControlActive] = useState(false);
+
+  // Build Tab State
+  const [buildMessages, setBuildMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
+  const [buildInput, setBuildInput] = useState('');
+  const [isBuildLoading, setIsBuildLoading] = useState(false);
+  const [buildFeatures, setBuildFeatures] = useState<FeatureManifest[]>([]);
+  const [selectedBuildFile, setSelectedBuildFile] = useState<string | null>(null);
 
   // Integration Engineer State
   const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
@@ -3420,7 +3439,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
 
   useEffect(() => {
     let interval: any;
-    if (isSystemConnected && view === 'dashboard') {
+    if (isSystemConnected && view === 'project' && projectTab === 'live') {
       // Initial analysis
       performTelemetryAnalysis();
       // Periodic analysis every 30 seconds to avoid hitting rate limits too hard
@@ -3502,7 +3521,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     if (result.success) {
       setHandshakeConfirmed(true);
       setIsSystemConnected(true);
-      setView('dashboard');
+      navigateToProject('live');
 
       // Initialize MPC state
       setSimState(prev => ({
@@ -3530,7 +3549,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
       // and show the connection error clearly.
       setHandshakeConfirmed(false);
       setConnectionError(result.reason || "Hardware link failed.");
-      setView('dashboard');
+      navigateToProject('live');
     }
     setIsSystemConnecting(false);
   };
@@ -3549,7 +3568,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     setDigitalTwinConfirmed(true);
     setHandshakeConfirmed(true);
     setIsSystemConnected(true);
-    setView('dashboard');
+    navigateToProject('live');
   };
 
   // Scroll tracking
@@ -3586,12 +3605,35 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
   }, [view, loading, checkingAccess]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const ieSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [conversationHistory, isTyping]);
+
+  // Debounced IE progress persistence
+  useEffect(() => {
+    if (!user || !activeProject) return;
+    if (ieSaveTimer.current) clearTimeout(ieSaveTimer.current);
+    ieSaveTimer.current = setTimeout(async () => {
+      try {
+        await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
+          ieProgress: {
+            phase: ieState.phase,
+            hw: ieState.hw,
+            qIndex: ieState.qIndex,
+            answers: ieState.answers,
+          },
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {
+        // non-fatal
+      }
+    }, 1500);
+    return () => { if (ieSaveTimer.current) clearTimeout(ieSaveTimer.current); };
+  }, [ieState.phase, ieState.hw, ieState.qIndex, ieState.answers]);
 
   const parseAIResponse = (text: string) => {
     const parts = [];
@@ -3808,7 +3850,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
   }, [user]);
 
   const createProject = async (name: string, hardware: string, answers: Record<string, string>, files: GeneratedFile[]) => {
-    if (!user) return null;
+    if (!user) { alert('Please sign in first.'); return null; }
     const now = new Date().toISOString();
     const hwFlowPlatforms: Record<string, string> = {
       balancing_bot: 'balancing_bot', px4: 'quadrotor', ardupilot: 'quadrotor',
@@ -3822,10 +3864,16 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
       registryPlatformKey: hwFlowPlatforms[hardware] || hardware,
       connectionMode: 'mavlink_bridge', endpoint: 'ws://localhost:8765', notes: '',
     };
-    const ref = await addDoc(collection(db, 'users', user.uid, 'projects'), proj);
-    const newProj = { id: ref.id, ...proj };
-    setActiveProject(newProj);
-    return newProj;
+    try {
+      const ref = await addDoc(collection(db, 'users', user.uid, 'projects'), proj);
+      const newProj = { id: ref.id, ...proj };
+      setActiveProject(newProj);
+      return newProj;
+    } catch (err: any) {
+      console.error('[PROJECTS] Firestore write failed:', err);
+      alert(`Could not save project: ${err?.message || 'Permission denied'}. Check browser console.`);
+      return null;
+    }
   };
 
   const updateProject = async (id: string, changes: Partial<Project>) => {
@@ -3869,7 +3917,8 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     } else {
       setIE({ phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [], checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '' });
     }
-    setView('integrator');
+    setOriginalFiles(Object.fromEntries(project.generatedFiles.map(f => [f.filename, f.content])));
+    navigateToProject('integrate');
   };
 
   const handleRocketLaunch = () => {
@@ -3891,7 +3940,7 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
 
   // AI Logic
   useEffect(() => {
-    if (isSystemConnected && view === 'dashboard' && projectData) {
+    if (isSystemConnected && view === 'project' && projectTab === 'live' && projectData) {
       const interval = setInterval(() => {
         setProjectData(prev => {
           if (!prev) return prev;
@@ -4242,7 +4291,7 @@ Be direct, technical, confident. You are the world's best robotics integration e
       await handleLogin();
       if (!auth.currentUser) return;
     }
-    setView('integrator');
+    navigateToProject('integrate');
   };
 
   const renderNav = () => (
@@ -4255,100 +4304,46 @@ Be direct, technical, confident. You are the world's best robotics integration e
           <span className="font-display text-lg font-bold tracking-widest text-white">PHYSICORE</span>
           <span className="font-mono text-[10px] text-textDim">v3.0</span>
         </div>
-        <div className="h-4 w-px bg-border mx-2" />
-        <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">
-          {view === 'dashboard' ? 'LIVE MISSION CONTROL' : 'Physics Intelligence Engine'}
-        </span>
 
-        {view === 'dashboard' && activeProject && (
-          <div className="flex items-center gap-2 ml-4 px-3 py-1 border border-cyan/30 bg-bgRaised">
-            <div className="w-1.5 h-1.5 rounded-full bg-cyan" />
-            <span className="font-mono text-[9px] text-cyan uppercase tracking-widest">PROJECT: {activeProject.name}</span>
-            <button onClick={() => setView('projects')} className="font-mono text-[8px] text-textDim hover:text-cyan transition-colors uppercase tracking-widest">⬡ CHANGE</button>
+        {view === 'project' && activeProject ? (
+          <div className="flex items-center gap-2 ml-2">
+            <div className="h-4 w-px bg-border mx-1" />
+            <button onClick={() => setView('projects')} className="font-mono text-[10px] text-textDim hover:text-cyan transition-colors uppercase tracking-widest">PROJECTS</button>
+            <ChevronRight size={12} className="text-textDim" />
+            <span className="font-mono text-[10px] text-white uppercase tracking-widest">{activeProject.name}</span>
+            <div className="h-4 w-px bg-border mx-2" />
+            {(['integrate', 'build', 'debug', 'live'] as ProjectTab[]).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setProjectTab(tab)}
+                className={`px-3 py-1 font-display text-[10px] font-bold uppercase tracking-widest transition-all ${projectTab === tab
+                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : 'bg-green text-black'
+                  : 'text-textDim hover:text-textPrimary border border-transparent hover:border-border'}`}
+              >
+                {tab === 'integrate' ? '⬡ INTEGRATE' : tab === 'build' ? '⬡ BUILD' : tab === 'debug' ? '⬡ DEBUG' : '⬡ LIVE'}
+                {tab === 'debug' && (telemetry.isFaulted || failureLogs.length > 0) && (
+                  <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
+                )}
+              </button>
+            ))}
           </div>
-        )}
-        {view === 'dashboard' && projectData && (
-          <div className="relative ml-4">
-            <button
-              onClick={() => setShowProjectDropdown(!showProjectDropdown)}
-              className="flex items-center gap-2 px-3 py-1 bg-bgRaised border border-cyan/30 hover:border-cyan transition-all group"
-            >
-              <div className="w-1.5 h-1.5 rounded-full bg-cyan animate-pulse" />
-              <span className="font-mono text-[10px] text-cyan uppercase tracking-widest">
-                PROJECT: {projectData.id}
-              </span>
-              <span className="font-mono text-[8px] text-textDim uppercase px-1 bg-void border border-borderDim">
-                {projectData.origin === 'PC' ? 'PC-ORIGIN' : 'SN-SYNC'}
-              </span>
-              <ChevronDown size={12} className={`text-textDim group-hover:text-cyan transition-transform ${showProjectDropdown ? 'rotate-180' : ''}`} />
-            </button>
-
-            <AnimatePresence>
-              {showProjectDropdown && (
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 10 }}
-                  className="absolute top-full left-0 mt-2 w-64 bg-bg border border-border shadow-2xl p-4 space-y-4 z-[200]"
-                >
-                  <div className="space-y-1">
-                    <div className="micro-label text-textDim uppercase">Sync Status</div>
-                    <div className="flex items-center gap-2 text-green">
-                      <Activity size={12} />
-                      <span className="font-mono text-[10px] uppercase">Live Calibration Active</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <button 
-                      onClick={() => {
-                        navigator.clipboard.writeText(projectCode);
-                        setShowProjectDropdown(false);
-                      }}
-                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-cyan transition-all group"
-                    >
-                      <span className="micro-label text-textDim group-hover:text-cyan">COPY PROJECT CODE</span>
-                      <Copy size={12} className="text-textDim group-hover:text-cyan" />
-                    </button>
-                    <button 
-                      onClick={() => {
-                        const blob = new Blob([projectCode], { type: 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `project_${projectData.id}.pc`;
-                        a.click();
-                        setShowProjectDropdown(false);
-                      }}
-                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-cyan transition-all group"
-                    >
-                      <span className="micro-label text-textDim group-hover:text-cyan">DOWNLOAD .PC FILE</span>
-                      <Download size={12} className="text-textDim group-hover:text-cyan" />
-                    </button>
-                    <a 
-                      href="https://sentinel.physicore.io" 
-                      target="_blank" 
-                      rel="noreferrer"
-                      className="w-full flex items-center justify-between p-2 bg-bgRaised border border-borderDim hover:border-amber transition-all group"
-                    >
-                      <span className="micro-label text-textDim group-hover:text-amber">OPEN IN SENTINEL</span>
-                      <ExternalLink size={12} className="text-textDim group-hover:text-amber" />
-                    </a>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+        ) : (
+          <>
+            <div className="h-4 w-px bg-border mx-2" />
+            <span className="font-body text-[11px] text-textSecondary uppercase tracking-widest hidden md:block">
+              Physics Intelligence Engine
+            </span>
+          </>
         )}
       </div>
 
-      {view !== 'dashboard' && (
+      {view !== 'project' && (
         <div className="hidden lg:flex items-center gap-8">
           {['OVERVIEW', 'ARCHITECTURE', 'FEATURES', 'BENCHMARKS', 'SENTINEL', 'MANUAL', 'TEAM'].map(item => {
             if (item === 'TEAM' && !isAdmin) return null;
             return (
-              <a 
-                key={item} 
+              <a
+                key={item}
                 href={`#${item.toLowerCase()}`}
                 className={`font-body text-[11px] uppercase tracking-widest transition-colors ${activeSection === item.toLowerCase() ? (item === 'SENTINEL' ? 'text-amber border-b border-amber' : (item === 'TEAM' ? 'text-cyan border-b border-cyan' : 'text-green border-b border-green')) : 'text-textSecondary hover:text-textPrimary'}`}
                 onClick={(e) => {
@@ -4389,8 +4384,8 @@ Be direct, technical, confident. You are the world's best robotics integration e
             </button>
           </div>
         ) : (
-          <button 
-            onClick={handleLaunchApp} 
+          <button
+            onClick={handleLaunchApp}
             disabled={isLoggingIn}
             className="px-4 py-1.5 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-50 flex items-center gap-2"
           >
@@ -4398,54 +4393,36 @@ Be direct, technical, confident. You are the world's best robotics integration e
             {isLoggingIn ? 'CONNECTING...' : '▣ LAUNCH APP'}
           </button>
         )}
-        
-        {user && (
+
+        {user && view !== 'project' && (
           <>
-            {view === 'dashboard' ? (
-              <button 
-                onClick={() => setView('home')}
-                className="px-4 py-1.5 border border-red text-red font-display text-[11px] font-bold uppercase tracking-widest hover:bg-red hover:text-black transition-all"
-              >
-                ▣ EXIT DASHBOARD
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={handleSetIntegratorView}
-                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
-                >
-                  ⬡ INTEGRATION ENGINEER
-                </button>
-                <button
-                  onClick={() => setView('projects')}
-                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'projects' ? 'bg-white text-black' : 'border border-cyan text-cyan hover:bg-cyan hover:text-black'}`}
-                >
-                  ⬡ PROJECTS
-                </button>
-                <button
-                  onClick={() => setView('debugger')}
-                  className={`relative px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'debugger' ? 'bg-red text-white' : 'border border-red/60 text-red hover:bg-red hover:text-white'}`}
-                >
-                  ⬡ DEBUGGER
-                  {(telemetry.isFaulted || failureLogs.length > 0) && (
-                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-red animate-pulse" />
-                  )}
-                </button>
-                <button
-                  onClick={() => setView('manual')}
-                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'manual' ? 'bg-white text-black' : 'bg-amber text-black hover:bg-white'}`}
-                >
-                  ⬡ MANUAL
-                </button>
-                <button 
-                  onClick={handleLaunchApp}
-                  className="hidden sm:block px-4 py-1.5 border border-border font-display text-[11px] font-bold uppercase tracking-widest text-textSecondary hover:text-textPrimary transition-all"
-                >
-                  ▣ LAUNCH APP
-                </button>
-              </>
-            )}
+            <button
+              onClick={handleSetIntegratorView}
+              className="px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all bg-green text-black hover:bg-white"
+            >
+              ⬡ INTEGRATION ENGINEER
+            </button>
+            <button
+              onClick={() => setView('projects')}
+              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'projects' ? 'bg-white text-black' : 'border border-cyan text-cyan hover:bg-cyan hover:text-black'}`}
+            >
+              ⬡ PROJECTS
+            </button>
+            <button
+              onClick={() => setView('manual')}
+              className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'manual' ? 'bg-white text-black' : 'bg-amber text-black hover:bg-white'}`}
+            >
+              ⬡ MANUAL
+            </button>
           </>
+        )}
+        {user && view === 'project' && (
+          <button
+            onClick={() => setView('projects')}
+            className="px-4 py-1.5 border border-border text-textDim font-display text-[11px] font-bold uppercase tracking-widest hover:text-textPrimary hover:border-textPrimary transition-all"
+          >
+            ← PROJECTS
+          </button>
         )}
       </div>
     </nav>
@@ -5315,46 +5292,25 @@ PROBLEM: ${msg}`,
               </div>
             </div>
 
-            {/* Extension Builder */}
-            <div className="border-t border-border pt-6 space-y-3">
-              <div className="flex items-center gap-3">
-                <div className="w-6 h-6 border border-purple-400/40 flex items-center justify-center">
-                  <Puzzle size={12} className="text-purple-400" />
+            {/* Build tab redirect banner */}
+            <div className="border-t border-border pt-6">
+              <div className="p-4 border border-amber/30 bg-amber/5 flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 border border-amber/40 flex items-center justify-center">
+                    <Code2 size={12} className="text-amber" />
+                  </div>
+                  <div>
+                    <p className="font-mono text-[9px] text-amber uppercase tracking-widest font-bold">Feature Builder moved to BUILD tab</p>
+                    <p className="font-mono text-[9px] text-textDim mt-0.5">Describe a feature in plain English — the AI writes the complete PhysiCore extension.</p>
+                  </div>
                 </div>
-                <p className="font-mono text-[9px] text-purple-400 uppercase tracking-widest">Extension Builder</p>
-                <span className="font-mono text-[8px] text-textDim border border-border px-1.5 py-0.5 ml-auto">Drop into ~/.physicore/extensions/</span>
-              </div>
-              <p className="font-mono text-[9px] text-textDim">Describe a behavior extension (e.g. "log friction to CSV every 100ms") and get Python code you can drop into the bridge.</p>
-              <div className="flex gap-3">
-                <input
-                  className="flex-1 bg-bgRaised border border-border px-4 py-2.5 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-purple-400 transition-colors"
-                  placeholder="e.g. Email me when friction exceeds 0.5…"
-                  value={extBuilderInput}
-                  onChange={e=>setExtBuilderInput(e.target.value)}
-                  onKeyDown={e=>e.key==='Enter'&&extBuilderInput.trim()&&buildExtension()}
-                />
                 <button
-                  onClick={buildExtension}
-                  disabled={isBuildingExt||!extBuilderInput.trim()}
-                  className="px-5 py-2.5 border border-purple-400 text-purple-400 font-display text-xs font-bold uppercase tracking-widest hover:bg-purple-400 hover:text-black transition-all disabled:opacity-50">
-                  {isBuildingExt ? '...' : 'Build →'}
+                  onClick={() => setProjectTab('build')}
+                  className="shrink-0 px-4 py-2 bg-amber text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all"
+                >
+                  Open BUILD →
                 </button>
               </div>
-              {extBuilderResult && (
-                <div className="p-4 bg-purple-400/5 border border-purple-400/20 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="font-mono text-[9px] text-purple-400 uppercase tracking-widest">Generated Extension</p>
-                    <button
-                      onClick={()=>{ navigator.clipboard?.writeText(extBuilderResult); copyText(extBuilderResult,'ext_copy'); setTimeout(()=>setIECopiedId(null),2000); }}
-                      className="flex items-center gap-1.5 px-3 py-1 border border-purple-400/40 font-mono text-[9px] text-purple-400 hover:bg-purple-400/10 uppercase tracking-widest transition-all">
-                      <Copy size={10}/> {ieCopiedId==='ext_copy'?'✓ COPIED':'COPY'}
-                    </button>
-                  </div>
-                  <pre className="font-mono text-[9px] text-textSecondary overflow-x-auto whitespace-pre-wrap max-h-[320px] overflow-y-auto custom-scroll">
-                    {extBuilderResult}
-                  </pre>
-                </div>
-              )}
             </div>
 
           </div>
@@ -5537,7 +5493,7 @@ PROBLEM: ${msg}`,
                         <div className="flex gap-2">
                           {step.id === 'connect' || step.id === 'connect_dashboard' ? (
                             <button
-                              onClick={() => { setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765'); setView('dashboard'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
+                              onClick={() => { setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765'); navigateToProject('live'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
                               className="px-4 py-1.5 bg-green text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all flex items-center gap-1.5">
                               <Wifi size={11}/> CONNECT NOW
                             </button>
@@ -5549,7 +5505,7 @@ PROBLEM: ${msg}`,
                             </button>
                           ) : step.id === 'calibrate' || step.id === 'balance_point' ? (
                             <button
-                              onClick={() => { setView('dashboard'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
+                              onClick={() => { navigateToProject('live'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
                               className="px-4 py-1.5 border border-cyan text-cyan font-display text-[9px] font-bold uppercase tracking-widest hover:bg-cyan hover:text-black transition-all flex items-center gap-1.5">
                               <Crosshair size={11}/> START CALIBRATION
                             </button>
@@ -5640,7 +5596,7 @@ PROBLEM: ${msg}`,
 
               {/* Go to Dashboard */}
               <button
-                onClick={()=>{ setView('dashboard'); }}
+                onClick={()=>{ navigateToProject('live'); }}
                 className="flex items-center gap-3 p-4 border border-green bg-green/10 hover:bg-green/20 transition-all text-left group">
                 <Activity size={16} className="text-green shrink-0" />
                 <div>
@@ -6640,7 +6596,7 @@ python physicore/bridge/physicore_bridge.py --platform ros2_ground_rover`}</Code
                 <div className="p-6 border border-green/20 bg-green/5 space-y-3">
                   <div className="font-mono text-[10px] text-green uppercase tracking-widest">Use the Integration Engineer</div>
                   <p className="font-body text-sm text-textSecondary">Select "Custom hardware" in the Integration Engineer. Answer 6 questions. Get firmware, YAML config, and bridge command generated specifically for your system. 30 minutes from zero to PhysiCore running on your hardware.</p>
-                  <button onClick={()=>setView('integrator')} className="px-4 py-2 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
+                  <button onClick={()=>navigateToProject('integrate')} className="px-4 py-2 bg-green text-black font-display text-xs font-bold uppercase tracking-widest hover:bg-white transition-all">
                     Open Integration Engineer →
                   </button>
                 </div>
@@ -7259,7 +7215,7 @@ max_torque: 2.5`}</Code>
 
                 <div className="flex flex-col gap-3 w-full max-w-[280px]">
                   <button 
-                    onClick={() => setView('integrator')}
+                    onClick={() => navigateToProject('integrate')}
                     className="w-full p-4 border border-cyan/30 bg-bgRaised hover:bg-cyan hover:text-black transition-all group flex items-center justify-between"
                   >
                     <span className="font-display text-[11px] font-bold tracking-widest uppercase">Return to Integrator</span>
@@ -7390,6 +7346,23 @@ max_torque: 2.5`}</Code>
             </div>
           </div>
 
+          {/* FEATURE TELEMETRY PANEL — shown when project has features with telemetry_keys */}
+          {activeProject && (activeProject.features || []).some(f => f.telemetry_keys.length > 0) && (
+            <div className="shrink-0 border-t border-amber/20 bg-amber/5 px-4 py-2 flex items-center gap-4 overflow-x-auto">
+              <div className="flex items-center gap-2 shrink-0">
+                <Puzzle size={12} className="text-amber" />
+                <span className="font-mono text-[9px] text-amber uppercase tracking-widest">Feature Telemetry</span>
+              </div>
+              {(activeProject.features || []).flatMap(f => f.telemetry_keys.map(key => ({ key, feature: f.name }))).map(({ key, feature }) => (
+                <div key={key} className="shrink-0 flex items-center gap-2 px-3 py-1 border border-amber/20 bg-amber/10">
+                  <span className="font-mono text-[8px] text-amber/60">{feature}</span>
+                  <span className="font-mono text-[9px] text-amber font-bold">{key}</span>
+                  <span className="font-mono text-[9px] text-white">{(telemetry as any)[key] !== undefined ? String((telemetry as any)[key]) : '--'}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* FAILURE LOG STRIP — shown only when there are failures */}
           {failureLogs.length > 0 && (
             <div className="shrink-0 border-t border-red/30 bg-red/5 px-4 py-2 flex items-center gap-4 overflow-x-auto">
@@ -7401,14 +7374,14 @@ max_torque: 2.5`}</Code>
               <div className="flex gap-3 overflow-x-auto">
                 {failureLogs.slice(0, 8).map(log => (
                   <div key={log.id}
-                    onClick={() => setView('debugger')}
+                    onClick={() => navigateToProject('debug')}
                     className="shrink-0 flex items-center gap-2 px-3 py-1 border border-red/30 bg-red/10 cursor-pointer hover:bg-red/20 transition-all">
                     <span className="font-mono text-[9px] text-red font-bold">{log.failure_type}</span>
                     <span className="font-mono text-[8px] text-textDim">{new Date(log.timestamp).toLocaleTimeString()}</span>
                   </div>
                 ))}
               </div>
-              <button onClick={() => setView('debugger')}
+              <button onClick={() => navigateToProject('debug')}
                 className="ml-auto shrink-0 font-mono text-[9px] text-red border border-red/40 px-3 py-1 hover:bg-red/20 transition-all uppercase tracking-widest">
                 <Bug size={10} className="inline mr-1" />Diagnose
               </button>
@@ -7479,6 +7452,9 @@ max_torque: 2.5`}</Code>
 
                   <div className="flex gap-4 font-mono text-[9px] text-textDim">
                     <span>{project.generatedFiles.length} files</span>
+                    {(project.features || []).length > 0 && (
+                      <span className="text-amber">{(project.features || []).length} feature{(project.features || []).length !== 1 ? 's' : ''}</span>
+                    )}
                     <span>{new Date(project.createdAt).toLocaleDateString()}</span>
                   </div>
 
@@ -7488,12 +7464,15 @@ max_torque: 2.5`}</Code>
 
                   <div className="flex gap-2 pt-2 border-t border-border/50">
                     <button onClick={() => openProjectInIE(project)}
-                      className="flex-1 py-1.5 border border-green/30 text-green font-mono text-[9px] uppercase hover:bg-green hover:text-black transition-all">
-                      Open in IE
+                      className="flex-1 py-2 bg-green text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+                      Open Project
                     </button>
-                    <button onClick={() => { setActiveProject(project); setView('dashboard'); }}
-                      className="flex-1 py-1.5 border border-cyan/30 text-cyan font-mono text-[9px] uppercase hover:bg-cyan hover:text-black transition-all">
-                      Dashboard
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(encodeProjectCode(project)); }}
+                      className="p-1.5 border border-border text-textDim font-mono text-[9px] hover:border-cyan hover:text-cyan transition-all"
+                      title="Copy project code"
+                    >
+                      <Copy size={12} />
                     </button>
                     <button onClick={() => { if (confirm(`Delete "${project.name}"?`)) deleteProject(project.id); }}
                       className="p-1.5 border border-border text-textDim font-mono text-[9px] hover:border-red hover:text-red transition-all">
@@ -7540,7 +7519,7 @@ max_torque: 2.5`}</Code>
                       const p = await createProject(newProjectName.trim(), '', {}, []);
                       if (p) { setActiveProject(p); }
                       setShowNewProjectModal(false); setNewProjectName(''); setNewProjectDesc('');
-                      setView('integrator');
+                      navigateToProject('integrate');
                     }}
                     className="flex-1 py-3 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40">
                     Create & Open IE
@@ -7552,6 +7531,98 @@ max_torque: 2.5`}</Code>
         </AnimatePresence>
       </div>
     );
+  };
+
+  // ── BUILD TAB ──────────────────────────────────────────────────────────────
+  const FEATURE_ARCHITECT_SYSTEM = `You are the PhysiCore Feature Architect. Your job is to help engineers add custom features to their PhysiCore deployment by asking exactly 4 questions in sequence, then generating a complete implementation.
+
+The 4 questions you MUST ask (one at a time, wait for answer before next):
+1. WHAT — What should this feature do? (one sentence)
+2. WHEN — When should it trigger? (pre_step / post_step / on_fault / on_telemetry / on timer)
+3. HOW — What should it do with the data? (log it, modify control, send alert, etc.)
+4. DATA — What telemetry keys or parameters does it need access to?
+
+After all 4 answers, emit exactly this marker followed by a JSON manifest on its own line:
+[GENERATE_FEATURE]
+{"name":"<name>","description":"<desc>","telemetry_keys":[],"fault_types":[],"hooks":[],"generated_files":{"extensions/<name>.py":"<full python code>"}}
+
+The Python code must subclass PhysiCoreExtension and implement the appropriate hook methods.
+PhysiCoreExtension interface:
+  class PhysiCoreExtension:
+    def pre_step(self, state, params): pass
+    def post_step(self, state, control, params): pass
+    def on_fault(self, fault_type, state, params): pass
+    def on_telemetry(self, telemetry_dict): pass
+
+Keep your questions short and direct. No preamble. Ask question 1 first.`;
+
+  const sendBuildMessage = async (text: string) => {
+    if (!text.trim() || isBuildLoading) return;
+    const userMsg = { role: 'user' as const, text: text.trim() };
+    const newHistory = [...buildMessages, userMsg];
+    setBuildMessages(newHistory);
+    setBuildInput('');
+    setIsBuildLoading(true);
+
+    try {
+      const ai = getAI();
+      if (!ai) throw new Error('No Gemini key');
+
+      const contents = newHistory.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.text }],
+      }));
+
+      const resp = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents,
+        config: { systemInstruction: FEATURE_ARCHITECT_SYSTEM },
+      });
+
+      const reply = resp.text ?? '';
+
+      if (reply.includes('[GENERATE_FEATURE]')) {
+        const jsonLine = reply.split('[GENERATE_FEATURE]')[1]?.trim().split('\n')[0];
+        try {
+          const manifest = JSON.parse(jsonLine);
+          const feature: FeatureManifest = {
+            id: generateId(),
+            name: manifest.name || 'Custom Feature',
+            description: manifest.description || '',
+            telemetry_keys: manifest.telemetry_keys || [],
+            fault_types: manifest.fault_types || [],
+            hooks: manifest.hooks || [],
+            files_modified: Object.keys(manifest.generated_files || {}),
+            conversation: newHistory,
+            generated_files: manifest.generated_files || {},
+            createdAt: new Date().toISOString(),
+          };
+          setBuildFeatures(prev => [...prev, feature]);
+          setSelectedBuildFile(Object.keys(feature.generated_files)[0] ?? null);
+
+          if (user && activeProject) {
+            const updated = {
+              ...activeProject,
+              features: [...(activeProject.features || []), feature],
+              updatedAt: new Date().toISOString(),
+            };
+            setActiveProject(updated as any);
+            await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
+              features: updated.features,
+              updatedAt: updated.updatedAt,
+            });
+          }
+        } catch {
+          // JSON parse failed — still show the reply
+        }
+      }
+
+      setBuildMessages([...newHistory, { role: 'assistant', text: reply }]);
+    } catch (err: any) {
+      setBuildMessages([...newHistory, { role: 'assistant', text: `Error: ${err.message}` }]);
+    } finally {
+      setIsBuildLoading(false);
+    }
   };
 
   // ── DEBUGGER VIEW ──────────────────────────────────────────────────────────
@@ -7587,7 +7658,12 @@ max_torque: 2.5`}</Code>
     setIsDebugging(true);
     setDebuggerResult(null);
 
-    // Build rich context
+    const projectFeatures = activeProject?.features || [];
+    const customFaultTypes = projectFeatures.flatMap(f => f.fault_types);
+    const featureContext = projectFeatures.length > 0
+      ? `\nCustom features installed: ${projectFeatures.map(f => `${f.name} (hooks: ${f.hooks.join(',')}, telemetry: ${f.telemetry_keys.join(',')})`).join('; ')}`
+      : '';
+
     const ctx = [
       `Hardware: ${activeProject?.hardware || 'Unknown'} | Platform: ${activeProject?.platform || 'Unknown'}`,
       `Session active: ${isControlActive && isSystemConnected}`,
@@ -7595,11 +7671,21 @@ max_torque: 2.5`}</Code>
       `Sentinel: ${telemetry.isFaulted ? 'FAULTED' : telemetry.isStable ? 'NOMINAL' : 'CAUTIOUS'} | Step: ${telemetry.step_count}`,
       `Active faults: ${telemetry.faults?.join(', ') || 'none'}`,
       `Recent failures (last 3): ${failureLogs.slice(0,3).map(f => `${f.failure_type} at ${f.task}`).join('; ') || 'none'}`,
-      `CPU: ${telemetry.cpuLoad?.toFixed(0)}% | Latency: ${telemetry.latency?.toFixed(0)}ms | Battery: ${telemetry.battery_pct?.toFixed(0)}%`,
+      `CPU: ${telemetry.cpuLoad?.toFixed(0)}% | Latency: ${telemetry.latency?.toFixed(0)}ms | Battery: ${(telemetry as any).battery_pct?.toFixed(0) ?? '--'}%`,
       `Declared answers: ${JSON.stringify(activeProject?.answers || {})}`,
+      featureContext,
     ].join('\n');
 
-    // Check local KB first
+    // Check custom feature fault types first
+    const customFaultMatch = telemetry.faults?.find(f => customFaultTypes.includes(f));
+    if (customFaultMatch && !query.trim()) {
+      const ownerFeature = projectFeatures.find(f => f.fault_types.includes(customFaultMatch));
+      setDebuggerResult(`**${customFaultMatch}** (from feature: ${ownerFeature?.name})\n\nThis fault was registered by a custom feature extension. Check the feature code in the BUILD tab for handling logic.\n\nFeature hooks: ${ownerFeature?.hooks.join(', ')}`);
+      setIsDebugging(false);
+      return;
+    }
+
+    // Check built-in KB next
     const faultMatch = telemetry.faults?.find(f => FAULT_KB[f]);
     if (faultMatch && !query.trim()) {
       const kb = FAULT_KB[faultMatch];
@@ -7608,18 +7694,250 @@ max_torque: 2.5`}</Code>
       return;
     }
 
+    const DIAG_SYSTEM = `You are PhysiCore's senior diagnostics engineer. You have deep expertise in robotics, control systems, and embedded hardware. Given telemetry data and a question, provide a concise, actionable diagnosis. Be specific about root causes. Format with markdown: start with the most likely cause, then numbered fix steps.`;
+
     const res = await callGemini(
-      `You are PhysiCore's senior diagnostics engineer. You have deep expertise in robotics, control systems, and embedded hardware. Given telemetry data and a question, provide a concise, actionable diagnosis in 3-6 sentences. Be specific about root causes. Format: start with the most likely cause, then give 2-3 ordered fix steps.`,
+      DIAG_SYSTEM,
       `LIVE CONTEXT:\n${ctx}\n\nQUESTION: ${query || `Explain the current system state and what I should do next.`}`
     );
 
     if (res.success && res.text) {
       setDebuggerResult(res.text);
     } else {
-      // Offline fallback
-      setDebuggerResult(`No AI key — local diagnosis:\n${faultMatch ? FAULT_KB[faultMatch].fixes.join('\n') : 'Check serial port, IMU wiring, and motor driver power supply.'}`);
+      setDebuggerResult(`No AI key — local diagnosis:\n${faultMatch ? FAULT_KB[faultMatch].fixes.join('\n') : customFaultMatch ? `Custom fault: ${customFaultMatch} — check BUILD tab for feature code.` : 'Check serial port, IMU wiring, and motor driver power supply.'}`);
     }
     setIsDebugging(false);
+  };
+
+  const renderMarkdownText = (text: string) => {
+    return text.split('\n').filter(l => l !== undefined).map((line, i) => {
+      const trimmed = line.trim();
+      if (!trimmed) return <div key={i} className="h-2" />;
+
+      // H3 ### heading
+      if (trimmed.startsWith('### ')) {
+        return <p key={i} className="font-display text-[11px] font-bold text-white uppercase tracking-widest mt-2">{trimmed.slice(4)}</p>;
+      }
+      // H2 ## heading
+      if (trimmed.startsWith('## ')) {
+        return <p key={i} className="font-display text-xs font-bold text-white uppercase tracking-widest mt-3">{trimmed.slice(3)}</p>;
+      }
+      // H1 # heading
+      if (trimmed.startsWith('# ')) {
+        return <p key={i} className="font-display text-sm font-bold text-white uppercase tracking-widest mt-3">{trimmed.slice(2)}</p>;
+      }
+      // Numbered list
+      if (/^\d+\.\s/.test(trimmed)) {
+        const content = trimmed.replace(/^\d+\.\s/, '').replace(/\*\*(.*?)\*\*/g, '$1');
+        return <p key={i} className="font-mono text-[10px] text-textSecondary pl-4 leading-relaxed">{trimmed.match(/^\d+/)?.[0]}. {content}</p>;
+      }
+      // Bullet
+      if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+        const content = trimmed.slice(2).replace(/\*\*(.*?)\*\*/g, '$1');
+        return <p key={i} className="font-mono text-[10px] text-textSecondary pl-4 leading-relaxed">• {content}</p>;
+      }
+      // Bold-only line (** wrapping whole line)
+      if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
+        return <p key={i} className="font-mono text-[10px] font-bold text-white leading-relaxed">{trimmed.slice(2, -2)}</p>;
+      }
+      // Normal — inline bold replacement
+      const parts = trimmed.split(/(\*\*.*?\*\*)/g);
+      return (
+        <p key={i} className="font-mono text-[10px] text-textSecondary leading-relaxed">
+          {parts.map((part, j) =>
+            part.startsWith('**') && part.endsWith('**')
+              ? <strong key={j} className="text-white font-bold">{part.slice(2, -2)}</strong>
+              : part
+          )}
+        </p>
+      );
+    });
+  };
+
+  const renderProjectView = () => {
+    if (!activeProject) {
+      return (
+        <div className="pt-[52px] min-h-screen bg-void flex items-center justify-center">
+          <div className="text-center space-y-4">
+            <div className="font-mono text-[11px] text-textDim uppercase tracking-widest">No project selected</div>
+            <button onClick={() => setView('projects')} className="px-6 py-2 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+              ← Back to Projects
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const tabContent = () => {
+      switch (projectTab) {
+        case 'integrate': return renderIntegrator();
+        case 'build': return renderBuildTab();
+        case 'debug': return renderDebugger();
+        case 'live': return renderDashboard();
+        default: return renderIntegrator();
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-void">
+        {/* Floating fault alert — shown on any tab when faults exist */}
+        {(telemetry.isFaulted || failureLogs.length > 0) && projectTab !== 'debug' && (
+          <div className="fixed bottom-6 right-6 z-[150]">
+            <button
+              onClick={() => setProjectTab('debug')}
+              className="flex items-center gap-2 px-4 py-2 bg-red text-white font-display text-[10px] font-bold uppercase tracking-widest shadow-lg shadow-red/30 animate-pulse hover:animate-none transition-all"
+            >
+              <AlertTriangle size={14} />
+              {failureLogs.length} FAULT{failureLogs.length !== 1 ? 'S' : ''} — DIAGNOSE
+            </button>
+          </div>
+        )}
+        {tabContent()}
+      </div>
+    );
+  };
+
+  const renderBuildTab = () => {
+    const allFeatures = [...buildFeatures, ...(activeProject?.features || [])];
+    const uniqueFeatures = allFeatures.filter((f, i, a) => a.findIndex(x => x.id === f.id) === i);
+    const activeFeature = uniqueFeatures.find(f => selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile));
+    const editorCode = selectedBuildFile && activeFeature ? (activeFeature.generated_files[selectedBuildFile] ?? '') : '';
+
+    return (
+      <div className="pt-[52px] h-screen bg-void flex overflow-hidden">
+        {/* Left sidebar — features list */}
+        <div className="w-64 shrink-0 border-r border-border flex flex-col">
+          <div className="p-4 border-b border-border">
+            <div className="micro-label text-textDim uppercase mb-3">Features</div>
+            {uniqueFeatures.length === 0 ? (
+              <div className="font-mono text-[10px] text-textDim italic">No features yet — describe one below</div>
+            ) : (
+              <div className="space-y-2">
+                {uniqueFeatures.map(f => (
+                  <div
+                    key={f.id}
+                    onClick={() => { const first = Object.keys(f.generated_files)[0]; if (first) setSelectedBuildFile(first); }}
+                    className={`p-2 border cursor-pointer transition-all ${selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile) ? 'border-amber bg-amber/10' : 'border-border hover:border-amber/40'}`}
+                  >
+                    <div className="font-display text-[10px] font-bold text-white uppercase tracking-widest truncate">{f.name}</div>
+                    <div className="font-mono text-[9px] text-textDim mt-0.5 truncate">{f.description}</div>
+                    {f.telemetry_keys.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {f.telemetry_keys.map(k => (
+                          <span key={k} className="px-1 py-0 font-mono text-[8px] bg-cyan/10 text-cyan border border-cyan/20">{k}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex-1" />
+          <div className="p-4 border-t border-border">
+            <button
+              onClick={() => { setBuildMessages([]); setSelectedBuildFile(null); }}
+              className="w-full py-2 border border-amber/30 text-amber font-display text-[9px] font-bold uppercase tracking-widest hover:bg-amber hover:text-black transition-all"
+            >
+              + New Feature
+            </button>
+          </div>
+        </div>
+
+        {/* Center — Socratic conversation */}
+        <div className="flex-1 flex flex-col min-w-0 border-r border-border">
+          <div className="p-4 border-b border-border flex items-center gap-3">
+            <Code2 size={16} className="text-amber" />
+            <span className="font-display text-sm font-bold text-white uppercase tracking-widest">Feature Architect</span>
+            <span className="font-mono text-[9px] text-textDim">Describe a feature in plain English — the AI writes the code</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {buildMessages.length === 0 && (
+              <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+                <div className="w-12 h-12 border border-amber/40 flex items-center justify-center">
+                  <Puzzle size={20} className="text-amber" />
+                </div>
+                <div className="space-y-2">
+                  <div className="font-display text-sm font-bold text-white uppercase tracking-widest">Build a feature</div>
+                  <div className="font-body text-xs text-textSecondary max-w-xs">
+                    Tell the Feature Architect what you want to add. It will ask 4 questions, then write the complete PhysiCore extension.
+                  </div>
+                </div>
+              </div>
+            )}
+            {buildMessages.map((m, i) => (
+              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[80%] px-4 py-3 ${m.role === 'user' ? 'bg-amber/20 border border-amber/30' : 'bg-bgRaised border border-border'}`}>
+                  {m.text.includes('[GENERATE_FEATURE]') ? (
+                    <div className="space-y-2">
+                      <div className="font-mono text-[10px] text-green font-bold">✓ Feature generated</div>
+                      <div className="font-body text-xs text-textSecondary">{m.text.split('[GENERATE_FEATURE]')[0].trim()}</div>
+                    </div>
+                  ) : (
+                    <div className="font-body text-sm text-textPrimary whitespace-pre-wrap">{m.text}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {isBuildLoading && (
+              <div className="flex justify-start">
+                <div className="px-4 py-3 bg-bgRaised border border-border flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="p-4 border-t border-border flex gap-3">
+            <input
+              value={buildInput}
+              onChange={e => setBuildInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBuildMessage(buildInput); } }}
+              placeholder="Describe a feature or answer the question above..."
+              className="flex-1 bg-bgRaised border border-border px-4 py-2 font-mono text-sm text-white focus:border-amber outline-none placeholder:text-textDim"
+            />
+            <button
+              onClick={() => sendBuildMessage(buildInput)}
+              disabled={isBuildLoading || !buildInput.trim()}
+              className="px-4 py-2 bg-amber text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40"
+            >
+              Send
+            </button>
+          </div>
+        </div>
+
+        {/* Right pane — code editor */}
+        <div className="w-[480px] shrink-0 flex flex-col">
+          <div className="p-4 border-b border-border flex items-center gap-3">
+            <FileJson size={14} className="text-textDim" />
+            <span className="font-mono text-[10px] text-textDim truncate">{selectedBuildFile ?? 'No file selected'}</span>
+            {selectedBuildFile && editorCode && (
+              <button
+                onClick={() => { navigator.clipboard.writeText(editorCode); }}
+                className="ml-auto p-1.5 text-textDim hover:text-white transition-colors"
+                title="Copy"
+              >
+                <Copy size={12} />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {selectedBuildFile && editorCode ? (
+              <PhysiEditor
+                code={editorCode}
+                language={selectedBuildFile.endsWith('.yaml') || selectedBuildFile.endsWith('.yml') ? 'yaml' : 'python'}
+                readOnly
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center">
+                <div className="font-mono text-[10px] text-textDim italic">Generated code will appear here</div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderDebugger = () => (
@@ -7712,22 +8030,7 @@ max_torque: 2.5`}</Code>
             {debuggerResult && !isDebugging && (
               <div className="p-5 border border-red/20 bg-bgRaised space-y-3">
                 <p className="font-mono text-[9px] text-red uppercase tracking-widest">Diagnosis</p>
-                <div className="space-y-2">
-                  {debuggerResult.split('\n').filter(l => l.trim()).map((line, i) => {
-                    const isBold = line.startsWith('**') && line.endsWith('**');
-                    const isHeader = /^(Likely causes|Fixes|Root cause):?$/i.test(line.replace(/\*\*/g,'').trim());
-                    const isStep = /^\d+\./.test(line.trim());
-                    return (
-                      <p key={i} className={`font-mono text-[10px] leading-relaxed ${
-                        isBold || isHeader ? 'text-white font-bold' :
-                        isStep ? 'text-textSecondary pl-3' :
-                        'text-textSecondary'
-                      }`}>
-                        {line.replace(/\*\*/g, '')}
-                      </p>
-                    );
-                  })}
-                </div>
+                <div className="space-y-1.5">{renderMarkdownText(debuggerResult)}</div>
               </div>
             )}
 
@@ -7932,17 +8235,9 @@ max_torque: 2.5`}</Code>
           <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderHome()}
           </motion.div>
-        ) : view === 'integrator' ? (
-          <motion.div key="integrator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-            {renderIntegrator()}
-          </motion.div>
         ) : view === 'projects' ? (
           <motion.div key="projects" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderProjects()}
-          </motion.div>
-        ) : view === 'debugger' ? (
-          <motion.div key="debugger" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-            {renderDebugger()}
           </motion.div>
         ) : view === 'manual' ? (
           <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
@@ -7952,9 +8247,13 @@ max_torque: 2.5`}</Code>
           <motion.div key="team" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderTeam()}
           </motion.div>
+        ) : view === 'project' ? (
+          <motion.div key="project" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderProjectView()}
+          </motion.div>
         ) : (
-          <motion.div key="dashboard" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-            {renderDashboard()}
+          <motion.div key="home-fallback" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderHome()}
           </motion.div>
         )}
       </AnimatePresence>
@@ -8060,7 +8359,7 @@ max_torque: 2.5`}</Code>
                     setShowDigitalTwinModal(false);
                     // Trigger the launch/connect again now that it's confirmed
                     setTimeout(() => {
-                      if (view === 'integrator') handleLaunchApp();
+                      if (view === 'project' && projectTab === 'integrate') handleLaunchApp();
                       else handleConnect();
                     }, 100);
                   }}

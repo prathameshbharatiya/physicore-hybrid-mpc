@@ -1,79 +1,28 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: allowed_users
-    // Document ID: userId (UID or random ID)
-    // Fields:
-    //   - email: string (required, email format)
-    //   - role: string (required, ['admin', 'user', 'guest'])
-    //   - hasTested: boolean (optional)
-    //   - invitedBy: string (optional)
-    //   - uid: string (optional)
-    //
-    // ===============================================================
 
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-
+    function isAuthenticated() { return request.auth != null; }
+    function isOwner(userId) { return isAuthenticated() && request.auth.uid == userId; }
     function isAdmin() {
       return isAuthenticated() &&
-        (request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" && request.auth.token.email_verified == true);
+        request.auth.token.email == "prathameshshirbhate8anpc@gmail.com" &&
+        request.auth.token.email_verified == true;
     }
-
-    function isValidEmail(email) {
-      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-    }
-
-    function isValidAllowedUser(data) {
-      return data.keys().hasAll(['email', 'role']) &&
-             data.email is string && isValidEmail(data.email) &&
-             data.role in ['admin', 'user', 'guest', 'client'] &&
-             (!('hasTested' in data) || data.hasTested is bool) &&
-             (!('invitedBy' in data) || data.invitedBy is string) &&
-             (!('uid' in data) || data.uid is string) &&
-             (!('createdAt' in data) || data.createdAt is string);
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
 
     match /allowed_users/{userId} {
-      // Admins can do anything
-      // Users can read their own document
-      // Users can update their own 'hasTested' status
-      
       allow read: if isAuthenticated() && (isOwner(userId) || isAdmin() || request.auth.token.email == resource.data.email);
-      
-      allow create: if isAuthenticated() && isValidAllowedUser(request.resource.data) && 
-                    (isAdmin() || (isOwner(userId) && request.resource.data.role == 'user'));
-      
-      allow update: if isAuthenticated() && isValidAllowedUser(request.resource.data) && 
-                    (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role));
-      
+      allow create: if isAuthenticated() && (isAdmin() || isOwner(userId));
+      allow update: if isAuthenticated() && (isAdmin() || isOwner(userId));
       allow delete: if isAdmin();
     }
 
-    match /test/connection {
-      allow read: if true; // For connection testing
+    match /test/connection { allow read: if true; }
+
+    match /users/{userId}/{document=**} {
+      allow read, write: if isOwner(userId);
     }
 
-    // Default deny
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /{document=**} { allow read, write: if false; }
   }
 }

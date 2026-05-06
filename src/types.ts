@@ -91,6 +91,44 @@ export interface Project {
   connectionMode: 'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge';
   endpoint: string;
   notes: string;
+  features?: FeatureManifest[];
+  ieProgress?: {
+    phase: string;
+    hw: string;
+    qIndex: number;
+    answers: Record<string, string>;
+  };
+}
+
+// Feature Manifest — the contract that ties a custom feature to the whole system
+export interface FeatureManifest {
+  id: string;
+  name: string;
+  description: string;
+  // Telemetry keys this feature produces — dashboard subscribes to these
+  telemetry_keys: string[];
+  // New fault types this feature can produce — debugger learns these
+  fault_types: string[];
+  // Which PhysiCore hooks this feature uses
+  hooks: ('pre_step' | 'post_step' | 'on_fault' | 'on_telemetry')[];
+  // Files this feature modified (relative paths)
+  files_modified: string[];
+  // The conversation that generated this feature
+  conversation: { role: 'user' | 'assistant'; text: string }[];
+  // Generated file contents keyed by filename
+  generated_files: Record<string, string>;
+  createdAt: string;
+}
+
+// Extend Project with feature manifests and IE progress
+export interface ProjectV2 extends Project {
+  features: FeatureManifest[];
+  ieProgress?: {
+    phase: string;
+    hw: string;
+    qIndex: number;
+    answers: Record<string, string>;
+  };
 }
 
 export interface FailureLog {
