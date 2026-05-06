@@ -2649,7 +2649,7 @@ function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
-  const isAuthorized = isAdmin || isBetaTester;
+  const isAuthorized = !!user; // Open to all signed-in users
   
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -3879,14 +3879,28 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
   const updateProject = async (id: string, changes: Partial<Project>) => {
     if (!user) return;
     const now = new Date().toISOString();
-    await updateDoc(doc(db, 'users', user.uid, 'projects', id), { ...changes, updatedAt: now });
+    // Optimistic update — local state first so UI never lags
     setActiveProject(prev => prev?.id === id ? { ...prev, ...changes, updatedAt: now } : prev);
+    setProjects(prev => prev.map(p => p.id === id ? { ...p, ...changes, updatedAt: now } : p));
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'projects', id), { ...changes, updatedAt: now });
+    } catch (err: any) {
+      console.error('[PROJECTS] updateProject failed:', err?.message);
+      // Non-fatal — local state is already updated, user can continue working
+    }
   };
 
   const deleteProject = async (id: string) => {
     if (!user) return;
-    await deleteDoc(doc(db, 'users', user.uid, 'projects', id));
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'projects', id));
+    } catch (err: any) {
+      console.error('[PROJECTS] deleteProject failed:', err?.message);
+      alert(`Could not delete project: ${err?.message}`);
+      return;
+    }
     if (activeProject?.id === id) setActiveProject(null);
+    setProjects(prev => prev.filter(p => p.id !== id));
   };
 
   const duplicateProject = async (project: Project) => {
@@ -7517,9 +7531,15 @@ max_torque: 2.5`}</Code>
                     onClick={async () => {
                       if (!newProjectName.trim()) return;
                       const p = await createProject(newProjectName.trim(), '', {}, []);
-                      if (p) { setActiveProject(p); }
-                      setShowNewProjectModal(false); setNewProjectName(''); setNewProjectDesc('');
-                      navigateToProject('integrate');
+                      if (p) {
+                        setActiveProject(p);
+                        setShowNewProjectModal(false);
+                        setNewProjectName('');
+                        setNewProjectDesc('');
+                        navigateToProject('integrate');
+                      }
+                      // If p is null, createProject already showed the error alert.
+                      // Modal stays open so user can retry.
                     }}
                     className="flex-1 py-3 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40">
                     Create & Open IE
@@ -7564,56 +7584,103 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
     setBuildInput('');
     setIsBuildLoading(true);
 
+    let reply = '';
+
     try {
+      // Tier 1: Gemini
       const ai = getAI();
-      if (!ai) throw new Error('No Gemini key');
+      if (ai) {
+        try {
+          const contents = newHistory.map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.text }],
+          }));
+          const resp = await ai.models.generateContent({
+            model: 'gemini-2.0-flash',
+            contents,
+            config: { systemInstruction: FEATURE_ARCHITECT_SYSTEM },
+          });
+          reply = resp.text?.trim() ?? '';
+        } catch (geminiErr) {
+          console.warn('[BUILD] Gemini failed:', geminiErr);
+        }
+      }
 
-      const contents = newHistory.map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.text }],
-      }));
+      // Tier 2: Anthropic fallback
+      if (!reply) {
+        try {
+          const messages = newHistory.map(m => ({
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: m.text,
+          }));
+          const resp = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 2000,
+              system: FEATURE_ARCHITECT_SYSTEM,
+              messages,
+            }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            reply = data.content?.[0]?.text?.trim() || '';
+          }
+        } catch (anthropicErr) {
+          console.warn('[BUILD] Anthropic also failed:', anthropicErr);
+        }
+      }
 
-      const resp = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
-        contents,
-        config: { systemInstruction: FEATURE_ARCHITECT_SYSTEM },
-      });
-
-      const reply = resp.text ?? '';
+      if (!reply) {
+        reply = 'AI is currently unreachable. Please check your internet connection or add VITE_GEMINI_API_KEY to your Vercel environment variables.';
+      }
 
       if (reply.includes('[GENERATE_FEATURE]')) {
-        const jsonLine = reply.split('[GENERATE_FEATURE]')[1]?.trim().split('\n')[0];
-        try {
-          const manifest = JSON.parse(jsonLine);
-          const feature: FeatureManifest = {
-            id: generateId(),
-            name: manifest.name || 'Custom Feature',
-            description: manifest.description || '',
-            telemetry_keys: manifest.telemetry_keys || [],
-            fault_types: manifest.fault_types || [],
-            hooks: manifest.hooks || [],
-            files_modified: Object.keys(manifest.generated_files || {}),
-            conversation: newHistory,
-            generated_files: manifest.generated_files || {},
-            createdAt: new Date().toISOString(),
-          };
-          setBuildFeatures(prev => [...prev, feature]);
-          setSelectedBuildFile(Object.keys(feature.generated_files)[0] ?? null);
-
-          if (user && activeProject) {
-            const updated = {
-              ...activeProject,
-              features: [...(activeProject.features || []), feature],
-              updatedAt: new Date().toISOString(),
+        const afterMarker = reply.split('[GENERATE_FEATURE]')[1]?.trim() ?? '';
+        const jsonStart = afterMarker.indexOf('{');
+        const jsonEnd = afterMarker.lastIndexOf('}');
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          try {
+            const manifest = JSON.parse(afterMarker.slice(jsonStart, jsonEnd + 1));
+            const feature: FeatureManifest = {
+              id: generateId(),
+              name: manifest.name || 'Custom Feature',
+              description: manifest.description || '',
+              telemetry_keys: manifest.telemetry_keys || [],
+              fault_types: manifest.fault_types || [],
+              hooks: manifest.hooks || [],
+              files_modified: Object.keys(manifest.generated_files || {}),
+              conversation: newHistory,
+              generated_files: manifest.generated_files || {},
+              createdAt: new Date().toISOString(),
             };
-            setActiveProject(updated as any);
-            await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
-              features: updated.features,
-              updatedAt: updated.updatedAt,
-            });
+            setBuildFeatures(prev => [...prev, feature]);
+            setSelectedBuildFile(Object.keys(feature.generated_files)[0] ?? null);
+
+            if (user && activeProject) {
+              const updatedFeatures = [...(activeProject.features || []), feature];
+              const updatedExts = [...(activeProject.customExtensions || []), {
+                id: feature.id,
+                name: feature.name,
+                description: feature.description,
+                code: Object.values(feature.generated_files)[0] || '',
+                createdAt: feature.createdAt,
+              }];
+              await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
+                features: updatedFeatures,
+                customExtensions: updatedExts,
+                updatedAt: new Date().toISOString(),
+              });
+              setActiveProject(prev => prev ? {
+                ...prev,
+                features: updatedFeatures,
+                customExtensions: updatedExts,
+              } : prev);
+            }
+          } catch (parseErr) {
+            console.error('[BUILD] Failed to parse feature JSON:', parseErr);
           }
-        } catch {
-          // JSON parse failed — still show the reply
         }
       }
 
@@ -7694,17 +7761,54 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
       return;
     }
 
-    const DIAG_SYSTEM = `You are PhysiCore's senior diagnostics engineer. You have deep expertise in robotics, control systems, and embedded hardware. Given telemetry data and a question, provide a concise, actionable diagnosis. Be specific about root causes. Format with markdown: start with the most likely cause, then numbered fix steps.`;
+    const debugSystemPrompt = `You are PhysiCore's senior diagnostics engineer. Deep expertise in robotics, control systems, embedded hardware. Given live telemetry and a question, give a concise actionable diagnosis. Lead with the most likely cause. Then give 2-3 ordered fix steps. Format with markdown.`;
+    const debugUserPrompt = `LIVE CONTEXT:\n${ctx}\n\nQUESTION: ${query || 'Explain the current system state and what I should do next.'}`;
 
-    const res = await callGemini(
-      DIAG_SYSTEM,
-      `LIVE CONTEXT:\n${ctx}\n\nQUESTION: ${query || `Explain the current system state and what I should do next.`}`
-    );
+    let diagText = '';
 
-    if (res.success && res.text) {
-      setDebuggerResult(res.text);
+    // Tier 1: Gemini
+    const debugAI = getAI();
+    if (debugAI) {
+      try {
+        const resp = await debugAI.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: debugUserPrompt,
+          config: { systemInstruction: debugSystemPrompt },
+        });
+        diagText = resp.text?.trim() || '';
+      } catch (_) { console.warn('[DEBUGGER] Gemini failed'); }
+    }
+
+    // Tier 2: Anthropic
+    if (!diagText) {
+      try {
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 800,
+            system: debugSystemPrompt,
+            messages: [{ role: 'user', content: debugUserPrompt }],
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          diagText = data.content?.[0]?.text?.trim() || '';
+        }
+      } catch (_) { console.warn('[DEBUGGER] Anthropic failed'); }
+    }
+
+    if (diagText) {
+      setDebuggerResult(diagText);
     } else {
-      setDebuggerResult(`No AI key — local diagnosis:\n${faultMatch ? FAULT_KB[faultMatch].fixes.join('\n') : customFaultMatch ? `Custom fault: ${customFaultMatch} — check BUILD tab for feature code.` : 'Check serial port, IMU wiring, and motor driver power supply.'}`);
+      setDebuggerResult(
+        faultMatch
+          ? `**${faultMatch}**\n\n${FAULT_KB[faultMatch].desc}\n\nFixes:\n${FAULT_KB[faultMatch].fixes.map((f: string, i: number) => `${i+1}. ${f}`).join('\n')}`
+          : customFaultMatch
+          ? `Custom fault: ${customFaultMatch} — check BUILD tab for feature code.`
+          : 'AI unavailable. Common fixes:\n1. Check serial port and close Arduino IDE\n2. Verify IMU wiring (SDA/SCL, 3.3V not 5V)\n3. Run: python physicore_bridge.py\n4. Check endpoint: ws://localhost:8765'
+      );
     }
     setIsDebugging(false);
   };

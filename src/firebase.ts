@@ -14,6 +14,8 @@ const firebaseConfig = (configFiles['../firebase-applet-config.json'] as any)?.d
 };
 
 // Use environment variables if available, otherwise fallback to the JSON config
+// NOTE: firestoreDatabaseId intentionally removed — always use the default Firestore database.
+// The named AI Studio database has no deployed security rules → permission denied on all writes.
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfig.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfig.authDomain,
@@ -21,7 +23,6 @@ const config = {
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfig.storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
   appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfig.appId,
-  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfig.firestoreDatabaseId,
 };
 
 // Validate that we have real values before initializing
@@ -49,7 +50,9 @@ try {
   }
   
   auth = getAuth(app);
-  db = getFirestore(app, config.firestoreDatabaseId || undefined);
+  // Use the default Firestore database — security rules are deployed here.
+  // The named AI Studio DB (ai-studio-43ca046c-...) has no rules → permission denied.
+  db = getFirestore(app);
   googleProvider = new GoogleAuthProvider();
 } catch (e) {
   console.error("Firebase Initialization Error:", e);
