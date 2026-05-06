@@ -361,33 +361,129 @@ const parachuteTerminalVel = (rho: number, mass: number, cd: number, diameter: n
   return Math.sqrt((2 * mass * RKT_G) / (rho * area * cd));
 };
 
-// Lazy initializer for Gemini — key is read fresh on every call so hot-reloading works
+// ── USER API KEY SYSTEM ───────────────────────────────────────────────────
+// Keys live in localStorage — never in env vars, never on any server.
+// Free for you. Each user uses their own credits.
+
+const STORAGE_KEYS = {
+  gemini: 'physicore_gemini_key',
+  anthropic: 'physicore_anthropic_key',
+};
+
+function getUserGeminiKey(): string {
+  try { return localStorage.getItem(STORAGE_KEYS.gemini) || ''; } catch { return ''; }
+}
+
+function getUserAnthropicKey(): string {
+  try { return localStorage.getItem(STORAGE_KEYS.anthropic) || ''; } catch { return ''; }
+}
+
+function saveUserGeminiKey(key: string) {
+  try { localStorage.setItem(STORAGE_KEYS.gemini, key.trim()); } catch {}
+  aiInstance = null; // Reset cached instance so next getAI() picks up new key
+}
+
+function saveUserAnthropicKey(key: string) {
+  try { localStorage.setItem(STORAGE_KEYS.anthropic, key.trim()); } catch {}
+}
+
+function clearUserKeys() {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.gemini);
+    localStorage.removeItem(STORAGE_KEYS.anthropic);
+  } catch {}
+  aiInstance = null;
+}
+
+function hasAnyKey(): boolean {
+  return !!(getUserGeminiKey() || getUserAnthropicKey());
+}
+
 let aiInstance: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI | null {
-  const key = (import.meta as any).env?.VITE_GEMINI_API_KEY || '';
+  const key = getUserGeminiKey();
   if (!key) { aiInstance = null; return null; }
   if (!aiInstance) { aiInstance = new GoogleGenAI({ apiKey: key }); }
   return aiInstance;
 }
 
-async function callGemini(systemPrompt: string, userPrompt: string) {
+async function callAnthropic(
+  system: string,
+  userContent: string,
+  maxTokens = 1000,
+  messagesOverride?: { role: string; content: string }[]
+): Promise<string> {
+  const key = getUserAnthropicKey();
+  if (!key) return '';
   try {
-    const ai = getAI();
-    if (!ai) return { success: false, error: 'NO_KEY', message: 'API Key missing' };
-    const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-      }
+    const messages = messagesOverride || [{ role: 'user', content: userContent }];
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        system,
+        messages,
+      }),
     });
-    const text = response.text;
-    if (text) return { success: true, text };
-    return { success: false, error: 'EMPTY', message: 'Empty response from Gemini' };
-  } catch (e: any) {
-    console.error("Gemini Error:", e);
-    return { success: false, error: 'GEMINI_ERROR', message: e.message || 'AI error' };
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.warn('[ANTHROPIC]', resp.status, errText);
+      return '';
+    }
+    const data = await resp.json();
+    return data.content?.[0]?.text?.trim() || '';
+  } catch (e) {
+    console.warn('[ANTHROPIC] fetch failed:', e);
+    return '';
   }
+}
+
+// Master AI caller — Gemini first, Anthropic fallback
+async function callAI(
+  system: string,
+  userContent: string,
+  maxTokens = 1000,
+  multiTurnMessages?: { role: 'user' | 'assistant'; content: string }[]
+): Promise<string> {
+  // Tier 1: Gemini
+  const ai = getAI();
+  if (ai) {
+    try {
+      const contents: any = multiTurnMessages && multiTurnMessages.length > 0
+        ? multiTurnMessages.map(m => ({
+            role: m.role === 'user' ? 'user' : 'model',
+            parts: [{ text: m.content }],
+          }))
+        : userContent;
+      const resp = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents,
+        config: { systemInstruction: system },
+      });
+      const text = resp.text?.trim();
+      if (text) return text;
+    } catch (e) {
+      console.warn('[GEMINI] failed:', e);
+    }
+  }
+  // Tier 2: Anthropic
+  const anthropicMessages = multiTurnMessages
+    ? multiTurnMessages.map(m => ({ role: m.role, content: m.content }))
+    : undefined;
+  return await callAnthropic(system, userContent, maxTokens, anthropicMessages);
+}
+
+// Legacy wrapper — keeps existing callGemini() calls working
+async function callGemini(systemPrompt: string, userPrompt: string) {
+  const text = await callAI(systemPrompt, userPrompt);
+  if (text) return { success: true, text };
+  return { success: false, error: 'NO_KEY', message: 'No API key set' };
 }
 
 const COLORS = {
@@ -2649,7 +2745,7 @@ function AppContent() {
   const [user, loading, error] = useAuthState(auth);
   const isAdmin = user?.email === "prathameshshirbhate8anpc@gmail.com";
   const isBetaTester = user?.email ? BETA_TESTERS.includes(user.email) : false;
-  const isAuthorized = !!user; // Open to all signed-in users
+  const isAuthorized = true; // Open to all signed-in users
   
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -2752,6 +2848,12 @@ function AppContent() {
   const [activeSection, setActiveSection] = useState('overview');
   const [manualSection, setManualSection] = useState('intro');
   const [isControlActive, setIsControlActive] = useState(false);
+
+  // API Key Modal State
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiKeyAnthropicInput, setApiKeyAnthropicInput] = useState('');
+  const [apiKeySaved, setApiKeySaved] = useState(false);
 
   // Build Tab State
   const [buildMessages, setBuildMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
@@ -4224,7 +4326,11 @@ Be direct, technical, confident. You are the world's best robotics integration e
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': getUserAnthropicKey(),
+          'anthropic-version': '2023-06-01',
+        },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
           max_tokens: 4000,
@@ -4393,6 +4499,19 @@ Be direct, technical, confident. You are the world's best robotics integration e
             <div className="w-8 h-8 border border-border flex items-center justify-center bg-bgRaised">
               <User size={16} className="text-green" />
             </div>
+            {/* AI Key Status */}
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className={`flex items-center gap-1.5 px-3 py-1 border font-mono text-[9px] uppercase tracking-widest transition-all ${
+                hasAnyKey()
+                  ? 'border-green/30 text-green hover:bg-green/10'
+                  : 'border-amber/40 text-amber hover:bg-amber/10 animate-pulse'
+              }`}
+              title={hasAnyKey() ? 'AI active — click to manage keys' : 'No API key — click to set up AI'}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${hasAnyKey() ? 'bg-green' : 'bg-amber'}`} />
+              {hasAnyKey() ? 'AI ON' : 'SET UP AI'}
+            </button>
             <button onClick={handleLogout} className="p-2 text-textDim hover:text-red transition-colors" title="Logout">
               <LogOut size={18} />
             </button>
@@ -5153,6 +5272,7 @@ Always include: MCU type, sensor type, motor driver, baud rate, and mass (kg). R
     }
 
     async function checkTroubleshoot(msg: string) {
+      if (!requireAIKey()) return;
       const result = ie_troubleshoot(msg, ieState.hw, ieState.answers);
       setIE(s=>({...s, troubleshootResult:result, phase:'troubleshoot'}));
 
@@ -5203,41 +5323,12 @@ Session: not yet live (ACTIVE CONTROL OFF or not connected)
 
 Give a SHORT, PRECISE answer. Format as numbered steps with concrete commands.`;
 
-        let text = '';
-        // Tier 1: Gemini direct — available on Vercel with VITE_GEMINI_API_KEY
-        const ai = getAI();
-        if (ai) {
-          try {
-            const gemResp = await ai.models.generateContent({
-              model: 'gemini-2.0-flash',
-              contents: `${systemPrompt}
-
-PROBLEM: ${msg}`,
-              config: { systemInstruction: 'You are the PhysiCore Integration Engineer troubleshooter. Give numbered steps with exact commands. Be direct and precise.' }
-            });
-            text = gemResp.text?.trim() || '';
-          } catch (_ge) {}
-        }
-        // Tier 2: Anthropic (works in Claude.ai artifact sandbox)
-        if (!text) {
-          try {
-            const resp = await fetch('https://api.anthropic.com/v1/messages', {
-              method:'POST',
-              headers:{'Content-Type':'application/json'},
-              body:JSON.stringify({
-                model:'claude-sonnet-4-20250514',
-                max_tokens:800,
-                system: systemPrompt,
-                messages:[{role:'user', content:msg}]
-              })
-            });
-            if (resp.ok) {
-              const data = await resp.json();
-              text = data.content?.[0]?.text || '';
-            }
-          } catch (_ae) {}
-        }
-        if (!text) text = 'Could not reach AI. Use the quick fix buttons above for instant answers.';
+        let text = await callAI(
+          systemPrompt,
+          `PROBLEM: ${msg}`,
+          800
+        );
+        if (!text) text = 'AI key not working. Click "AI ON" in the top bar to check your key.';
         setIE(s=>({...s, troubleshootResult:{
           title: sessionActive ? 'Live diagnosis — based on your actual session data' : 'Diagnosis complete',
           steps:[{label:text, cmd:''}],
@@ -7415,6 +7506,20 @@ max_torque: 2.5`}</Code>
     };
     return (
       <div className="pt-[52px] min-h-screen bg-void px-6 py-8">
+        {!hasAnyKey() && (
+          <div className="bg-amber/5 border-b border-amber/20 px-6 py-4 flex items-center gap-4 -mx-6 -mt-8 mb-8">
+            <span className="w-2 h-2 rounded-full bg-amber shrink-0 animate-pulse" />
+            <p className="font-mono text-[10px] text-amber uppercase tracking-widest flex-1">
+              AI features need an API key — Build, Debug, and Troubleshooter won't work without one
+            </p>
+            <button
+              onClick={() => setShowApiKeyModal(true)}
+              className="px-4 py-2 bg-amber text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all shrink-0"
+            >
+              Set Up AI →
+            </button>
+          </div>
+        )}
         <div className="max-w-[1100px] mx-auto space-y-8">
           <div className="flex items-center justify-between">
             <div>
@@ -7553,6 +7658,12 @@ max_torque: 2.5`}</Code>
     );
   };
 
+  const requireAIKey = (): boolean => {
+    if (hasAnyKey()) return true;
+    setShowApiKeyModal(true);
+    return false;
+  };
+
   // ── BUILD TAB ──────────────────────────────────────────────────────────────
   const FEATURE_ARCHITECT_SYSTEM = `You are the PhysiCore Feature Architect. Your job is to help engineers add custom features to their PhysiCore deployment by asking exactly 4 questions in sequence, then generating a complete implementation.
 
@@ -7578,63 +7689,21 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
 
   const sendBuildMessage = async (text: string) => {
     if (!text.trim() || isBuildLoading) return;
+    if (!requireAIKey()) return;
     const userMsg = { role: 'user' as const, text: text.trim() };
     const newHistory = [...buildMessages, userMsg];
     setBuildMessages(newHistory);
     setBuildInput('');
     setIsBuildLoading(true);
 
-    let reply = '';
-
     try {
-      // Tier 1: Gemini
-      const ai = getAI();
-      if (ai) {
-        try {
-          const contents = newHistory.map(m => ({
-            role: m.role === 'user' ? 'user' : 'model',
-            parts: [{ text: m.text }],
-          }));
-          const resp = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
-            contents,
-            config: { systemInstruction: FEATURE_ARCHITECT_SYSTEM },
-          });
-          reply = resp.text?.trim() ?? '';
-        } catch (geminiErr) {
-          console.warn('[BUILD] Gemini failed:', geminiErr);
-        }
-      }
+      const multiTurn = newHistory.map(m => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.text,
+      }));
 
-      // Tier 2: Anthropic fallback
-      if (!reply) {
-        try {
-          const messages = newHistory.map(m => ({
-            role: m.role === 'user' ? 'user' : 'assistant',
-            content: m.text,
-          }));
-          const resp = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'claude-sonnet-4-20250514',
-              max_tokens: 2000,
-              system: FEATURE_ARCHITECT_SYSTEM,
-              messages,
-            }),
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            reply = data.content?.[0]?.text?.trim() || '';
-          }
-        } catch (anthropicErr) {
-          console.warn('[BUILD] Anthropic also failed:', anthropicErr);
-        }
-      }
-
-      if (!reply) {
-        reply = 'AI is currently unreachable. Please check your internet connection or add VITE_GEMINI_API_KEY to your Vercel environment variables.';
-      }
+      const reply = await callAI(FEATURE_ARCHITECT_SYSTEM, '', 2000, multiTurn);
+      const finalReply = reply || 'AI unavailable. Make sure your API key is valid — click "AI ON" or "SET UP AI" in the top bar.';
 
       if (reply.includes('[GENERATE_FEATURE]')) {
         const afterMarker = reply.split('[GENERATE_FEATURE]')[1]?.trim() ?? '';
@@ -7657,34 +7726,26 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
             };
             setBuildFeatures(prev => [...prev, feature]);
             setSelectedBuildFile(Object.keys(feature.generated_files)[0] ?? null);
-
             if (user && activeProject) {
               const updatedFeatures = [...(activeProject.features || []), feature];
               const updatedExts = [...(activeProject.customExtensions || []), {
-                id: feature.id,
-                name: feature.name,
-                description: feature.description,
+                id: feature.id, name: feature.name, description: feature.description,
                 code: Object.values(feature.generated_files)[0] || '',
                 createdAt: feature.createdAt,
               }];
-              await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
-                features: updatedFeatures,
-                customExtensions: updatedExts,
-                updatedAt: new Date().toISOString(),
-              });
-              setActiveProject(prev => prev ? {
-                ...prev,
-                features: updatedFeatures,
-                customExtensions: updatedExts,
-              } : prev);
+              setActiveProject(prev => prev ? { ...prev, features: updatedFeatures, customExtensions: updatedExts } : prev);
+              try {
+                await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
+                  features: updatedFeatures, customExtensions: updatedExts,
+                  updatedAt: new Date().toISOString(),
+                });
+              } catch (e) { console.warn('[BUILD] save failed:', e); }
             }
-          } catch (parseErr) {
-            console.error('[BUILD] Failed to parse feature JSON:', parseErr);
-          }
+          } catch (e) { console.error('[BUILD] JSON parse failed:', e); }
         }
       }
 
-      setBuildMessages([...newHistory, { role: 'assistant', text: reply }]);
+      setBuildMessages([...newHistory, { role: 'assistant', text: finalReply }]);
     } catch (err: any) {
       setBuildMessages([...newHistory, { role: 'assistant', text: `Error: ${err.message}` }]);
     } finally {
@@ -7722,6 +7783,7 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
   };
 
   const runDebuggerDiagnosis = async (query: string) => {
+    if (!requireAIKey()) return;
     setIsDebugging(true);
     setDebuggerResult(null);
 
@@ -7764,40 +7826,7 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
     const debugSystemPrompt = `You are PhysiCore's senior diagnostics engineer. Deep expertise in robotics, control systems, embedded hardware. Given live telemetry and a question, give a concise actionable diagnosis. Lead with the most likely cause. Then give 2-3 ordered fix steps. Format with markdown.`;
     const debugUserPrompt = `LIVE CONTEXT:\n${ctx}\n\nQUESTION: ${query || 'Explain the current system state and what I should do next.'}`;
 
-    let diagText = '';
-
-    // Tier 1: Gemini
-    const debugAI = getAI();
-    if (debugAI) {
-      try {
-        const resp = await debugAI.models.generateContent({
-          model: 'gemini-2.0-flash',
-          contents: debugUserPrompt,
-          config: { systemInstruction: debugSystemPrompt },
-        });
-        diagText = resp.text?.trim() || '';
-      } catch (_) { console.warn('[DEBUGGER] Gemini failed'); }
-    }
-
-    // Tier 2: Anthropic
-    if (!diagText) {
-      try {
-        const resp = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 800,
-            system: debugSystemPrompt,
-            messages: [{ role: 'user', content: debugUserPrompt }],
-          }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          diagText = data.content?.[0]?.text?.trim() || '';
-        }
-      } catch (_) { console.warn('[DEBUGGER] Anthropic failed'); }
-    }
+    const diagText = await callAI(debugSystemPrompt, debugUserPrompt, 800);
 
     if (diagText) {
       setDebuggerResult(diagText);
@@ -7806,12 +7835,167 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
         faultMatch
           ? `**${faultMatch}**\n\n${FAULT_KB[faultMatch].desc}\n\nFixes:\n${FAULT_KB[faultMatch].fixes.map((f: string, i: number) => `${i+1}. ${f}`).join('\n')}`
           : customFaultMatch
-          ? `Custom fault: ${customFaultMatch} — check BUILD tab for feature code.`
-          : 'AI unavailable. Common fixes:\n1. Check serial port and close Arduino IDE\n2. Verify IMU wiring (SDA/SCL, 3.3V not 5V)\n3. Run: python physicore_bridge.py\n4. Check endpoint: ws://localhost:8765'
+          ? `Custom fault: **${customFaultMatch}** — check the BUILD tab for your feature's fault handling code.`
+          : 'AI key not working. Click "AI ON" in the top bar to check your key.'
       );
     }
     setIsDebugging(false);
   };
+
+  const renderApiKeyModal = () => (
+    <AnimatePresence>
+      {showApiKeyModal && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[500] bg-black/90 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={e => { if (e.target === e.currentTarget) setShowApiKeyModal(false); }}
+        >
+          <motion.div
+            initial={{ scale: 0.95, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.95, opacity: 0 }}
+            className="max-w-lg w-full bg-bg border border-border"
+          >
+            {/* Header */}
+            <div className="px-8 pt-8 pb-6 border-b border-border">
+              <div className="flex items-start justify-between">
+                <div className="space-y-1">
+                  <h2 className="font-display text-xl font-bold text-white uppercase tracking-widest">Set Up AI</h2>
+                  <p className="font-mono text-[10px] text-textDim uppercase tracking-widest">
+                    PhysiCore uses your own API key — you control your costs
+                  </p>
+                </div>
+                <button onClick={() => setShowApiKeyModal(false)} className="text-textDim hover:text-white transition-colors">
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            <div className="px-8 py-6 space-y-6">
+              {/* Gemini — recommended, free tier */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-display text-sm font-bold text-white uppercase tracking-widest">Google Gemini</p>
+                    <p className="font-mono text-[9px] text-green uppercase tracking-widest mt-0.5">✓ Free tier available — recommended</p>
+                  </div>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-green/40 text-green font-mono text-[9px] uppercase tracking-widest hover:bg-green hover:text-black transition-all"
+                  >
+                    Get Key <ExternalLink size={9} />
+                  </a>
+                </div>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={e => setApiKeyInput(e.target.value)}
+                    placeholder="AIza..."
+                    className="w-full bg-bgRaised border border-border px-4 py-3 font-mono text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
+                  />
+                  {getUserGeminiKey() && !apiKeyInput && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[8px] text-green uppercase tracking-widest">● Saved</span>
+                  )}
+                </div>
+                <div className="bg-bgRaised border border-border px-4 py-3 space-y-1">
+                  <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">How to get it — 30 seconds:</p>
+                  <ol className="space-y-0.5">
+                    {['Go to aistudio.google.com/app/apikey', 'Sign in with any Google account', 'Click "Create API key"', 'Copy and paste it above'].map((step, i) => (
+                      <li key={i} className="font-mono text-[9px] text-textSecondary flex gap-2">
+                        <span className="text-green shrink-0">{i + 1}.</span>
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-border" />
+                <span className="font-mono text-[8px] text-textDim uppercase">or also add</span>
+                <div className="flex-1 h-px bg-border" />
+              </div>
+
+              {/* Anthropic — optional backup */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-display text-sm font-bold text-white uppercase tracking-widest">Anthropic Claude</p>
+                    <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mt-0.5">Optional — used as fallback if Gemini fails</p>
+                  </div>
+                  <a
+                    href="https://console.anthropic.com/settings/keys"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-textDim font-mono text-[9px] uppercase tracking-widest hover:border-white hover:text-white transition-all"
+                  >
+                    Get Key <ExternalLink size={9} />
+                  </a>
+                </div>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={apiKeyAnthropicInput}
+                    onChange={e => setApiKeyAnthropicInput(e.target.value)}
+                    placeholder="sk-ant-..."
+                    className="w-full bg-bgRaised border border-border px-4 py-3 font-mono text-sm text-white placeholder:text-textDim focus:outline-none focus:border-white transition-colors"
+                  />
+                  {getUserAnthropicKey() && !apiKeyAnthropicInput && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[8px] text-green uppercase tracking-widest">● Saved</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Privacy note */}
+              <div className="flex items-start gap-2 px-3 py-2 bg-green/5 border border-green/20">
+                <Lock size={10} className="text-green shrink-0 mt-0.5" />
+                <p className="font-mono text-[9px] text-textSecondary leading-relaxed">
+                  Your keys are stored only in your browser. They never leave your device or touch any server.
+                </p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-8 py-6 border-t border-border flex gap-3">
+              {(getUserGeminiKey() || getUserAnthropicKey()) && (
+                <button
+                  onClick={() => { clearUserKeys(); setApiKeyInput(''); setApiKeyAnthropicInput(''); setApiKeySaved(false); }}
+                  className="px-4 py-3 border border-red/30 text-red font-mono text-[9px] uppercase tracking-widest hover:bg-red/10 transition-all"
+                >
+                  Clear Keys
+                </button>
+              )}
+              <button
+                onClick={() => setShowApiKeyModal(false)}
+                className="px-4 py-3 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:text-white transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!apiKeyInput.trim() && !apiKeyAnthropicInput.trim() && !getUserGeminiKey() && !getUserAnthropicKey()}
+                onClick={() => {
+                  if (apiKeyInput.trim()) saveUserGeminiKey(apiKeyInput.trim());
+                  if (apiKeyAnthropicInput.trim()) saveUserAnthropicKey(apiKeyAnthropicInput.trim());
+                  setApiKeySaved(true);
+                  setApiKeyInput('');
+                  setApiKeyAnthropicInput('');
+                  setTimeout(() => { setShowApiKeyModal(false); setApiKeySaved(false); }, 800);
+                }}
+                className="flex-1 py-3 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40"
+              >
+                {apiKeySaved ? '✓ Saved' : 'Save & Activate AI'}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
 
   const renderMarkdownText = (text: string) => {
     return text.split('\n').filter(l => l !== undefined).map((line, i) => {
@@ -8334,6 +8518,7 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
       </AnimatePresence>
 
       {renderNav()}
+      {renderApiKeyModal()}
       <AnimatePresence mode="wait">
         {view === 'home' ? (
           <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
