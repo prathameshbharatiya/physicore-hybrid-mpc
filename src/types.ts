@@ -62,6 +62,37 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface GeneratedFile {
+  filename: string;
+  content: string;
+}
+
+export interface CustomExtension {
+  id: string;
+  name: string;
+  description: string;
+  code: string;
+  createdAt: string;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  hardware: string;
+  platform: string;
+  answers: Record<string, string>;
+  generatedFiles: GeneratedFile[];
+  customExtensions: CustomExtension[];
+  createdAt: string;
+  updatedAt: string;
+  lastBridgeSession?: string;
+  registryPlatformKey: string;
+  connectionMode: 'ros2_websocket' | 'hil' | 'digital_twin' | 'mavlink_bridge';
+  endpoint: string;
+  notes: string;
+}
+
 export interface FailureLog {
   id: string;
   timestamp: number;

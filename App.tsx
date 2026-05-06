@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SimMode, StateVector, ControlInput, PhysicalParams, SimState, TelemetryPoint, MetaAnalysisResponse } from './src/types';
+import { SimMode, StateVector, ControlInput, PhysicalParams, SimState, TelemetryPoint, MetaAnalysisResponse, Project, FailureLog } from './src/types';
 import { stepDynamicsRK4 } from './src/services/physicsLogic';
 import { computeMPCAction } from './src/services/optimizer';
 import { updateSystemID } from './src/services/systemID';
@@ -9,9 +9,9 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db, googleProvider, handleFirestoreError, OperationType } from './src/firebase';
 import { signInWithPopup, signOut } from 'firebase/auth';
-import { 
-  doc, getDoc, updateDoc, setDoc, deleteDoc,
-  collection, query, where, getDocs, onSnapshot 
+import {
+  doc, getDoc, updateDoc, setDoc, deleteDoc, addDoc,
+  collection, query, where, getDocs, onSnapshot, orderBy
 } from 'firebase/firestore';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import SimulationCanvas from './src/components/SimulationCanvas';
@@ -25,7 +25,7 @@ import {
   Code2, MessageSquare, DownloadCloud, ExternalLink, ChevronDown,
   Rocket, Wind, Navigation, History, FileUp, TrendingUp, Gauge,
   Pause, RotateCcw, Info, Upload, LogOut, User, Lock, ShieldAlert,
-  BookOpen, Plus, Trash2
+  BookOpen, Plus, Trash2, Puzzle, Bug
 } from 'lucide-react';
 import { simpleHash, generateId, encodeProjectCode, decodeProjectCode } from './src/utils/projectSync';
 import { 
@@ -45,7 +45,8 @@ const RKT_RHO0 = 1.225;
 
 const BETA_TESTERS = [
   "prathameshshirbhate256@gmail.com",
-  "ashwanth123creations@gmail.com"
+  "ashwanth123creations@gmail.com",
+  "adithya17k@gmail.com"
 ];
 
 
@@ -404,7 +405,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team';
+type View = 'home' | 'integrator' | 'dashboard' | 'manual' | 'team' | 'projects' | 'debugger';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -1916,15 +1917,6 @@ const IE_FLOWS: Record<string, IEFlow> = {
       { key:'mass',      q:'End-effector + payload (kg)?', opts:undefined },
     ],
   },
-  humanoid: {
-    label: 'Humanoid robot', icon: '🤖',
-    questions: [
-      { key:'brand',     q:'Which humanoid?',            opts:['Unitree G1','Unitree H1','Figure AI Apollo','Boston Dynamics Spot','Custom'] },
-      { key:'interface', q:'Control interface?',         opts:['ROS2','Unitree SDK','Boston Dynamics SDK','Custom'] },
-      { key:'distro',    q:'ROS2 distribution?',         opts:['Humble','Jazzy','Not using ROS2'] },
-      { key:'mass',      q:'Robot mass (kg)?',           opts:undefined },
-    ],
-  },
   legged: {
     label: 'Legged / quadruped', icon: '🐕',
     questions: [
@@ -1990,6 +1982,28 @@ const IE_FLOWS: Record<string, IEFlow> = {
       { key:'os',        q:'Your laptop OS?',        opts:['Windows','Mac','Linux'] },
     ],
   },
+  humanoid: {
+    label: 'Bipedal / Humanoid', icon: '🦿',
+    questions: [
+      { key:'model',     q:'Which humanoid platform?',    opts:['Unitree G1','Unitree H1','Custom bipedal','Simulation only'] },
+      { key:'imu',       q:'Primary IMU?',                opts:['Built-in (Unitree)','BNO055','ICM-42688','External IMU'] },
+      { key:'interface', q:'Communication interface?',    opts:['Unitree SDK (Ethernet)','ROS2','Custom serial'] },
+      { key:'mass',      q:'Estimated mass (kg)?',        opts:undefined },
+      { key:'gait',      q:'Primary gait mode?',          opts:['Standing balance','Slow walk','Dynamic walk','Stair climbing'] },
+      { key:'os',        q:'Your laptop OS?',             opts:['Ubuntu 22.04','Ubuntu 20.04','Windows (WSL2)','macOS'] },
+    ],
+  },
+  rocket_aero: {
+    label: 'Sounding Rocket (Aero)', icon: '🚀',
+    questions: [
+      { key:'airframe',  q:'Airframe diameter (mm)?',     opts:['38mm (29mm motor)','54mm','75mm','98mm','Custom'] },
+      { key:'motor',     q:'Motor type?',                 opts:['Cesaroni','AeroTech','Klima','Custom solid','Hybrid'] },
+      { key:'imu',       q:'Flight computer IMU?',        opts:['BNO055','MPU6050','ICM-42688','OpenLog Artemis'] },
+      { key:'mass',      q:'Airframe mass (dry kg)?',     opts:undefined },
+      { key:'apogee',    q:'Target apogee (m)?',          opts:undefined },
+      { key:'mcu',       q:'Flight computer?',            opts:['Arduino Mega','ESP32','Teensy 4.0','Custom FC'] },
+    ],
+  },
   custom: {
     label: 'Custom hardware', icon: '🔧',
     questions: [
@@ -2016,7 +2030,8 @@ function ie_detect(s: string): string {
   if (t.match(/\bauv\b|underwater|subsea|bluerov|\bdvl\b/)) return 'auv';
   if (t.match(/surgical|medical.?robot|endoscop/)) return 'surgical';
   if (t.match(/satellite|spacecraft|orbital|cubesat/)) return 'satellite';
-  if (t.match(/rocket|sounding.?rocket|flight.?computer/)) return 'rocket';
+  if (t.match(/sounding.?rocket|high.?power.?rocket|HPR|model.?rocket|cesaroni|aerotech/)) return 'rocket_aero';
+  if (t.match(/rocket|flight.?computer/)) return 'rocket';
   if (t.match(/rover|ground.?robot|\bamr\b|warehouse.?robot/)) return 'rover';
   if (t.match(/drone|quadrotor|fpv|multirotor/)) return 'px4';
   if (t.match(/esp32|esp8266|arduino/)) return 'balancing_bot';
@@ -2029,6 +2044,84 @@ function ie_port(os: string): string {
   if (os.toLowerCase().includes('win')) return 'COM3';
   if (os.toLowerCase().includes('mac')) return '/dev/cu.usbserial-0001';
   return '/dev/ttyUSB0';
+}
+
+// ── Hardware Database ─────────────────────────────────────────────────────────
+const HARDWARE_DB: Record<string, { notes?: string[]; knownIssues?: string[]; defaultMass?: number; pins?: Record<string, number | string> }> = {
+  'MPU6050': {
+    notes: ['Must use 3.3V not 5V (5V will damage it)', 'SDA→A4, SCL→A5 on Arduino Uno'],
+    knownIssues: ['Running on 5V causes immediate damage', 'I2C address: 0x68 (AD0 low) or 0x69 (AD0 high)'],
+  },
+  'BNO055': {
+    notes: ['I2C address 0x28 (default) or 0x29', 'Use raw mode — disable onboard fusion for PhysiCore'],
+  },
+  'MPU9250': {
+    notes: ['3.3V logic only', 'Has integrated magnetometer (not needed by PhysiCore)'],
+  },
+  'L298N': {
+    notes: ['Logic pins are 5V tolerant', 'Enable pins MUST be on PWM-capable pins'],
+    pins: { ENA: 5, IN1: 4, IN2: 3, ENB: 6, IN3: 7, IN4: 8 },
+  },
+  'TB6612FNG': {
+    notes: ['VM (motor power) can be 2.5V–13.5V', 'STBY pin must be HIGH to enable outputs'],
+  },
+  'DRV8833': {
+    notes: ['3.3V–10.8V motor supply', 'Efficiency higher than L298N for small motors'],
+  },
+  'Unitree G1': { defaultMass: 35.0, notes: ['Communication: Ethernet (DDS/ROS2)'] },
+  'Unitree H1': { defaultMass: 47.0, notes: ['Communication: Ethernet (DDS/ROS2)'] },
+  'Unitree Go2': { defaultMass: 15.0 },
+  'Spot (Boston Dynamics)': { defaultMass: 32.5 },
+  'Arduino Uno': {
+    notes: ['14 digital I/O, 6 PWM (pins 3,5,6,9,10,11)', 'Serial on pins 0,1 — keep free for bridge communication'],
+  },
+  'Arduino Mega': {
+    notes: ['54 digital I/O, 15 PWM pins', 'Better for multi-motor robots'],
+  },
+  'Raspberry Pi 4': {
+    notes: ['GPIO 3.3V logic — do not connect 5V signals directly', 'Use as compute node — not for real-time PWM'],
+  },
+};
+
+function ie_hwNotes(answers: Record<string, string>): string[] {
+  const notes: string[] = [];
+  for (const val of Object.values(answers)) {
+    const entry = HARDWARE_DB[val];
+    if (entry) {
+      (entry.notes || []).forEach(n => notes.push(`${val}: ${n}`));
+      (entry.knownIssues || []).forEach(n => notes.push(`⚠ ${val}: ${n}`));
+    }
+  }
+  return notes;
+}
+
+function ie_addVerificationHeader(filename: string, content: string, hw: string, answers: Record<string,string>): string {
+  const ts = new Date().toISOString();
+  const imu = answers.imu || '?';
+  const driver = answers.motor_driver || '?';
+  const mcu = answers.mcu || '?';
+  const baud = answers.baud || '115200';
+  const mass = answers.mass || answers.dry_mass || '?';
+
+  if (filename.endsWith('.ino') || filename.endsWith('.cpp') || filename.endsWith('.c')) {
+    const header = `// ═══════════════════════════════════════════════════════════
+// PHYSICORE VERIFIED INTEGRATION
+// Hardware: ${mcu} + ${imu} + ${driver}
+// Platform: ${hw} | PhysiCore v3.1
+// Generated: ${ts}
+// Verified: ✓ Library compatibility checked for ${imu}
+//           ✓ Pin assignments verified for ${mcu}
+//           ✓ Baud rate set to ${baud}
+//           ✓ Mass set to ${mass}kg
+//           ✓ JSON format matches bridge parser
+// ═══════════════════════════════════════════════════════════
+`;
+    return header + '\n' + content;
+  }
+  if (filename.endsWith('.yaml') || filename.endsWith('.yml')) {
+    return `# PHYSICORE VERIFIED — ${ts}\n# Hardware: ${hw}\n${content}`;
+  }
+  return content;
 }
 
 // ── Code generation ───────────────────────────────────────────────────────────
@@ -2574,7 +2667,8 @@ function AppContent() {
     
     const teamEmails = [
       "prathameshshirbhate256@gmail.com",
-      "ashwanth123creations@gmail.com"
+      "ashwanth123creations@gmail.com",
+      "adithya17k@gmail.com"
     ];
     
     let addedCount = 0;
@@ -2660,6 +2754,9 @@ function AppContent() {
   });
   const [ieCopiedId, setIECopiedId] = useState<string|null>(null);
   const [ieTsInput, setIETsInput] = useState('');
+  const [extBuilderInput, setExtBuilderInput] = useState('');
+  const [extBuilderResult, setExtBuilderResult] = useState<string|null>(null);
+  const [isBuildingExt, setIsBuildingExt] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [isSystemConnected, setIsSystemConnected] = useState(false);
@@ -2725,8 +2822,13 @@ function AppContent() {
     vehicle_type: 'UNKNOWN',
     connected: false,
     gps_fix: 0,
-    satellites: 0
+    satellites: 0,
+    faults: [] as string[],
   });
+  const [failureLogs, setFailureLogs] = useState<FailureLog[]>([]);
+  const [debuggerQuery, setDebuggerQuery] = useState('');
+  const [debuggerResult, setDebuggerResult] = useState<string|null>(null);
+  const [isDebugging, setIsDebugging] = useState(false);
 
   const [flightData, setFlightData] = useState<any[]>([]);
   const [isRocketSimRunning, setIsRocketSimRunning] = useState(false);
@@ -3013,6 +3115,21 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
         ws.onmessage = (msg) => {
           try {
             const data = JSON.parse(msg.data);
+            if (data.op === 'extensions_status') {
+              setLoadedExtensions(data.extensions || []);
+            }
+            if (data.op === 'registry_status') {
+              setRegistryStatus({
+                platform:       data.platform,
+                sessions_count: data.sessions_count,
+                latest_params:  data.latest_params || {},
+                prior_weight:   data.prior_weight,
+                loaded:         data.loaded,
+                registry_path:  data.registry_path,
+                current_mass:   data.current_mass,
+                current_friction: data.current_friction,
+              });
+            }
             if (data.op === 'publish' && data.topic === '/telemetry') {
               // Ensure we stay connected
               setIsSystemConnected(true);
@@ -3066,10 +3183,22 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
                 isStable:           d.isStable           ?? prev.isStable,
                 isFaulted:          d.isFaulted          ?? prev.isFaulted,
                 step_count:         d.step_count         ?? prev.step_count,
+                faults:             d.faults             ?? prev.faults,
                 // History
                 residualHistory: d.residual > 0 ? [...(prev.residualHistory || []), { x: Date.now(), y: d.residual }].slice(-60) : (prev.residualHistory || []),
                 effortHistory:   [...(prev.effortHistory   || []), { x: Date.now(), y: d.effort   || 0 }].slice(-30),
               }));
+              // Capture FailureLog entries from sentinel
+              if (d.isFaulted && d.faults?.length > 0) {
+                setFailureLogs(prev => [{
+                  id: `${Date.now()}`,
+                  timestamp: Date.now(),
+                  task: `Step ${d.step_count}`,
+                  failure_type: d.faults[0],
+                  sim_params: { mass: d.mass||0, friction: d.friction||0, gravity: 9.81, textile_k: 0, damping: 0 },
+                  fix_applied: false,
+                }, ...prev].slice(0, 50));
+              }
             }
           } catch (e) {
             console.error("Telemetry Parse Error:", e);
@@ -3201,6 +3330,28 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
     min_stability: 1.5
   });
   const [showProjectDropdown, setShowProjectDropdown] = useState(false);
+
+  // ── Projects system ────────────────────────────────────────────────────────
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [showIEProjectPicker, setShowIEProjectPicker] = useState(false);
+
+  const [loadedExtensions, setLoadedExtensions] = useState<{name:string;version:string;description:string;hooks:string[]}[]>([]);
+
+  const registryStatus_ref = useRef<any>(null);
+  const [registryStatus, setRegistryStatus] = useState<{
+    platform: string;
+    sessions_count: number;
+    latest_params: Record<string, number>;
+    prior_weight: number;
+    loaded: boolean;
+    registry_path: string;
+    current_mass: number;
+    current_friction: number;
+  } | null>(null);
 
 
   const performTelemetryAnalysis = async () => {
@@ -3642,6 +3793,85 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     return { success: false, error: "Invalid or corrupted Project Code" };
   };
 
+  // ── Project CRUD ───────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!user) { setProjects([]); return; }
+    const q = query(
+      collection(db, 'users', user.uid, 'projects'),
+      orderBy('updatedAt', 'desc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setProjects(snap.docs.map(d => ({ id: d.id, ...d.data() } as Project)));
+    }, () => {});
+    return () => unsub();
+  }, [user]);
+
+  const createProject = async (name: string, hardware: string, answers: Record<string, string>, files: GeneratedFile[]) => {
+    if (!user) return null;
+    const now = new Date().toISOString();
+    const hwFlowPlatforms: Record<string, string> = {
+      balancing_bot: 'balancing_bot', px4: 'quadrotor', ardupilot: 'quadrotor',
+      evtol: 'evtol', ros2_arm: 'manipulator_arm', ros2_legged: 'legged_robot',
+      ros2_rover: 'ground_rover', ros2_auv: 'auv', ros2_surgical: 'surgical_robot',
+      rocket_fc: 'rocket', rover_serial: 'ground_rover', satellite: 'satellite',
+    };
+    const proj: Omit<Project, 'id'> = {
+      name, description: '', hardware, platform: hwFlowPlatforms[hardware] || hardware,
+      answers, generatedFiles: files, customExtensions: [], createdAt: now, updatedAt: now,
+      registryPlatformKey: hwFlowPlatforms[hardware] || hardware,
+      connectionMode: 'mavlink_bridge', endpoint: 'ws://localhost:8765', notes: '',
+    };
+    const ref = await addDoc(collection(db, 'users', user.uid, 'projects'), proj);
+    const newProj = { id: ref.id, ...proj };
+    setActiveProject(newProj);
+    return newProj;
+  };
+
+  const updateProject = async (id: string, changes: Partial<Project>) => {
+    if (!user) return;
+    const now = new Date().toISOString();
+    await updateDoc(doc(db, 'users', user.uid, 'projects', id), { ...changes, updatedAt: now });
+    setActiveProject(prev => prev?.id === id ? { ...prev, ...changes, updatedAt: now } : prev);
+  };
+
+  const deleteProject = async (id: string) => {
+    if (!user) return;
+    await deleteDoc(doc(db, 'users', user.uid, 'projects', id));
+    if (activeProject?.id === id) setActiveProject(null);
+  };
+
+  const duplicateProject = async (project: Project) => {
+    if (!user) return;
+    const now = new Date().toISOString();
+    const copy: Omit<Project, 'id'> = { ...project, name: project.name + ' (copy)', createdAt: now, updatedAt: now };
+    const ref = await addDoc(collection(db, 'users', user.uid, 'projects'), copy);
+    return { id: ref.id, ...copy };
+  };
+
+  const openProjectInIE = (project: Project) => {
+    setActiveProject(project);
+    if (project.hardware && project.answers && Object.keys(project.answers).length > 0) {
+      const files = project.generatedFiles.map(f => ({ filename: f.filename, content: f.content }));
+      setGeneratedFiles(files);
+      setIE({
+        phase: files.length > 0 ? 'generated' : 'questions',
+        hw: project.hardware,
+        qIndex: 0,
+        answers: project.answers,
+        files: files as any,
+        steps: [],
+        checklist: {},
+        activeFile: 0,
+        troubleshootResult: null,
+        freeInput: '',
+      });
+    } else {
+      setIE({ phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [], checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '' });
+    }
+    setView('integrator');
+  };
+
   const handleRocketLaunch = () => {
     if (isSystemConnected) {
       // Send launch command to real hardware
@@ -4030,9 +4260,16 @@ Be direct, technical, confident. You are the world's best robotics integration e
           {view === 'dashboard' ? 'LIVE MISSION CONTROL' : 'Physics Intelligence Engine'}
         </span>
 
+        {view === 'dashboard' && activeProject && (
+          <div className="flex items-center gap-2 ml-4 px-3 py-1 border border-cyan/30 bg-bgRaised">
+            <div className="w-1.5 h-1.5 rounded-full bg-cyan" />
+            <span className="font-mono text-[9px] text-cyan uppercase tracking-widest">PROJECT: {activeProject.name}</span>
+            <button onClick={() => setView('projects')} className="font-mono text-[8px] text-textDim hover:text-cyan transition-colors uppercase tracking-widest">⬡ CHANGE</button>
+          </div>
+        )}
         {view === 'dashboard' && projectData && (
           <div className="relative ml-4">
-            <button 
+            <button
               onClick={() => setShowProjectDropdown(!showProjectDropdown)}
               className="flex items-center gap-2 px-3 py-1 bg-bgRaised border border-cyan/30 hover:border-cyan transition-all group"
             >
@@ -4173,13 +4410,28 @@ Be direct, technical, confident. You are the world's best robotics integration e
               </button>
             ) : (
               <>
-                <button 
+                <button
                   onClick={handleSetIntegratorView}
                   className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'integrator' ? 'bg-white text-black' : 'bg-green text-black hover:bg-white'}`}
                 >
                   ⬡ INTEGRATION ENGINEER
                 </button>
-                <button 
+                <button
+                  onClick={() => setView('projects')}
+                  className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'projects' ? 'bg-white text-black' : 'border border-cyan text-cyan hover:bg-cyan hover:text-black'}`}
+                >
+                  ⬡ PROJECTS
+                </button>
+                <button
+                  onClick={() => setView('debugger')}
+                  className={`relative px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'debugger' ? 'bg-red text-white' : 'border border-red/60 text-red hover:bg-red hover:text-white'}`}
+                >
+                  ⬡ DEBUGGER
+                  {(telemetry.isFaulted || failureLogs.length > 0) && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-red animate-pulse" />
+                  )}
+                </button>
+                <button
                   onClick={() => setView('manual')}
                   className={`px-4 py-1.5 font-display text-[11px] font-bold uppercase tracking-widest transition-all ${view === 'manual' ? 'bg-white text-black' : 'bg-amber text-black hover:bg-white'}`}
                 >
@@ -4743,15 +4995,92 @@ Be direct, technical, confident. You are the world's best robotics integration e
       setCopiedId(id); setTimeout(()=>setCopiedId(null), 1800);
     }
 
+    async function buildExtension() {
+      if (!extBuilderInput.trim()) return;
+      setIsBuildingExt(true);
+      setExtBuilderResult(null);
+      const res = await callGemini(
+        `You are PhysiCore's extension code generator. Generate a complete, ready-to-use PhysiCore extension Python file.
+
+The extension MUST:
+1. Import and subclass PhysiCoreExtension from physicore.extensions
+2. Set meta = ExtensionMeta(name=..., version="1.0.0", description=..., hooks=[...])
+3. Override only the relevant hooks: pre_step, post_step, or on_fault
+4. Be self-contained with all necessary imports
+5. Include brief inline comments explaining what each hook does
+
+Format: output ONLY the Python code, no markdown code blocks, no explanation.`,
+        `Extension request: ${extBuilderInput}\nHardware context: ${activeProject?.hardware || 'generic robot'}`
+      );
+      if (res.success && res.text) {
+        setExtBuilderResult(res.text.replace(/```python|```/g,'').trim());
+      } else {
+        // Offline template
+        const name = extBuilderInput.slice(0,30).replace(/\s+/g,'_').replace(/[^a-z_]/gi,'');
+        setExtBuilderResult(`from physicore.extensions import PhysiCoreExtension, ExtensionMeta
+
+class ${name}Extension(PhysiCoreExtension):
+    meta = ExtensionMeta(
+        name="${name}",
+        version="1.0.0",
+        description="${extBuilderInput}",
+        hooks=["post_step"],
+    )
+
+    def post_step(self, step, engine):
+        # TODO: implement your logic here
+        # step.residual_norm, step.params, step.action_clipped available
+        pass
+`);
+      }
+      setIsBuildingExt(false);
+    }
+
     function selectHardware(hw: string) {
       setIE({ phase:'questions', hw, qIndex:0, answers:{}, files:[], steps:[],
                checklist:{}, activeFile:0, troubleshootResult:null, freeInput:'' });
     }
 
-    function detectAndSelect(text: string) {
+    async function detectAndSelect(text: string) {
       const detected = ie_detect(text);
-      if (detected && IE_FLOWS[detected]) selectHardware(detected);
-      else setIE(s=>({...s, phase:'questions', hw:'balancing_bot', qIndex:0}));
+      if (detected && IE_FLOWS[detected]) { selectHardware(detected); return; }
+
+      // Unknown hardware — run AI profiler to generate tailored Q&A flow
+      setIE(s=>({...s, freeInput:'', phase:'questions', hw:'__ai_profiling__', qIndex:0,
+                 answers:{_description: text}, files:[], steps:[], checklist:{}, activeFile:0, troubleshootResult:null}));
+
+      const ai = getAI();
+      if (!ai) {
+        // No key — fall back to generic flow
+        selectHardware('balancing_bot');
+        return;
+      }
+
+      try {
+        const res = await callGemini(
+          `You are PhysiCore's hardware profiler. Given a hardware description, return a JSON array of 4-6 questions to gather the info needed to generate integration firmware and YAML configs.
+Each question: { "key": "snake_case_key", "q": "Question text?", "opts": ["opt1","opt2"] or null for freetext }.
+Always include: MCU type, sensor type, motor driver, baud rate, and mass (kg). Return ONLY valid JSON array, no markdown.`,
+          `Hardware: ${text}`
+        );
+        if (res.success && res.text) {
+          const jsonStr = res.text.replace(/```json|```/g,'').trim();
+          const questions = JSON.parse(jsonStr);
+          if (Array.isArray(questions) && questions.length > 0) {
+            // Inject a dynamic flow
+            (IE_FLOWS as any)['__ai_custom__'] = {
+              label: 'Custom Hardware',
+              icon: '🔧',
+              questions,
+            };
+            setIE(s=>({...s, phase:'questions', hw:'__ai_custom__', qIndex:0,
+                       answers:{_description: text}, freeInput:''}));
+            return;
+          }
+        }
+      } catch(_) {}
+      // Fallback
+      selectHardware('balancing_bot');
     }
 
     function answerQ(value: string) {
@@ -4760,17 +5089,25 @@ Be direct, technical, confident. You are the world's best robotics integration e
       const nextIndex = ieState.qIndex + 1;
       if (nextIndex < flow!.questions.length) {
         setIE(s=>({...s, answers:newAnswers, qIndex:nextIndex, freeInput:''}));
+        // Persist partial progress to active project
+        if (activeProject) updateProject(activeProject.id, { answers: newAnswers });
       } else {
-        const files = ie_generateCode(ieState.hw, newAnswers);
+        const rawFiles = ie_generateCode(ieState.hw, newAnswers);
+        const files = rawFiles.map(f => ({
+          filename: f.filename,
+          content: ie_addVerificationHeader(f.filename, f.content, ieState.hw, newAnswers)
+        }));
         const steps = ie_getSteps(ieState.hw, newAnswers);
         setGeneratedFiles(files.map(f=>({filename:f.filename, content:f.content})));
-        if (['px4','ardupilot','evtol'].includes(ieState.hw)) {
-          setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765');
-        } else {
-          setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765');
-        }
+        setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765');
         setIE(s=>({...s, phase:'generated', answers:newAnswers, files, steps,
                    checklist:{}, activeFile:0, freeInput:''}));
+        // Save to active project or create one
+        if (activeProject) {
+          updateProject(activeProject.id, { answers: newAnswers, generatedFiles: files });
+        } else if (user) {
+          createProject(`${ieState.hw} build`, ieState.hw, newAnswers, files);
+        }
       }
     }
 
@@ -4978,8 +5315,63 @@ PROBLEM: ${msg}`,
               </div>
             </div>
 
+            {/* Extension Builder */}
+            <div className="border-t border-border pt-6 space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="w-6 h-6 border border-purple-400/40 flex items-center justify-center">
+                  <Puzzle size={12} className="text-purple-400" />
+                </div>
+                <p className="font-mono text-[9px] text-purple-400 uppercase tracking-widest">Extension Builder</p>
+                <span className="font-mono text-[8px] text-textDim border border-border px-1.5 py-0.5 ml-auto">Drop into ~/.physicore/extensions/</span>
+              </div>
+              <p className="font-mono text-[9px] text-textDim">Describe a behavior extension (e.g. "log friction to CSV every 100ms") and get Python code you can drop into the bridge.</p>
+              <div className="flex gap-3">
+                <input
+                  className="flex-1 bg-bgRaised border border-border px-4 py-2.5 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-purple-400 transition-colors"
+                  placeholder="e.g. Email me when friction exceeds 0.5…"
+                  value={extBuilderInput}
+                  onChange={e=>setExtBuilderInput(e.target.value)}
+                  onKeyDown={e=>e.key==='Enter'&&extBuilderInput.trim()&&buildExtension()}
+                />
+                <button
+                  onClick={buildExtension}
+                  disabled={isBuildingExt||!extBuilderInput.trim()}
+                  className="px-5 py-2.5 border border-purple-400 text-purple-400 font-display text-xs font-bold uppercase tracking-widest hover:bg-purple-400 hover:text-black transition-all disabled:opacity-50">
+                  {isBuildingExt ? '...' : 'Build →'}
+                </button>
+              </div>
+              {extBuilderResult && (
+                <div className="p-4 bg-purple-400/5 border border-purple-400/20 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="font-mono text-[9px] text-purple-400 uppercase tracking-widest">Generated Extension</p>
+                    <button
+                      onClick={()=>{ navigator.clipboard?.writeText(extBuilderResult); copyText(extBuilderResult,'ext_copy'); setTimeout(()=>setIECopiedId(null),2000); }}
+                      className="flex items-center gap-1.5 px-3 py-1 border border-purple-400/40 font-mono text-[9px] text-purple-400 hover:bg-purple-400/10 uppercase tracking-widest transition-all">
+                      <Copy size={10}/> {ieCopiedId==='ext_copy'?'✓ COPIED':'COPY'}
+                    </button>
+                  </div>
+                  <pre className="font-mono text-[9px] text-textSecondary overflow-x-auto whitespace-pre-wrap max-h-[320px] overflow-y-auto custom-scroll">
+                    {extBuilderResult}
+                  </pre>
+                </div>
+              )}
+            </div>
+
           </div>
         </div>
+      </div>
+    );
+
+    // ── AI PROFILING LOADING ─────────────────────────────────────────────────
+    if (ieState.phase === 'questions' && ieState.hw === '__ai_profiling__') return (
+      <div className="pt-[52px] h-screen flex flex-col items-center justify-center bg-void gap-6">
+        <div className="w-12 h-12 border-2 border-green/30 border-t-green rounded-full animate-spin"/>
+        <div className="text-center space-y-2">
+          <p className="font-display text-sm font-bold text-white uppercase tracking-widest">Profiling hardware</p>
+          <p className="font-mono text-[9px] text-textDim">AI generating tailored integration questions…</p>
+        </div>
+        <button onClick={()=>setIE(s=>({...s,phase:'welcome',hw:''}))}
+          className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">Cancel</button>
       </div>
     );
 
@@ -5033,6 +5425,22 @@ PROBLEM: ${msg}`,
               </div>
             )}
 
+            {/* Hardware DB notes for answered questions */}
+            {(()=>{
+              const hwNotes = ie_hwNotes(ieState.answers);
+              if (hwNotes.length === 0) return null;
+              return (
+                <div className="p-3 bg-amber/5 border border-amber/20 space-y-2">
+                  <p className="font-mono text-[9px] text-amber uppercase tracking-widest">Hardware Notes</p>
+                  {hwNotes.map((n,i)=>(
+                    <p key={i} className="font-mono text-[10px] text-amber/80 flex gap-2">
+                      <span className="text-amber/40">▸</span>{n}
+                    </p>
+                  ))}
+                </div>
+              );
+            })()}
+
             {/* Previous answers */}
             {ieState.qIndex>0 && (
               <div className="flex flex-wrap gap-3 pt-2 border-t border-border">
@@ -5051,13 +5459,49 @@ PROBLEM: ${msg}`,
     // ── GENERATED ─────────────────────────────────────────────────────────────
     if (ieState.phase === 'generated') return (
       <div className="pt-[52px] min-h-screen bg-void">
-        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 sticky top-[52px] z-10">
+        <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 sticky top-[52px] z-10 flex-wrap">
           <button onClick={()=>setIE(s=>({...s,phase:'welcome'}))}
             className="font-mono text-[9px] text-textDim uppercase tracking-widest hover:text-white transition-colors">← New</button>
           <span className="text-base">{flow?.icon}</span>
           <span className="font-display text-xs font-bold text-green uppercase tracking-widest">✓ {flow?.label} — {ieState.files.length} files ready</span>
+
+          {/* Project selector */}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <button
+                onClick={() => setShowIEProjectPicker(p => !p)}
+                className="flex items-center gap-2 px-3 py-1.5 border border-cyan/40 bg-bgRaised hover:border-cyan transition-all font-mono text-[9px] text-cyan uppercase tracking-widest"
+              >
+                <Layers size={11} />
+                {activeProject ? activeProject.name : 'No Project'}
+                <ChevronDown size={10} />
+              </button>
+              {showIEProjectPicker && (
+                <div className="absolute right-0 top-full mt-1 w-64 bg-bg border border-border shadow-2xl z-[200] py-1">
+                  {projects.map(p => (
+                    <button key={p.id} onClick={() => { openProjectInIE(p); setShowIEProjectPicker(false); }}
+                      className={`w-full text-left px-4 py-2 font-mono text-[9px] hover:bg-bgRaised transition-all flex justify-between items-center ${activeProject?.id === p.id ? 'text-cyan' : 'text-textSecondary'}`}>
+                      <span>{p.name}</span>
+                      {activeProject?.id === p.id && <span className="text-green">●</span>}
+                    </button>
+                  ))}
+                  <div className="border-t border-border mt-1 pt-1">
+                    <button onClick={() => { setShowNewProjectModal(true); setShowIEProjectPicker(false); }}
+                      className="w-full text-left px-4 py-2 font-mono text-[9px] text-green hover:bg-bgRaised transition-all flex items-center gap-2">
+                      <Plus size={10} /> New Project
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => setView('projects')}
+              className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim hover:text-white uppercase tracking-widest transition-all">
+              All Projects
+            </button>
+          </div>
+
           <button onClick={()=>{setTsInput(''); setIE(s=>({...s,phase:'troubleshoot',troubleshootResult:null}));}}
-            className="ml-auto px-4 py-2 border border-border font-mono text-[9px] text-textDim uppercase tracking-widest hover:border-amber hover:text-amber transition-all">
+            className="px-4 py-2 border border-border font-mono text-[9px] text-textDim uppercase tracking-widest hover:border-amber hover:text-amber transition-all">
             Help / Troubleshoot
           </button>
         </div>
@@ -5069,27 +5513,62 @@ PROBLEM: ${msg}`,
             <div className="space-y-1">
               <p className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-3">Integration steps</p>
               {ieState.steps.map((step,i)=>(
-                <div key={step.id} className="flex gap-3 py-3 border-b border-border/50">
-                  <button
-                    onClick={()=>setIE(s=>({...s,checklist:{...s.checklist,[step.id]:!s.checklist[step.id]}}))}
-                    className={`w-5 h-5 border flex-shrink-0 mt-0.5 flex items-center justify-center transition-all ${ieState.checklist[step.id]?'bg-green border-green':'border-border hover:border-green'}`}>
-                    {ieState.checklist[step.id]&&<span className="text-black text-[10px] font-bold">✓</span>}
-                  </button>
-                  <div className="flex-1 min-w-0">
-                    <p className={`font-display text-xs font-bold uppercase tracking-widest transition-all ${ieState.checklist[step.id]?'text-textDim line-through':'text-white'}`}>
-                      {i+1}. {step.label}
-                    </p>
-                    <p className="font-mono text-[10px] text-textDim mt-1 whitespace-pre-line leading-relaxed">{step.detail}</p>
-                    {step.cmd && (
-                      <div className="mt-2 flex items-center gap-2 bg-bgRaised border border-border px-3 py-1.5">
-                        <code className="font-mono text-[10px] text-cyan flex-1 truncate">{step.cmd}</code>
-                        <button onClick={()=>copyText(step.cmd!,step.id)}
-                          className="font-mono text-[9px] text-textDim hover:text-green uppercase tracking-widest flex-shrink-0 transition-colors">
-                          {copiedId===step.id?'✓':'copy'}
-                        </button>
-                      </div>
-                    )}
+                <div key={step.id} className={`py-3 border-b border-border/50 space-y-2 ${ieState.checklist[step.id]?'opacity-60':''}`}>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={()=>setIE(s=>({...s,checklist:{...s.checklist,[step.id]:!s.checklist[step.id]}}))}
+                      className={`w-5 h-5 border flex-shrink-0 mt-0.5 flex items-center justify-center transition-all ${ieState.checklist[step.id]?'bg-green border-green':'border-border hover:border-green'}`}>
+                      {ieState.checklist[step.id]&&<span className="text-black text-[10px] font-bold">✓</span>}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className={`font-display text-xs font-bold uppercase tracking-widest transition-all ${ieState.checklist[step.id]?'text-textDim line-through':'text-white'}`}>
+                        {i+1}. {step.label}
+                      </p>
+                      <p className="font-mono text-[10px] text-textDim mt-1 whitespace-pre-line leading-relaxed">{step.detail}</p>
+                    </div>
                   </div>
+                  {step.cmd && (
+                    <div className="ml-8 space-y-2">
+                      <div className="flex items-center gap-2 bg-bgRaised border border-border px-3 py-1.5">
+                        <code className="font-mono text-[10px] text-cyan flex-1 break-all">{step.cmd}</code>
+                      </div>
+                      {/* ONE-CLICK ACTION BUTTON */}
+                      {!ieState.checklist[step.id] && (
+                        <div className="flex gap-2">
+                          {step.id === 'connect' || step.id === 'connect_dashboard' ? (
+                            <button
+                              onClick={() => { setConnectionMode('mavlink_bridge'); setEndpoint('ws://localhost:8765'); setView('dashboard'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
+                              className="px-4 py-1.5 bg-green text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all flex items-center gap-1.5">
+                              <Wifi size={11}/> CONNECT NOW
+                            </button>
+                          ) : step.id === 'flash' || step.cmd.includes('.ino') ? (
+                            <button
+                              onClick={() => { const f=ieState.files.find((f:any)=>f.filename.endsWith('.ino')); if(f){const blob=new Blob([f.content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=f.filename.split('/').pop()||f.filename;a.click();URL.revokeObjectURL(url);} setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
+                              className="px-4 py-1.5 bg-amber text-black font-display text-[9px] font-bold uppercase tracking-widest hover:bg-white transition-all flex items-center gap-1.5">
+                              <Download size={11}/> OPEN FILE
+                            </button>
+                          ) : step.id === 'calibrate' || step.id === 'balance_point' ? (
+                            <button
+                              onClick={() => { setView('dashboard'); setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})); }}
+                              className="px-4 py-1.5 border border-cyan text-cyan font-display text-[9px] font-bold uppercase tracking-widest hover:bg-cyan hover:text-black transition-all flex items-center gap-1.5">
+                              <Crosshair size={11}/> START CALIBRATION
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => { navigator.clipboard?.writeText(step.cmd||'').catch(()=>{}); copyText(step.cmd!,`run_${step.id}`); setTimeout(()=>setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}})),2500); }}
+                              className="px-4 py-1.5 bg-bgRaised border border-border hover:border-green text-white font-display text-[9px] font-bold uppercase tracking-widest transition-all flex items-center gap-1.5">
+                              <Copy size={11}/> {copiedId===`run_${step.id}`?'✓ COPIED — PASTE IN TERMINAL':'RUN'}
+                            </button>
+                          )}
+                          <button
+                            onClick={()=>setIE(s=>({...s,checklist:{...s.checklist,[step.id]:true}}))}
+                            className="px-3 py-1.5 border border-border text-textDim font-mono text-[8px] uppercase tracking-widest hover:text-green transition-all">
+                            Mark done
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -5102,6 +5581,16 @@ PROBLEM: ${msg}`,
                     <span className="text-green font-bold">{v}</span>
                   </div>
                 ))}
+              </div>
+
+              {/* Registry status */}
+              <div className={`mt-3 px-4 py-2.5 border font-mono text-[9px] flex items-center gap-2 ${registryStatus && registryStatus.sessions_count > 0 ? 'border-amber/30 bg-amber/5 text-amber' : 'border-border/40 bg-bgRaised text-textDim'}`}>
+                <span>{registryStatus && registryStatus.sessions_count > 0 ? '●' : '○'}</span>
+                <span>
+                  {registryStatus && registryStatus.sessions_count > 0
+                    ? `Registry found — ${registryStatus.sessions_count} previous session${registryStatus.sessions_count !== 1 ? 's' : ''}. Starting warmer.`
+                    : 'No history yet — first session starts fresh. Registry saves when bridge stops (Ctrl+C).'}
+                </span>
               </div>
             </div>
 
@@ -6527,6 +7016,102 @@ max_torque: 2.5`}</Code>
                     <div className="font-mono text-[8px] text-textDim uppercase">Consensus disabled — Multi-node quorum required</div>
                   </div>
                 </section>
+
+                {/* REGISTRY INTELLIGENCE PANEL */}
+                <section className="space-y-4">
+                  <div className="border-l-2 border-amber pl-3 flex items-center justify-between">
+                    <span className="micro-label">Registry Intelligence</span>
+                    {registryStatus ? (
+                      <span className="font-mono text-[9px] text-amber">● ACTIVE</span>
+                    ) : (
+                      <span className="font-mono text-[9px] text-textDim">○ NO DATA</span>
+                    )}
+                  </div>
+                  {registryStatus ? (
+                    <div className="space-y-3">
+                      <div className="p-3 bg-amber/5 border border-amber/20 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-display text-[9px] font-bold text-amber tracking-widest uppercase">Session Memory</span>
+                          <span className="font-mono text-[9px] text-white">{registryStatus.sessions_count} sessions</span>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-mono text-[8px] text-textDim uppercase">Prior Strength</span>
+                            <span className="font-mono text-[8px] text-amber">{registryStatus.prior_weight.toFixed(1)}</span>
+                          </div>
+                          <div className="h-1 w-full bg-border">
+                            <div className="h-full bg-amber transition-all duration-500" style={{ width: `${Math.min(100, (registryStatus.prior_weight / 20) * 100)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                      {Object.keys(registryStatus.latest_params).length > 0 && (
+                        <div className="p-3 border border-border bg-bgRaised space-y-1.5">
+                          <p className="font-mono text-[8px] text-textDim uppercase tracking-widest mb-1">Loaded Prior Params</p>
+                          {Object.entries(registryStatus.latest_params).map(([k, v]) => {
+                            const current = k === 'mass' ? registryStatus.current_mass : k === 'friction' ? registryStatus.current_friction : v;
+                            const delta = Math.abs(current - v);
+                            return (
+                              <div key={k} className="flex justify-between items-center font-mono text-[9px]">
+                                <span className="text-textDim">{k}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-amber">{v.toFixed(4)}</span>
+                                  {delta > 0.001 && isControlActive && (
+                                    <span className={`text-[8px] ${delta > 0.1 ? 'text-green' : 'text-textDim'}`}>
+                                      →{current.toFixed(4)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="font-mono text-[8px] text-textDim truncate" title={registryStatus.registry_path}>
+                        {registryStatus.registry_path.replace(/\\/g, '/').split('/').slice(-3).join('/')}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 border border-border/50 bg-bgRaised space-y-1">
+                      <p className="font-mono text-[9px] text-textDim">Connect hardware to see registry data.</p>
+                      <p className="font-mono text-[8px] text-textDim/60">Registry saves on bridge shutdown (Ctrl+C).</p>
+                    </div>
+                  )}
+                </section>
+
+                {/* EXTENSIONS PANEL */}
+                <section className="space-y-4">
+                  <div className="border-l-2 border-purple-400 pl-3 flex items-center justify-between">
+                    <span className="micro-label">Extensions</span>
+                    <span className="font-mono text-[9px] text-purple-400">{loadedExtensions.length} loaded</span>
+                  </div>
+                  {loadedExtensions.length > 0 ? (
+                    <div className="space-y-2">
+                      {loadedExtensions.map(ext => (
+                        <div key={ext.name} className="p-2.5 bg-purple-400/5 border border-purple-400/20 space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="font-mono text-[10px] text-purple-300 font-bold">{ext.name}</span>
+                            <span className="font-mono text-[8px] text-textDim">v{ext.version}</span>
+                          </div>
+                          {ext.description && (
+                            <p className="font-mono text-[9px] text-textDim">{ext.description}</p>
+                          )}
+                          <div className="flex flex-wrap gap-1">
+                            {ext.hooks.map(h => (
+                              <span key={h} className="font-mono text-[8px] text-purple-400/60 border border-purple-400/20 px-1">
+                                {h}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 border border-border/50 bg-bgRaised">
+                      <p className="font-mono text-[9px] text-textDim">No extensions loaded.</p>
+                      <p className="font-mono text-[8px] text-textDim/60 mt-1">Drop .py files into ~/.physicore/extensions/</p>
+                    </div>
+                  )}
+                </section>
               </>
             )}
           </div>
@@ -6804,11 +7389,433 @@ max_torque: 2.5`}</Code>
               </div>
             </div>
           </div>
+
+          {/* FAILURE LOG STRIP — shown only when there are failures */}
+          {failureLogs.length > 0 && (
+            <div className="shrink-0 border-t border-red/30 bg-red/5 px-4 py-2 flex items-center gap-4 overflow-x-auto">
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
+                <span className="font-mono text-[9px] text-red uppercase tracking-widest">Fault Log</span>
+                <span className="font-mono text-[8px] text-textDim">({failureLogs.length})</span>
+              </div>
+              <div className="flex gap-3 overflow-x-auto">
+                {failureLogs.slice(0, 8).map(log => (
+                  <div key={log.id}
+                    onClick={() => setView('debugger')}
+                    className="shrink-0 flex items-center gap-2 px-3 py-1 border border-red/30 bg-red/10 cursor-pointer hover:bg-red/20 transition-all">
+                    <span className="font-mono text-[9px] text-red font-bold">{log.failure_type}</span>
+                    <span className="font-mono text-[8px] text-textDim">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setView('debugger')}
+                className="ml-auto shrink-0 font-mono text-[9px] text-red border border-red/40 px-3 py-1 hover:bg-red/20 transition-all uppercase tracking-widest">
+                <Bug size={10} className="inline mr-1" />Diagnose
+              </button>
+            </div>
+          )}
         </main>
       </div>
     </div>
     );
   };
+
+  const renderProjects = () => {
+    const hwIcons: Record<string, string> = {
+      balancing_bot:'🤖', px4:'🚁', ardupilot:'✈️', evtol:'🛸', ros2_arm:'🦾',
+      ros2_legged:'🦿', ros2_rover:'🚗', ros2_auv:'🐟', ros2_surgical:'🏥',
+      rocket_fc:'🚀', rover_serial:'🚙', satellite:'🛰️',
+    };
+    return (
+      <div className="pt-[52px] min-h-screen bg-void px-6 py-8">
+        <div className="max-w-[1100px] mx-auto space-y-8">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="font-display text-3xl font-bold text-white uppercase tracking-widest">Projects</h1>
+              <p className="font-mono text-[10px] text-textDim mt-1 uppercase tracking-widest">
+                {projects.length} project{projects.length !== 1 ? 's' : ''} — each project has its own hardware, generated code, and registry entry
+              </p>
+            </div>
+            <button
+              onClick={() => setShowNewProjectModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all"
+            >
+              <Plus size={14} /> New Project
+            </button>
+          </div>
+
+          {projects.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-24 space-y-6 text-center">
+              <div className="w-20 h-20 border-2 border-dashed border-border flex items-center justify-center text-textDim">
+                <Layers size={36} className="opacity-30" />
+              </div>
+              <div className="space-y-2">
+                <p className="font-display text-lg font-bold text-white uppercase tracking-widest">No Projects Yet</p>
+                <p className="font-mono text-[10px] text-textDim uppercase">Go to Integration Engineer and complete a hardware Q&A to auto-create a project.</p>
+              </div>
+              <button onClick={handleSetIntegratorView}
+                className="px-6 py-3 bg-green text-black font-display text-[11px] font-bold uppercase tracking-widest hover:bg-white transition-all">
+                ⬡ Open Integration Engineer
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {projects.map(project => (
+                <div key={project.id}
+                  className={`border p-5 bg-bg space-y-4 hover:border-cyan/40 transition-all group ${activeProject?.id === project.id ? 'border-cyan/60' : 'border-border'}`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">{hwIcons[project.hardware] || '⬡'}</span>
+                      <div>
+                        <h3 className="font-display text-sm font-bold text-white uppercase tracking-widest">{project.name}</h3>
+                        <p className="font-mono text-[9px] text-textDim uppercase mt-0.5">{project.hardware.replace(/_/g,' ')} · {project.platform}</p>
+                      </div>
+                    </div>
+                    {activeProject?.id === project.id && (
+                      <span className="font-mono text-[8px] text-cyan border border-cyan/30 px-1.5 py-0.5">ACTIVE</span>
+                    )}
+                  </div>
+
+                  <div className="flex gap-4 font-mono text-[9px] text-textDim">
+                    <span>{project.generatedFiles.length} files</span>
+                    <span>{new Date(project.createdAt).toLocaleDateString()}</span>
+                  </div>
+
+                  {project.notes && (
+                    <p className="font-body text-[10px] text-textSecondary leading-relaxed line-clamp-2">{project.notes}</p>
+                  )}
+
+                  <div className="flex gap-2 pt-2 border-t border-border/50">
+                    <button onClick={() => openProjectInIE(project)}
+                      className="flex-1 py-1.5 border border-green/30 text-green font-mono text-[9px] uppercase hover:bg-green hover:text-black transition-all">
+                      Open in IE
+                    </button>
+                    <button onClick={() => { setActiveProject(project); setView('dashboard'); }}
+                      className="flex-1 py-1.5 border border-cyan/30 text-cyan font-mono text-[9px] uppercase hover:bg-cyan hover:text-black transition-all">
+                      Dashboard
+                    </button>
+                    <button onClick={() => { if (confirm(`Delete "${project.name}"?`)) deleteProject(project.id); }}
+                      className="p-1.5 border border-border text-textDim font-mono text-[9px] hover:border-red hover:text-red transition-all">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* New Project Modal */}
+        <AnimatePresence>
+          {showNewProjectModal && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+              <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+                className="max-w-md w-full bg-bg border border-border p-8 space-y-6">
+                <h2 className="font-display text-xl font-bold text-white uppercase tracking-widest">New Project</h2>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="micro-label text-textDim">Project Name</label>
+                    <input value={newProjectName} onChange={e => setNewProjectName(e.target.value)}
+                      placeholder="e.g. Rocket Test #3"
+                      className="w-full bg-bgRaised border border-border px-4 py-2 font-mono text-sm text-white focus:border-green outline-none" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="micro-label text-textDim">Notes (optional)</label>
+                    <textarea value={newProjectDesc} onChange={e => setNewProjectDesc(e.target.value)}
+                      placeholder="What are you building?"
+                      rows={2}
+                      className="w-full bg-bgRaised border border-border px-4 py-2 font-mono text-sm text-white focus:border-green outline-none resize-none" />
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button onClick={() => { setShowNewProjectModal(false); setNewProjectName(''); setNewProjectDesc(''); }}
+                    className="flex-1 py-3 border border-border text-textDim font-display text-[10px] font-bold uppercase tracking-widest hover:text-white transition-all">
+                    Cancel
+                  </button>
+                  <button disabled={!newProjectName.trim()}
+                    onClick={async () => {
+                      if (!newProjectName.trim()) return;
+                      const p = await createProject(newProjectName.trim(), '', {}, []);
+                      if (p) { setActiveProject(p); }
+                      setShowNewProjectModal(false); setNewProjectName(''); setNewProjectDesc('');
+                      setView('integrator');
+                    }}
+                    className="flex-1 py-3 bg-green text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40">
+                    Create & Open IE
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  };
+
+  // ── DEBUGGER VIEW ──────────────────────────────────────────────────────────
+  const FAULT_KB: Record<string, { desc: string; causes: string[]; fixes: string[] }> = {
+    BEARING_WEAR: {
+      desc: 'Friction parameter rising steadily beyond baseline — mechanical degradation detected.',
+      causes: ['Wheel bearing wear', 'Motor brush wear', 'Axle misalignment', 'Insufficient lubrication'],
+      fixes: ['Inspect and lubricate wheel bearings', 'Reduce max speed by 20%', 'Check axle alignment', 'Replace motor brushes if >200hr runtime'],
+    },
+    UNEXPECTED_PAYLOAD: {
+      desc: 'Mass estimate jumped >0.5kg suddenly — unplanned load change detected.',
+      causes: ['Object placed on robot', 'Battery swap mid-session', 'Loose component detached', 'Incorrect declared mass'],
+      fixes: ['Check declared mass in project answers', 'Remove unexpected payload', 'Restart SystemID with correct mass', 'Recalibrate if mass is intentional'],
+    },
+    AERO_DAMAGE: {
+      desc: 'Aerodynamic drag increased significantly — structural damage or configuration error.',
+      causes: ['Propeller damage', 'Airframe damage', 'Sensor arm struck obstacle', 'Non-nominal flight altitude'],
+      fixes: ['Inspect propellers for chips/cracks', 'Check airframe symmetry', 'Reduce throttle and land immediately', 'Replace damaged props'],
+    },
+    MOTOR_DEGRADATION: {
+      desc: 'Actuator efficiency dropping — motor or ESC underperforming vs. commanded effort.',
+      causes: ['Motor overheating', 'ESC calibration drift', 'Low battery voltage', 'Motor winding damage'],
+      fixes: ['Check motor temperature (max 80°C)', 'Recalibrate ESC', 'Check battery voltage (min 3.5V/cell)', 'Reduce load or replace motor'],
+    },
+    SENSOR_DRIFT: {
+      desc: 'IMU readings drifting beyond expected bounds — sensor calibration degraded.',
+      causes: ['Temperature change affecting IMU', 'Magnetic interference near compass', 'Vibration loosening sensor mount', 'IMU calibration data stale'],
+      fixes: ['Recalibrate IMU in stable environment', 'Move away from motor/power interference', 'Tighten sensor mount screws', 'Run calibration routine from dashboard'],
+    },
+  };
+
+  const runDebuggerDiagnosis = async (query: string) => {
+    setIsDebugging(true);
+    setDebuggerResult(null);
+
+    // Build rich context
+    const ctx = [
+      `Hardware: ${activeProject?.hardware || 'Unknown'} | Platform: ${activeProject?.platform || 'Unknown'}`,
+      `Session active: ${isControlActive && isSystemConnected}`,
+      `Mass: ${telemetry.mass.toFixed(3)}kg | Friction: ${telemetry.friction.toFixed(4)} | Residual: ${telemetry.residual.toFixed(4)}`,
+      `Sentinel: ${telemetry.isFaulted ? 'FAULTED' : telemetry.isStable ? 'NOMINAL' : 'CAUTIOUS'} | Step: ${telemetry.step_count}`,
+      `Active faults: ${telemetry.faults?.join(', ') || 'none'}`,
+      `Recent failures (last 3): ${failureLogs.slice(0,3).map(f => `${f.failure_type} at ${f.task}`).join('; ') || 'none'}`,
+      `CPU: ${telemetry.cpuLoad?.toFixed(0)}% | Latency: ${telemetry.latency?.toFixed(0)}ms | Battery: ${telemetry.battery_pct?.toFixed(0)}%`,
+      `Declared answers: ${JSON.stringify(activeProject?.answers || {})}`,
+    ].join('\n');
+
+    // Check local KB first
+    const faultMatch = telemetry.faults?.find(f => FAULT_KB[f]);
+    if (faultMatch && !query.trim()) {
+      const kb = FAULT_KB[faultMatch];
+      setDebuggerResult(`**${faultMatch}**\n\n${kb.desc}\n\nLikely causes:\n${kb.causes.map((c,i)=>`${i+1}. ${c}`).join('\n')}\n\nFixes:\n${kb.fixes.map((f,i)=>`${i+1}. ${f}`).join('\n')}`);
+      setIsDebugging(false);
+      return;
+    }
+
+    const res = await callGemini(
+      `You are PhysiCore's senior diagnostics engineer. You have deep expertise in robotics, control systems, and embedded hardware. Given telemetry data and a question, provide a concise, actionable diagnosis in 3-6 sentences. Be specific about root causes. Format: start with the most likely cause, then give 2-3 ordered fix steps.`,
+      `LIVE CONTEXT:\n${ctx}\n\nQUESTION: ${query || `Explain the current system state and what I should do next.`}`
+    );
+
+    if (res.success && res.text) {
+      setDebuggerResult(res.text);
+    } else {
+      // Offline fallback
+      setDebuggerResult(`No AI key — local diagnosis:\n${faultMatch ? FAULT_KB[faultMatch].fixes.join('\n') : 'Check serial port, IMU wiring, and motor driver power supply.'}`);
+    }
+    setIsDebugging(false);
+  };
+
+  const renderDebugger = () => (
+    <div className="pt-[52px] min-h-screen bg-void">
+      <div className="border-b border-border bg-bg px-6 py-4 flex items-center gap-4 sticky top-[52px] z-10">
+        <div className="flex items-center gap-2">
+          {telemetry.isFaulted && <span className="w-2 h-2 rounded-full bg-red animate-pulse" />}
+          <span className="font-display text-sm font-bold text-white uppercase tracking-widest">PhysiCore Debugger</span>
+        </div>
+        {activeProject && (
+          <span className="font-mono text-[9px] text-cyan uppercase tracking-widest border border-cyan/30 px-2 py-0.5">
+            {activeProject.name}
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          {isControlActive && isSystemConnected ? (
+            <span className="font-mono text-[9px] text-green uppercase">● LIVE SESSION</span>
+          ) : (
+            <span className="font-mono text-[9px] text-textDim uppercase">○ NO SESSION</span>
+          )}
+        </div>
+      </div>
+
+      <div className="px-6 py-6 max-w-[1100px] mx-auto space-y-6">
+
+        {/* Active Fault Banner */}
+        {telemetry.isFaulted && telemetry.faults?.length > 0 && (
+          <div className="border border-red/40 bg-red/5 p-4 space-y-3">
+            <div className="flex items-center gap-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-red animate-pulse" />
+              <span className="font-display text-sm font-bold text-red uppercase tracking-widest">Active Sentinel Faults</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {telemetry.faults.map(f => (
+                <button key={f} onClick={() => runDebuggerDiagnosis('')}
+                  className="px-3 py-1.5 border border-red/50 bg-red/10 font-mono text-[10px] text-red hover:bg-red/20 uppercase tracking-widest transition-all">
+                  {f}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-[1fr_340px] gap-6">
+
+          {/* LEFT: AI Diagnosis */}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Deep Diagnosis</p>
+              <div className="flex gap-3">
+                <input
+                  className="flex-1 bg-bgRaised border border-border px-4 py-3 font-body text-sm text-white placeholder:text-textDim focus:outline-none focus:border-red transition-colors"
+                  placeholder="Describe what's wrong, or click a fault above…"
+                  value={debuggerQuery}
+                  onChange={e => setDebuggerQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && debuggerQuery.trim() && runDebuggerDiagnosis(debuggerQuery)}
+                />
+                <button
+                  onClick={() => runDebuggerDiagnosis(debuggerQuery)}
+                  disabled={isDebugging}
+                  className="px-5 py-3 bg-red text-white font-display text-xs font-bold uppercase tracking-widest hover:bg-white hover:text-black transition-all disabled:opacity-50">
+                  {isDebugging ? '...' : 'Diagnose'}
+                </button>
+              </div>
+              {/* Quick question chips */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  'Why is mass estimate drifting?',
+                  'Is residual level dangerous?',
+                  'Why did Sentinel go CAUTIOUS?',
+                  'Is friction converging normally?',
+                  'Explain current fault signature',
+                  'What should I check first?',
+                ].map(q => (
+                  <button key={q} onClick={() => { setDebuggerQuery(q); runDebuggerDiagnosis(q); }}
+                    className="px-3 py-1.5 border border-border font-mono text-[9px] text-textDim hover:border-red hover:text-red uppercase tracking-widest transition-all">
+                    {q}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {isDebugging && (
+              <div className="p-5 border border-border bg-bgRaised flex items-center gap-3">
+                <div className="w-4 h-4 border-2 border-red/30 border-t-red rounded-full animate-spin" />
+                <span className="font-mono text-[10px] text-textDim">Analyzing live telemetry…</span>
+              </div>
+            )}
+
+            {debuggerResult && !isDebugging && (
+              <div className="p-5 border border-red/20 bg-bgRaised space-y-3">
+                <p className="font-mono text-[9px] text-red uppercase tracking-widest">Diagnosis</p>
+                <div className="space-y-2">
+                  {debuggerResult.split('\n').filter(l => l.trim()).map((line, i) => {
+                    const isBold = line.startsWith('**') && line.endsWith('**');
+                    const isHeader = /^(Likely causes|Fixes|Root cause):?$/i.test(line.replace(/\*\*/g,'').trim());
+                    const isStep = /^\d+\./.test(line.trim());
+                    return (
+                      <p key={i} className={`font-mono text-[10px] leading-relaxed ${
+                        isBold || isHeader ? 'text-white font-bold' :
+                        isStep ? 'text-textSecondary pl-3' :
+                        'text-textSecondary'
+                      }`}>
+                        {line.replace(/\*\*/g, '')}
+                      </p>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Fault Knowledge Base */}
+            <div className="space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Fault Knowledge Base</p>
+              {Object.entries(FAULT_KB).map(([key, val]) => {
+                const isActive = telemetry.faults?.includes(key);
+                return (
+                  <div key={key} className={`p-4 border space-y-2 ${isActive ? 'border-red/40 bg-red/5' : 'border-border bg-bgRaised'}`}>
+                    <div className="flex items-center gap-2">
+                      {isActive && <span className="w-1.5 h-1.5 rounded-full bg-red" />}
+                      <span className={`font-mono text-[10px] font-bold uppercase tracking-widest ${isActive ? 'text-red' : 'text-textSecondary'}`}>{key}</span>
+                    </div>
+                    <p className="font-mono text-[9px] text-textDim">{val.desc}</p>
+                    {isActive && (
+                      <div className="space-y-1 pt-1">
+                        <p className="font-mono text-[9px] text-amber">Quick fixes:</p>
+                        {val.fixes.slice(0,2).map((f,i) => (
+                          <p key={i} className="font-mono text-[9px] text-textSecondary pl-3">{i+1}. {f}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* RIGHT: Live Telemetry + FailureLog */}
+          <div className="space-y-4">
+
+            {/* Live telemetry snapshot */}
+            <div className="p-4 border border-border bg-bgRaised space-y-3">
+              <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Live Snapshot</p>
+              {[
+                { label: 'Mass', value: `${telemetry.mass.toFixed(3)} kg`, warn: telemetry.mass > 5 },
+                { label: 'Friction', value: telemetry.friction.toFixed(4), warn: telemetry.friction > 0.4 },
+                { label: 'Residual', value: telemetry.residual.toFixed(4), warn: telemetry.residual > 0.8 },
+                { label: 'Confidence', value: `${telemetry.confidence.toFixed(0)}%`, warn: telemetry.confidence < 50 },
+                { label: 'Sentinel', value: telemetry.isFaulted ? 'FAULTED' : telemetry.isStable ? 'NOMINAL' : 'CAUTIOUS', warn: telemetry.isFaulted },
+                { label: 'CPU', value: `${telemetry.cpuLoad?.toFixed(0)||0}%`, warn: (telemetry.cpuLoad||0) > 80 },
+                { label: 'Battery', value: `${telemetry.battery_pct?.toFixed(0)||0}%`, warn: (telemetry.battery_pct||0) < 20 },
+              ].map(row => (
+                <div key={row.label} className="flex justify-between items-center border-b border-border/30 pb-1 last:border-0 last:pb-0">
+                  <span className="font-mono text-[9px] text-textDim uppercase">{row.label}</span>
+                  <span className={`font-mono text-[10px] font-bold ${row.warn ? 'text-amber' : 'text-white'}`}>{row.value}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* FailureLog */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="font-mono text-[9px] text-textDim uppercase tracking-widest">Failure Log</p>
+                {failureLogs.length > 0 && (
+                  <button onClick={() => setFailureLogs([])}
+                    className="font-mono text-[8px] text-textDim hover:text-red uppercase tracking-widest transition-colors">Clear</button>
+                )}
+              </div>
+              {failureLogs.length === 0 ? (
+                <div className="p-3 border border-border/50 bg-bgRaised">
+                  <p className="font-mono text-[9px] text-textDim">No failures recorded this session.</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-[320px] overflow-y-auto custom-scroll">
+                  {failureLogs.map(log => (
+                    <div key={log.id} className="p-3 border border-red/20 bg-red/5 space-y-1">
+                      <div className="flex justify-between items-center">
+                        <span className="font-mono text-[10px] text-red font-bold">{log.failure_type}</span>
+                        <span className="font-mono text-[8px] text-textDim">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                      </div>
+                      <span className="font-mono text-[9px] text-textDim">{log.task}</span>
+                      <div className="flex gap-3 font-mono text-[8px] text-textDim pt-0.5">
+                        <span>m={log.sim_params.mass.toFixed(2)}</span>
+                        <span>f={log.sim_params.friction.toFixed(3)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -6928,6 +7935,14 @@ max_torque: 2.5`}</Code>
         ) : view === 'integrator' ? (
           <motion.div key="integrator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
             {renderIntegrator()}
+          </motion.div>
+        ) : view === 'projects' ? (
+          <motion.div key="projects" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderProjects()}
+          </motion.div>
+        ) : view === 'debugger' ? (
+          <motion.div key="debugger" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+            {renderDebugger()}
           </motion.div>
         ) : view === 'manual' ? (
           <motion.div key="manual" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>

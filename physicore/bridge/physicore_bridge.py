@@ -582,6 +582,73 @@ async def health_endpoint():
     await web.TCPSite(runner, '0.0.0.0', 8080).start()
     print("[BRIDGE] Health: http://localhost:8080/api/health")
 
+async def broadcast_registry_status():
+    """Emit registry_status to all connected dashboards every 5 seconds."""
+    while True:
+        await asyncio.sleep(5)
+        if not connected_clients or not HAS_REGISTRY or engine is None:
+            continue
+        try:
+            reg = get_registry()
+            platform_key = engine.cfg.platform
+            if _robot_config:
+                platform_key = getattr(_robot_config, 'registry_key', engine.cfg.platform)
+            d = reg._platform_dir(platform_key)
+            params_path = d / "params.json"
+            sessions_count = reg._session_count(platform_key)
+            latest_params = {}
+            prior_weight = 0.0
+            if params_path.exists():
+                import json as _j
+                saved = _j.load(open(params_path))
+                latest_params = saved.get("params", {})
+            prior_path = d / "platform_prior.json"
+            if prior_path.exists():
+                import json as _j
+                prior = _j.load(open(prior_path))
+                prior_weight = prior.get("weight", 0.0)
+
+            payload = json.dumps({
+                "op": "registry_status",
+                "platform": platform_key,
+                "sessions_count": sessions_count,
+                "latest_params": {k: round(v, 4) for k, v in latest_params.items()},
+                "prior_weight": round(prior_weight, 2),
+                "loaded": params_path.exists(),
+                "registry_path": str(d),
+                "current_mass": round(state.estimated_mass, 4),
+                "current_friction": round(state.estimated_friction, 4),
+            })
+            dead = set()
+            for ws in connected_clients:
+                try:
+                    await ws.send(payload)
+                except Exception:
+                    dead.add(ws)
+            connected_clients -= dead
+        except Exception as e:
+            pass
+
+
+async def broadcast_extensions_status():
+    """Emit extensions_status once at startup, then every 30s."""
+    await asyncio.sleep(3)  # Wait for clients to connect
+    while True:
+        if engine and engine._extensions and connected_clients:
+            payload = json.dumps({
+                "op": "extensions_status",
+                "extensions": engine._extensions.loaded,
+            })
+            dead = set()
+            for ws in list(connected_clients):
+                try:
+                    await ws.send(payload)
+                except Exception:
+                    dead.add(ws)
+            connected_clients -= dead
+        await asyncio.sleep(30)
+
+
 async def status_printer():
     while True:
         await asyncio.sleep(5)
@@ -615,7 +682,7 @@ async def main(args):
 
     port = 8765
     async with websockets.serve(ws_handler, "0.0.0.0", port):
-        await asyncio.gather(broadcast_telemetry(), status_printer(), health_endpoint())
+        await asyncio.gather(broadcast_telemetry(), broadcast_registry_status(), broadcast_extensions_status(), status_printer(), health_endpoint())
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="PhysiCore Universal Hardware Bridge v2.0")
@@ -699,6 +766,19 @@ if __name__ == "__main__":
 
                 print(f"[ENGINE] Initialized for '{ep}' — SystemID will adapt mass/friction from real data")
                 print(f"[ENGINE] Starting params: {engine.physics.params}")
+
+                # Auto-load extensions from ~/.physicore/extensions/
+                try:
+                    from physicore.extensions import load_extensions_from_dir
+                    import pathlib
+                    ext_dir = pathlib.Path.home() / ".physicore" / "extensions"
+                    engine._extensions = load_extensions_from_dir(ext_dir, engine)
+                    if engine._extensions.loaded:
+                        print(f"[Extensions] {len(engine._extensions.loaded)} extension(s) loaded")
+                    else:
+                        print("[Extensions] No extensions found — drop .py files into ~/.physicore/extensions/")
+                except Exception as _ext_err:
+                    print(f"[Extensions] Auto-load error: {_ext_err}")
 
                 # Start telemetry if opted in
                 global _telemetry_mgr

@@ -322,19 +322,42 @@ class LyapunovKernel:
         self.Q          = np.eye(state_dim) * 0.1
 
     def update_P(self, mass: float, friction: float) -> None:
-        """Solve A^T P + PA = -Q for diagonal P."""
+        """
+        Solve A^T P + PA = -Q for full P matrix (multi-DOF).
+        Uses scipy.linalg.solve_continuous_lyapunov when available (n-DOF exact),
+        falls back to diagonal closed-form for 1-DOF compatibility.
+        """
         m   = max(mass, 0.01)
         f   = max(friction, 0.001)
-        a22 = -f / m                         # linearised velocity coefficient
+        a22 = -f / m
 
-        p_diag = np.ones(self.n)
+        # Build linearised A matrix: block-diagonal [0, 1; 0, a22] per DOF pair
+        n = self.n
+        A = np.zeros((n, n))
+        for i in range(0, n - 1, 2):
+            A[i,     i + 1] = 1.0
+            A[i + 1, i + 1] = a22
+
+        try:
+            from scipy.linalg import solve_continuous_lyapunov
+            # A^T P + P A = -Q  ↔  solve_continuous_lyapunov(A^T, Q)
+            P_solved = solve_continuous_lyapunov(A.T, self.Q)
+            # Symmetrize and ensure positive-definite
+            P_solved = 0.5 * (P_solved + P_solved.T)
+            eigs = np.linalg.eigvalsh(P_solved)
+            if np.all(eigs > 0):
+                self.P = P_solved
+                return
+        except Exception:
+            pass
+
+        # Fallback: diagonal closed-form (1-DOF per axis)
+        p_diag = np.ones(n)
         q_diag = np.diag(self.Q)
-        for i in range(0, self.n, 2):
-            p_diag[i] = q_diag[i]            # position weight
-            if i + 1 < self.n:
-                # -Q[1,1] / (2 a22)  — from Lyapunov equation
+        for i in range(0, n, 2):
+            p_diag[i] = q_diag[i]
+            if i + 1 < n:
                 p_diag[i + 1] = -q_diag[i + 1] / max(2 * a22, -1e6)
-
         self.P = np.diag(np.maximum(p_diag, 1e-6))
 
     def energy(self, x: np.ndarray) -> float:

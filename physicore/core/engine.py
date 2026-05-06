@@ -316,6 +316,84 @@ def satellite_dynamics(state, action, params):
 
 def rover_dynamics(state, action, params): return ground_rover_dynamics(state, action, params)
 
+def humanoid_dynamics(state, action, params):
+    """
+    Simplified bipedal humanoid dynamics with ZMP-based contact model.
+    State (18): [com_x, com_y, com_z, vx, vy, vz, roll, pitch, yaw, p, q, r,
+                 lfoot_z, rfoot_z, lcontact, rcontact, zmp_x, zmp_y]
+    Action (6): [fx, fy, fz, torque_roll, torque_pitch, torque_yaw]
+    ZMP stability: |zmp| < foot_half_width ensures stable gait.
+    """
+    com_x,com_y,com_z,vx,vy,vz,roll,pitch,yaw,p,q,r,lf_z,rf_z,lc,rc,zmp_x,zmp_y = state
+    fx,fy,fz,tr,tp,ty = action
+    m   = max(params.get("mass", 60.0), 0.1)
+    fric= params.get("friction", 0.8)
+    h   = max(com_z, 0.01)
+    g   = 9.81
+    Ixx = max(params.get("inertia", 8.0), 0.001)
+
+    # Inverted pendulum COM acceleration
+    ax = fx/m - fric*vx + g*math.sin(pitch)
+    ay = fy/m - fric*vy
+    az = fz/m - g + fric*max(lc+rc, 0.01)*0.5
+
+    # Angular dynamics (simplified single rigid body)
+    alpha_roll  = tr / Ixx
+    alpha_pitch = tp / Ixx
+    alpha_yaw   = ty / (Ixx * 2.0)
+
+    # ZMP from linear inverted pendulum model
+    new_zmp_x = com_x - h/g * ax
+    new_zmp_y = com_y - h/g * ay
+
+    # Foot contact: simple ground penetration model
+    new_lf_z = max(lf_z - vz * 0.01, 0.0)
+    new_rf_z = max(rf_z - vz * 0.01, 0.0)
+    new_lc   = 1.0 if new_lf_z < 0.02 else 0.0
+    new_rc   = 1.0 if new_rf_z < 0.02 else 0.0
+
+    return np.array([vx, vy, vz, ax, ay, az, p, q, r,
+                     alpha_roll, alpha_pitch, alpha_yaw,
+                     new_lf_z - lf_z, new_rf_z - rf_z,
+                     new_lc - lc, new_rc - rc,
+                     new_zmp_x - zmp_x, new_zmp_y - zmp_y])
+
+def rocket_aero_dynamics(state, action, params):
+    """
+    3DOF rocket with Prandtl-Glauert compressibility correction.
+    Extends rocket_dynamics with transonic drag rise: Cd *= 1/sqrt(|1-M²|+ε)
+    State (6): [x, z, vx, vz, theta, omega]
+    Action (2): [thrust, gimbal_angle]
+    """
+    x,z,vx,vz,theta,omega = state
+    thrust,gimbal = action
+    m   = max(params.get("mass", 100.0), 0.1)
+    fric= params.get("friction", 0.3)
+    g   = 9.81
+    # ISA speed of sound at altitude (approximate)
+    T_isa = max(288.15 - 0.0065 * max(z, 0), 216.65)
+    a_snd = math.sqrt(1.4 * 287.0 * T_isa)
+    v_mag = math.sqrt(vx**2 + vz**2) + 1e-6
+    mach  = v_mag / a_snd
+
+    # Prandtl-Glauert compressibility correction (subsonic & supersonic)
+    pg_factor = 1.0 / math.sqrt(abs(1.0 - mach**2) + 0.05)
+    cd_eff    = fric * min(pg_factor, 5.0)   # cap transonic spike
+
+    drag_x = -cd_eff * vx * v_mag / m
+    drag_z = -cd_eff * vz * v_mag / m
+
+    thrust_x = thrust * math.sin(theta + gimbal)
+    thrust_z = thrust * math.cos(theta + gimbal)
+    Iz = max(params.get("inertia", 50.0), 0.001)
+    lever = params.get("textile_k", 2.0)   # nozzle moment arm
+
+    return np.array([vx, vz,
+                     thrust_x / m + drag_x,
+                     thrust_z / m + drag_z - g,
+                     omega,
+                     (thrust * math.sin(gimbal) * lever) / Iz])
+
 PLATFORM_DYNAMICS: Dict[str, Tuple[Callable, int, int]] = {
     "quadrotor":       (quadrotor_dynamics,       13, 4),
     "fixed_wing":      (fixed_wing_dynamics,       12, 4),
@@ -329,6 +407,8 @@ PLATFORM_DYNAMICS: Dict[str, Tuple[Callable, int, int]] = {
     "rover":           (ground_rover_dynamics,      6, 2),
     "auv":             (auv_dynamics,              12, 4),
     "satellite":       (satellite_dynamics,         12, 4),
+    "humanoid":        (humanoid_dynamics,          18, 6),
+    "rocket_aero":     (rocket_aero_dynamics,        6, 2),
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -594,6 +674,8 @@ class PhysiCore:
         self._last_action=self._last_state=self._last_sim_pred=None
         self._smoothed_action=None
         self._initial_params=initial_params.copy() if initial_params else {}
+        # Extension hook registry (set by bridge after loading extensions)
+        self._extensions = None
 
     @classmethod
     def for_platform(cls, platform, initial_params=None, Q=None, R=None,
@@ -615,6 +697,9 @@ class PhysiCore:
 
     def step(self, state, x_ref):
         t0=time.perf_counter()
+        # Extension pre_step hooks
+        if self._extensions:
+            state, x_ref = self._extensions.run_pre_step(state, x_ref, self)
         raw_action,clipped=self.cem.optimize(state,self.physics,self.ensemble,self.Q,self.R,x_ref,self.cfg.dt)
 
         # Jitter reduction: exponential smoothing on action
@@ -640,11 +725,19 @@ class PhysiCore:
         self._last_action=action.copy(); self._last_state=state.copy()
         self._last_sim_pred=x_sim.copy(); self._step_count+=1
 
-        return ControlStep(action=action,state_predicted=x_sim+residual,
-                           residual=residual,residual_norm=residual_norm,residual_axis=r_axis,
-                           uncertainty=unc,params=self.physics.params.copy(),
-                           loop_time_ms=loop_ms,step_count=self._step_count,
-                           action_clipped=clipped,certificate=cert,failure_events=failures)
+        result = ControlStep(action=action,state_predicted=x_sim+residual,
+                             residual=residual,residual_norm=residual_norm,residual_axis=r_axis,
+                             uncertainty=unc,params=self.physics.params.copy(),
+                             loop_time_ms=loop_ms,step_count=self._step_count,
+                             action_clipped=clipped,certificate=cert,failure_events=failures)
+
+        # Extension post_step and on_fault hooks
+        if self._extensions:
+            self._extensions.run_post_step(result, self)
+            for fe in failures:
+                self._extensions.run_on_fault(fe.failure_type, self)
+
+        return result
 
     def observe(self, state, action, next_state):
         if self._last_sim_pred is None: return

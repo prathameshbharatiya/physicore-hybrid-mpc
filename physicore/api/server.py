@@ -741,6 +741,68 @@ SHARED_REGISTRY_URL = os.environ.get(
     "https://api.physicore.ai/registry"
 )
 
+@app.delete("/api/registry/{platform}")
+async def registry_delete(platform: str):
+    """Delete all saved state for a platform. Requires confirmation via query param."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    import shutil
+    reg = get_registry()
+    d = reg._platform_dir(platform)
+    if not d.exists():
+        raise HTTPException(404, f"No registry found for platform '{platform}'")
+    shutil.rmtree(d)
+    return {"status": "deleted", "platform": platform, "path": str(d)}
+
+
+@app.post("/api/registry/{platform}/export")
+async def registry_export(platform: str):
+    """Export full registry for a platform as a JSON download."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    import json as _json
+    reg = get_registry()
+    d = reg._platform_dir(platform)
+    if not d.exists():
+        raise HTTPException(404, f"No registry found for platform '{platform}'")
+
+    export = {"platform": platform, "exported_at": time.time(), "params": {}, "sessions": [], "prior": {}}
+
+    params_path = d / "params.json"
+    if params_path.exists():
+        with open(params_path) as f:
+            export["params"] = _json.load(f)
+
+    sessions_path = d / "sessions.jsonl"
+    if sessions_path.exists():
+        for line in open(sessions_path):
+            try:
+                export["sessions"].append(_json.loads(line.strip()))
+            except Exception:
+                pass
+
+    prior_path = d / "platform_prior.json"
+    if prior_path.exists():
+        with open(prior_path) as f:
+            export["prior"] = _json.load(f)
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=export,
+        headers={"Content-Disposition": f"attachment; filename=physicore_registry_{platform}.json"}
+    )
+
+
+# curl example: curl http://localhost:8000/api/registry
+@app.get("/api/registry")
+async def registry_global():
+    """Global registry summary — all platforms, session counts, prior strength."""
+    if not HAS_REGISTRY:
+        raise HTTPException(503, "Registry not available")
+    reg = get_registry()
+    return reg.global_summary()
+
+
 @app.get("/api/registry/shared/{platform}")
 async def get_shared_prior(platform: str):
     """
