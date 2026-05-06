@@ -2851,7 +2851,7 @@ function AppContent() {
 
   // API Key Modal State
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiKeyGeminiInput, setApiKeyGeminiInput] = useState('');
   const [apiKeyAnthropicInput, setApiKeyAnthropicInput] = useState('');
   const [apiKeySaved, setApiKeySaved] = useState(false);
 
@@ -3715,27 +3715,30 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     }
   }, [conversationHistory, isTyping]);
 
-  // Debounced IE progress persistence
+  // Debounced IE progress persistence — fix stale closure by capturing primitive IDs
   useEffect(() => {
-    if (!user || !activeProject) return;
+    if (!user || !activeProject || ieState.phase === 'welcome') return;
+    const uid = user.uid;
+    const projectId = activeProject.id;
+    const snapshot = {
+      phase: ieState.phase,
+      hw: ieState.hw,
+      qIndex: ieState.qIndex,
+      answers: ieState.answers,
+    };
     if (ieSaveTimer.current) clearTimeout(ieSaveTimer.current);
     ieSaveTimer.current = setTimeout(async () => {
       try {
-        await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
-          ieProgress: {
-            phase: ieState.phase,
-            hw: ieState.hw,
-            qIndex: ieState.qIndex,
-            answers: ieState.answers,
-          },
+        await updateDoc(doc(db, 'users', uid, 'projects', projectId), {
+          ieProgress: snapshot,
           updatedAt: new Date().toISOString(),
         });
-      } catch {
-        // non-fatal
+      } catch (e) {
+        console.warn('[IE] progress save failed:', e);
       }
     }, 1500);
     return () => { if (ieSaveTimer.current) clearTimeout(ieSaveTimer.current); };
-  }, [ieState.phase, ieState.hw, ieState.qIndex, ieState.answers]);
+  }, [ieState.phase, ieState.hw, ieState.qIndex, ieState.answers, user?.uid, activeProject?.id]);
 
   const parseAIResponse = (text: string) => {
     const parts = [];
@@ -4015,15 +4018,39 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
 
   const openProjectInIE = (project: Project) => {
     setActiveProject(project);
-    if (project.hardware && project.answers && Object.keys(project.answers).length > 0) {
+    setOriginalFiles(Object.fromEntries((project.generatedFiles || []).map(f => [f.filename, f.content])));
+
+    // Restore buildFeatures from saved project features
+    if ((project as any).features?.length) {
+      setBuildFeatures((project as any).features);
+    }
+
+    const saved = (project as any).ieProgress;
+
+    if (project.generatedFiles && project.generatedFiles.length > 0) {
+      // Has generated files — go straight to generated phase with deployment steps
       const files = project.generatedFiles.map(f => ({ filename: f.filename, content: f.content }));
       setGeneratedFiles(files);
       setIE({
-        phase: files.length > 0 ? 'generated' : 'questions',
+        phase: 'generated',
         hw: project.hardware,
         qIndex: 0,
         answers: project.answers,
         files: files as any,
+        steps: ie_getSteps(project.hardware, project.answers),
+        checklist: {},
+        activeFile: 0,
+        troubleshootResult: null,
+        freeInput: '',
+      });
+    } else if (saved && saved.hw && saved.phase === 'questions') {
+      // Has partial Q&A progress — resume from where they left off
+      setIE({
+        phase: 'questions',
+        hw: saved.hw,
+        qIndex: saved.qIndex || 0,
+        answers: saved.answers || {},
+        files: [],
         steps: [],
         checklist: {},
         activeFile: 0,
@@ -4031,9 +4058,13 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
         freeInput: '',
       });
     } else {
-      setIE({ phase: 'welcome', hw: '', qIndex: 0, answers: {}, files: [], steps: [], checklist: {}, activeFile: 0, troubleshootResult: null, freeInput: '' });
+      // Fresh project
+      setIE({
+        phase: 'welcome', hw: '', qIndex: 0, answers: {},
+        files: [], steps: [], checklist: {}, activeFile: 0,
+        troubleshootResult: null, freeInput: '',
+      });
     }
-    setOriginalFiles(Object.fromEntries(project.generatedFiles.map(f => [f.filename, f.content])));
     navigateToProject('integrate');
   };
 
@@ -7893,12 +7924,12 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
                 <div className="relative">
                   <input
                     type="password"
-                    value={apiKeyInput}
-                    onChange={e => setApiKeyInput(e.target.value)}
+                    value={apiKeyGeminiInput}
+                    onChange={e => setApiKeyGeminiInput(e.target.value)}
                     placeholder="AIza..."
                     className="w-full bg-bgRaised border border-border px-4 py-3 font-mono text-sm text-white placeholder:text-textDim focus:outline-none focus:border-green transition-colors"
                   />
-                  {getUserGeminiKey() && !apiKeyInput && (
+                  {getUserGeminiKey() && !apiKeyGeminiInput && (
                     <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[8px] text-green uppercase tracking-widest">● Saved</span>
                   )}
                 </div>
@@ -7977,9 +8008,9 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
                 Cancel
               </button>
               <button
-                disabled={!apiKeyInput.trim() && !apiKeyAnthropicInput.trim() && !getUserGeminiKey() && !getUserAnthropicKey()}
+                disabled={!apiKeyGeminiInput.trim() && !apiKeyAnthropicInput.trim() && !getUserGeminiKey() && !getUserAnthropicKey()}
                 onClick={() => {
-                  if (apiKeyInput.trim()) saveUserGeminiKey(apiKeyInput.trim());
+                  if (apiKeyGeminiInput.trim()) saveUserGeminiKey(apiKeyGeminiInput.trim());
                   if (apiKeyAnthropicInput.trim()) saveUserAnthropicKey(apiKeyAnthropicInput.trim());
                   setApiKeySaved(true);
                   setApiKeyInput('');
