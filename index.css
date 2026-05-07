@@ -1,0 +1,130 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Rajdhani", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --font-body: "IBM Plex Sans", sans-serif;
+
+  --color-void: #080808;
+  --color-bg: #0C0C0C;
+  --color-bg-raised: #111111;
+  --color-bg-inset: #0A0A0A;
+  --color-border-dim: #1E1E1E;
+  --color-border: #2A2A2A;
+  --color-border-active: #3D3D3D;
+  --color-text-primary: #EFEFEF;
+  --color-text-secondary: #7A7A7A;
+  --color-text-dim: #444444;
+  --color-green: #00FF88;
+  --color-green-dim: #003320;
+  --color-amber: #FFB800;
+  --color-amber-dim: #1A1000;
+  --color-red: #FF2222;
+  --color-red-dim: #1A0000;
+  --color-blue: #0099FF;
+  --color-blue-dim: #001020;
+  --color-white: #FFFFFF;
+  --color-cyan: #00DDCC;
+}
+
+@layer base {
+  :root {
+    --void: #080808;
+    --bg: #0C0C0C;
+    --bg-raised: #111111;
+    --bg-inset: #0A0A0A;
+    --border-dim: #1E1E1E;
+    --border: #2A2A2A;
+    --border-active: #3D3D3D;
+    --text-primary: #EFEFEF;
+    --text-secondary: #7A7A7A;
+    --text-dim: #444444;
+    --green: #00FF88;
+    --green-dim: #003320;
+    --amber: #FFB800;
+    --amber-dim: #1A1000;
+    --red: #FF2222;
+    --red-dim: #1A0000;
+    --blue: #0099FF;
+    --blue-dim: #001020;
+    --white: #FFFFFF;
+    --cyan: #00DDCC;
+  }
+
+  body {
+    @apply bg-void text-text-primary font-body antialiased selection:bg-green selection:text-black;
+    margin: 0;
+    padding: 0;
+    scroll-behavior: smooth;
+  }
+
+  * {
+    @apply border-border;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  input[type="number"], 
+  .font-mono,
+  [data-numeric="true"] {
+    @apply font-mono;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    @apply font-display;
+  }
+}
+
+@layer components {
+  .micro-label {
+    @apply text-[10px] uppercase tracking-[0.15em] font-body text-text-secondary;
+  }
+
+  .btn-primary {
+    @apply bg-green text-black px-6 py-2 font-display font-bold uppercase tracking-widest hover:bg-white transition-colors disabled:opacity-50;
+  }
+
+  .btn-ghost {
+    @apply text-text-dim hover:text-text-primary px-6 py-2 font-display font-bold uppercase tracking-widest transition-colors;
+  }
+
+  .btn-outline {
+    @apply border border-border hover:border-green hover:text-green px-6 py-2 font-display font-bold uppercase tracking-widest transition-colors;
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s cubic-bezier(0.2, 0, 0, 1), transform 0.6s cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .reveal.active {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .reveal-stagger-1 { transition-delay: 100ms; }
+  .reveal-stagger-2 { transition-delay: 200ms; }
+  .reveal-stagger-3 { transition-delay: 300ms; }
+  .reveal-stagger-4 { transition-delay: 400ms; }
+
+  .custom-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scroll::-webkit-scrollbar-track {
+    @apply bg-bg;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb {
+    @apply bg-border hover:bg-border-active;
+  }
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-opacity {
+  animation: pulse-opacity 2s infinite ease-in-out;
+}

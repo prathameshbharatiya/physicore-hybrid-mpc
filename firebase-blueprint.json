@@ -1,0 +1,40 @@
+{
+  "entities": {
+    "AllowedUser": {
+      "title": "Allowed User",
+      "description": "A user that is allowed to access the PhysiCore system.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The user's email address."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user", "guest"],
+          "description": "The user's role in the system."
+        },
+        "hasTested": {
+          "type": "boolean",
+          "description": "Whether the user has tested the system."
+        },
+        "invitedBy": {
+          "type": "string",
+          "description": "The email of the user who invited them."
+        },
+        "uid": {
+          "type": "string",
+          "description": "The Firebase Auth UID of the user."
+        }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/allowed_users/{userId}": {
+      "schema": "AllowedUser",
+      "description": "Collection of users permitted to access the dashboard."
+    }
+  }
+}

@@ -1,0 +1,18 @@
+# PhysiCore — ROS2 Robot Arm Config
+# Only change these two values:
+#   ros2_distro: your ROS2 version (humble, jazzy, iron, rolling)
+#   mass: your end-effector plus maximum payload weight in kg
+
+name: My Robot Arm
+platform: ros2_arm
+connection: ros2
+mass: 2.0
+friction: 0.3
+inertia: 0.1
+ros2_distro: humble
+joint_topic: /joint_states
+dof: 6
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true

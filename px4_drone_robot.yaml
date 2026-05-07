@@ -1,0 +1,16 @@
+# PhysiCore — PX4 Drone Config
+# Only change these two values:
+#   connection: udp:14550 for WiFi (default), or /dev/ttyACM0 for USB cable
+#   mass: your drone's weight with battery in kg
+
+name: My Drone
+platform: px4
+connection: udp:14550
+baud: 57600
+mass: 1.5
+friction: 0.1
+inertia: 0.05
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true
