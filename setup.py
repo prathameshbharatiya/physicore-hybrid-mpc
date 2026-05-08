@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="physicore",
-    version="1.2.0",
+    version="1.3.0",
     author="Prathamesh Shirbhate",
     author_email="prathamesh@physicore.ai",
     description="Hybrid Uncertainty-Aware Sim-to-Real Synchronization Engine",
@@ -31,6 +31,8 @@ setup(
         ],
         "ros2": ["rclpy"],
         "dev":  ["pytest>=7.0", "matplotlib>=3.7.0"],
+        "jax":  ["jax>=0.4.1", "jaxlib>=0.4.1"],
+        "jax-gpu": ["jax[cuda12_pip]>=0.4.1"],
         "all":  [
             "pymavlink>=2.4.0",
             "websockets==12.0",
