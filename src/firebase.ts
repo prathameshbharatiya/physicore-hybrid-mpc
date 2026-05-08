@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDocFromServer } from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { getFirestore, doc, getDoc, updateDoc, getDocFromServer } from 'firebase/firestore';
 
 const configFiles = import.meta.glob('../firebase-applet-config.json', { eager: true });
 const firebaseConfig = (configFiles['../firebase-applet-config.json'] as any)?.default || {
@@ -12,28 +12,30 @@ const firebaseConfig = (configFiles['../firebase-applet-config.json'] as any)?.d
   messagingSenderId: "1026415005415",
 };
 
+// This project has no default Firestore database.
+// The only database is this named one — must be passed explicitly to getFirestore().
+const FIRESTORE_DATABASE_ID = import.meta.env.VITE_FIREBASE_DATABASE_ID || 'ai-studio-43ca046c-b369-457f-ab19-e34c45d76090';
+
 const config = {
-  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            || firebaseConfig.apiKey,
-  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || firebaseConfig.authDomain,
-  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         || firebaseConfig.projectId,
-  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || firebaseConfig.storageBucket,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID|| firebaseConfig.messagingSenderId,
-  appId:             import.meta.env.VITE_FIREBASE_APP_ID             || firebaseConfig.appId,
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY             || firebaseConfig.apiKey,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN         || firebaseConfig.authDomain,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID          || firebaseConfig.projectId,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET      || firebaseConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfig.messagingSenderId,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID              || firebaseConfig.appId,
 };
 
-const app  = initializeApp(config);
-export const auth          = getAuth(app);
-export const db            = getFirestore(app);
+const app = initializeApp(config);
+export const auth = getAuth(app);
+export const db = getFirestore(app, FIRESTORE_DATABASE_ID);
 export const googleProvider = new GoogleAuthProvider();
 
-// Export the project ID so App.tsx can show it in error messages
-export const FIREBASE_PROJECT_ID = config.projectId;
+export { signInWithPopup, signOut };
 
-// Runs once on startup — logs whether Firestore is reachable
-// Check browser console to see if this says OK or FAILED
+// Startup connectivity check — visible in browser console
 getDocFromServer(doc(db, 'test', 'connection'))
-  .then(() => console.log(`[FIRESTORE] Connected OK — project: ${config.projectId}`))
-  .catch(err => console.error(`[FIRESTORE] Connection FAILED — project: ${config.projectId} — error: ${err.code} ${err.message}. Go to Firebase Console → Firestore → Rules and publish the security rules.`));
+  .then(() => console.log('[FIRESTORE] Connected OK — database:', FIRESTORE_DATABASE_ID))
+  .catch(err => console.error('[FIRESTORE] FAILED —', err.code, '— database:', FIRESTORE_DATABASE_ID));
 
 export enum OperationType {
   CREATE = 'create', UPDATE = 'update', DELETE = 'delete',

@@ -2828,10 +2828,30 @@ function AppContent() {
   const [apiKeySaved, setApiKeySaved] = useState(false);
 
   // Build Tab State
-  const [buildMessages, setBuildMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
-  const [buildInput, setBuildInput] = useState('');
-  const [isBuildLoading, setIsBuildLoading] = useState(false);
   const [buildFeatures, setBuildFeatures] = useState<FeatureManifest[]>([]);
+  const [buildFeatureName, setBuildFeatureName] = useState('');
+  const [buildFeatureDesc, setBuildFeatureDesc] = useState('');
+  const [buildCode, setBuildCode] = useState(`# PhysiCore Extension
+# Subclass PhysiCoreExtension and implement the hooks you need.
+#
+# Available hooks:
+#   pre_step(self, state, params)           — runs before each MPC step
+#   post_step(self, state, control, params) — runs after each MPC step
+#   on_fault(self, fault_type, state, params) — called when a fault is detected
+#   on_telemetry(self, telemetry_dict)      — called on every telemetry packet
+#
+# Emit telemetry keys like this:
+#   self.telemetry_output["my_key"] = value
+# They appear in the LIVE tab dashboard automatically.
+
+class MyFeature(PhysiCoreExtension):
+    def __init__(self):
+        self.telemetry_output = {}
+
+    def post_step(self, state, control, params):
+        self.telemetry_output["control_effort"] = abs(float(control[0]))
+`);
+  const [buildSaving, setBuildSaving] = useState(false);
   const [selectedBuildFile, setSelectedBuildFile] = useState<string | null>(null);
 
   // Integration Engineer State
@@ -3427,8 +3447,8 @@ Analyze this PhysiCore session. Return 2-3 sentences: what is happening physical
   // ── Projects system ────────────────────────────────────────────────────────
   const [projects, setProjects] = useState<Project[]>([]);
   const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const [projectsLoading, setProjectsLoading] = useState(true);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
-  const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState('');
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -3933,26 +3953,48 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
   // ── Project CRUD ───────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!user) { setProjects([]); return; }
+    if (!user) {
+      setProjects([]);
+      setProjectsLoading(false);
+      return;
+    }
+    setProjectsLoading(true);
+    setFirestoreError(null);
+
+    // Load from localStorage immediately so UI is never empty on first render
+    try {
+      const cached = localStorage.getItem(`physicore_projects_${user.uid}`);
+      if (cached) {
+        const parsed = JSON.parse(cached) as Project[];
+        if (parsed.length > 0) {
+          setProjects(parsed);
+          setProjectsLoading(false);
+        }
+      }
+    } catch {}
+
     const q = query(
       collection(db, 'users', user.uid, 'projects'),
       orderBy('updatedAt', 'desc')
     );
-    const unsub = onSnapshot(q, (snap) => {
-      const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() } as Project));
-      setProjects(loaded);
-      console.log(`[PROJECTS] Loaded ${loaded.length} projects from Firestore for user ${user.uid}`);
-    }, (err) => {
-      const code = err?.code || 'unknown';
-      console.error(`[PROJECTS] onSnapshot FAILED — code: ${code} — user: ${user.uid}`);
-      console.error('[PROJECTS] This is why projects are not showing after login.');
-      if (code === 'permission-denied') {
-        console.error('[PROJECTS] FIX: Go to Firebase Console → Firestore → Rules tab → publish the rules from firestore.rules file in this project.');
-        setFirestoreError('permission-denied: Projects cannot load. Go to Firebase Console → Firestore → Rules and publish your security rules.');
-      } else {
-        setFirestoreError(`Firestore error (${code}): Projects failed to load. Check browser console.`);
+    const unsub = onSnapshot(q,
+      (snap) => {
+        const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() } as Project));
+        setProjects(loaded);
+        setProjectsLoading(false);
+        setFirestoreError(null);
+        // Keep localStorage in sync
+        try {
+          localStorage.setItem(`physicore_projects_${user.uid}`, JSON.stringify(loaded));
+        } catch {}
+        console.log(`[PROJECTS] Loaded ${loaded.length} project(s) for user ${user.uid}`);
+      },
+      (err) => {
+        console.error('[PROJECTS] onSnapshot failed:', err.code, err.message);
+        setProjectsLoading(false);
+        setFirestoreError(`Firestore error (${err.code}): projects failed to load. Check browser console.`);
       }
-    });
+    );
     return () => unsub();
   }, [user]);
 
@@ -3971,24 +4013,36 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
       registryPlatformKey: hwFlowPlatforms[hardware] || hardware,
       connectionMode: 'mavlink_bridge', endpoint: 'ws://localhost:8765', notes: '',
     };
+
+    // Save to localStorage first — user never loses work even if Firestore fails
+    const localId = `local_${user.uid}_${Date.now()}`;
+    const localProj = { id: localId, ...proj } as Project;
+    try {
+      const lsKey = `physicore_projects_${user.uid}`;
+      const existing: Project[] = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      localStorage.setItem(lsKey, JSON.stringify([localProj, ...existing]));
+    } catch {}
+
+    // Then write to Firestore
     try {
       const ref = await addDoc(collection(db, 'users', user.uid, 'projects'), proj);
-      const newProj = { id: ref.id, ...proj };
-      setActiveProject(newProj);
+      const firestoreProj = { id: ref.id, ...proj } as Project;
+      // Update localStorage with real Firestore ID
+      try {
+        const lsKey = `physicore_projects_${user.uid}`;
+        const existing: Project[] = JSON.parse(localStorage.getItem(lsKey) || '[]');
+        localStorage.setItem(lsKey, JSON.stringify(
+          existing.map(p => p.id === localId ? firestoreProj : p)
+        ));
+      } catch {}
+      setActiveProject(firestoreProj);
       console.log('[PROJECTS] Saved to Firestore:', ref.id);
-      return newProj;
+      return firestoreProj;
     } catch (err: any) {
-      const code = err?.code || 'unknown';
-      const msg = err?.message || 'unknown error';
-      console.error(`[PROJECTS] Firestore write FAILED — code: ${code} — message: ${msg}`);
-      console.error('[PROJECTS] This means projects will not persist after logout.');
-      console.error('[PROJECTS] Fix: Go to Firebase Console → Firestore → Rules and publish the security rules from firestore.rules file.');
-      // Show inline error — do NOT return null, still give user a local project to work with
-      setFirestoreError(`Project could not be saved to cloud (${code}). Check browser console for fix instructions.`);
-      // Return a local-only project so the user is not blocked
-      const localProj = { id: `local_${Date.now()}`, ...proj };
-      setActiveProject(localProj as Project);
-      return localProj as Project;
+      console.error('[PROJECTS] Firestore write failed:', err.code, err.message);
+      setFirestoreError(`Project saved locally only (Firestore: ${err.code}). Check browser console.`);
+      setActiveProject(localProj);
+      return localProj;
     }
   };
 
@@ -4001,13 +4055,16 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     try {
       await updateDoc(doc(db, 'users', user.uid, 'projects', id), { ...changes, updatedAt: now });
     } catch (err: any) {
-      const code = err?.code || 'unknown';
-      console.error(`[PROJECTS] updateProject FAILED — code: ${code} — id: ${id} — message: ${err?.message}`);
-      if (code === 'permission-denied') {
-        console.error('[PROJECTS] FIX: Go to Firebase Console → Firestore → Rules tab → publish the rules from firestore.rules.');
-        setFirestoreError(`permission-denied: Project changes are not saving to cloud. Check browser console.`);
-      }
+      console.error('[PROJECTS] updateProject failed:', err?.code, err?.message);
     }
+    // Always sync to localStorage
+    try {
+      const lsKey = `physicore_projects_${user.uid}`;
+      const existing: Project[] = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      localStorage.setItem(lsKey, JSON.stringify(
+        existing.map(p => p.id === id ? { ...p, ...changes, updatedAt: now } : p)
+      ));
+    } catch {}
   };
 
   const deleteProject = async (id: string) => {
@@ -4021,6 +4078,11 @@ Analyze this. 2-3 sentences: what is happening physically, one concrete recommen
     }
     if (activeProject?.id === id) setActiveProject(null);
     setProjects(prev => prev.filter(p => p.id !== id));
+    try {
+      const lsKey = `physicore_projects_${user.uid}`;
+      const existing: Project[] = JSON.parse(localStorage.getItem(lsKey) || '[]');
+      localStorage.setItem(lsKey, JSON.stringify(existing.filter(p => p.id !== id)));
+    } catch {}
   };
 
   const duplicateProject = async (project: Project) => {
@@ -7465,13 +7527,6 @@ class FrictionLogger(PhysiCoreExtension):
             </button>
           </div>
         )}
-        {firestoreError && (
-          <div className="mb-6 p-4 border border-red/40 bg-red/5 space-y-2">
-            <p className="font-mono text-[10px] text-red uppercase tracking-widest font-bold">⚠ Firestore Error — Projects Not Saving</p>
-            <p className="font-mono text-[10px] text-red/80">{firestoreError}</p>
-            <p className="font-mono text-[9px] text-textDim">Open browser DevTools (F12) → Console for detailed fix instructions.</p>
-          </div>
-        )}
         <div className="max-w-[1100px] mx-auto space-y-8">
           <div className="flex items-center justify-between">
             <div>
@@ -7487,6 +7542,14 @@ class FrictionLogger(PhysiCoreExtension):
               <Plus size={14} /> New Project
             </button>
           </div>
+
+          {firestoreError && (
+            <div className="mb-6 p-4 border border-red/40 bg-red/5 space-y-1">
+              <p className="font-mono text-[10px] text-red uppercase tracking-widest font-bold">⚠ Cloud Sync Error — projects saving locally only</p>
+              <p className="font-mono text-[10px] text-red/80 leading-relaxed">{firestoreError}</p>
+              <p className="font-mono text-[9px] text-textDim mt-1">Open browser DevTools → Console tab for details.</p>
+            </div>
+          )}
 
           {projectsError && (
             <div className="p-4 border border-red/30 bg-red/5 flex items-start gap-3">
@@ -7644,93 +7707,6 @@ class FrictionLogger(PhysiCoreExtension):
   };
 
   // ── BUILD TAB ──────────────────────────────────────────────────────────────
-  const FEATURE_ARCHITECT_SYSTEM = `You are the PhysiCore Feature Architect. Your job is to help engineers add custom features to their PhysiCore deployment by asking exactly 4 questions in sequence, then generating a complete implementation.
-
-The 4 questions you MUST ask (one at a time, wait for answer before next):
-1. WHAT — What should this feature do? (one sentence)
-2. WHEN — When should it trigger? (pre_step / post_step / on_fault / on_telemetry / on timer)
-3. HOW — What should it do with the data? (log it, modify control, send alert, etc.)
-4. DATA — What telemetry keys or parameters does it need access to?
-
-After all 4 answers, emit exactly this marker followed by a JSON manifest on its own line:
-[GENERATE_FEATURE]
-{"name":"<name>","description":"<desc>","telemetry_keys":[],"fault_types":[],"hooks":[],"generated_files":{"extensions/<name>.py":"<full python code>"}}
-
-The Python code must subclass PhysiCoreExtension and implement the appropriate hook methods.
-PhysiCoreExtension interface:
-  class PhysiCoreExtension:
-    def pre_step(self, state, params): pass
-    def post_step(self, state, control, params): pass
-    def on_fault(self, fault_type, state, params): pass
-    def on_telemetry(self, telemetry_dict): pass
-
-Keep your questions short and direct. No preamble. Ask question 1 first.`;
-
-  const sendBuildMessage = async (text: string) => {
-    if (!text.trim() || isBuildLoading) return;
-    if (!requireAIKey()) return;
-    const userMsg = { role: 'user' as const, text: text.trim() };
-    const newHistory = [...buildMessages, userMsg];
-    setBuildMessages(newHistory);
-    setBuildInput('');
-    setIsBuildLoading(true);
-
-    try {
-      const multiTurn = newHistory.map(m => ({
-        role: m.role as 'user' | 'assistant',
-        content: m.text,
-      }));
-
-      const reply = await callAI(FEATURE_ARCHITECT_SYSTEM, '', 2000, multiTurn);
-      const finalReply = reply || 'AI unavailable. Make sure your API key is valid — click "AI ON" or "SET UP AI" in the top bar.';
-
-      if (reply.includes('[GENERATE_FEATURE]')) {
-        const afterMarker = reply.split('[GENERATE_FEATURE]')[1]?.trim() ?? '';
-        const jsonStart = afterMarker.indexOf('{');
-        const jsonEnd = afterMarker.lastIndexOf('}');
-        if (jsonStart !== -1 && jsonEnd !== -1) {
-          try {
-            const manifest = JSON.parse(afterMarker.slice(jsonStart, jsonEnd + 1));
-            const feature: FeatureManifest = {
-              id: generateId(),
-              name: manifest.name || 'Custom Feature',
-              description: manifest.description || '',
-              telemetry_keys: manifest.telemetry_keys || [],
-              fault_types: manifest.fault_types || [],
-              hooks: manifest.hooks || [],
-              files_modified: Object.keys(manifest.generated_files || {}),
-              conversation: newHistory,
-              generated_files: manifest.generated_files || {},
-              createdAt: new Date().toISOString(),
-            };
-            setBuildFeatures(prev => [...prev, feature]);
-            setSelectedBuildFile(Object.keys(feature.generated_files)[0] ?? null);
-            if (user && activeProject) {
-              const updatedFeatures = [...(activeProject.features || []), feature];
-              const updatedExts = [...(activeProject.customExtensions || []), {
-                id: feature.id, name: feature.name, description: feature.description,
-                code: Object.values(feature.generated_files)[0] || '',
-                createdAt: feature.createdAt,
-              }];
-              setActiveProject(prev => prev ? { ...prev, features: updatedFeatures, customExtensions: updatedExts } : prev);
-              try {
-                await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
-                  features: updatedFeatures, customExtensions: updatedExts,
-                  updatedAt: new Date().toISOString(),
-                });
-              } catch (e) { console.warn('[BUILD] save failed:', e); }
-            }
-          } catch (e) { console.error('[BUILD] JSON parse failed:', e); }
-        }
-      }
-
-      setBuildMessages([...newHistory, { role: 'assistant', text: finalReply }]);
-    } catch (err: any) {
-      setBuildMessages([...newHistory, { role: 'assistant', text: `Error: ${err.message}` }]);
-    } finally {
-      setIsBuildLoading(false);
-    }
-  };
 
   // ── DEBUGGER VIEW ──────────────────────────────────────────────────────────
   const FAULT_KB: Record<string, { desc: string; causes: string[]; fixes: string[] }> = {
@@ -8067,143 +8043,227 @@ Keep your questions short and direct. No preamble. Ask question 1 first.`;
   const renderBuildTab = () => {
     const allFeatures = [...buildFeatures, ...(activeProject?.features || [])];
     const uniqueFeatures = allFeatures.filter((f, i, a) => a.findIndex(x => x.id === f.id) === i);
-    const activeFeature = uniqueFeatures.find(f => selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile));
-    const editorCode = selectedBuildFile && activeFeature ? (activeFeature.generated_files[selectedBuildFile] ?? '') : '';
+    const activeFeature = uniqueFeatures.find(f =>
+      selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile)
+    );
+
+    const saveFeature = async () => {
+      if (!buildFeatureName.trim()) { alert('Give your feature a name.'); return; }
+      if (!buildCode.trim()) { alert('Write some code first.'); return; }
+      setBuildSaving(true);
+
+      const telemetryKeyMatches = [...buildCode.matchAll(/self\.telemetry_output\s*\[["'](\w+)["']\]/g)];
+      const telemetry_keys = [...new Set(telemetryKeyMatches.map(m => m[1]))];
+
+      const hookNames = ['pre_step', 'post_step', 'on_fault', 'on_telemetry'] as const;
+      const hooks = hookNames.filter(h => buildCode.includes(`def ${h}(`));
+
+      const classMatch = buildCode.match(/^class\s+(\w+)/m);
+      const className = classMatch ? classMatch[1] : buildFeatureName.trim().replace(/\s+/g, '');
+      const filename = `extensions/${className.toLowerCase()}.py`;
+
+      const feature: FeatureManifest = {
+        id: generateId(),
+        name: buildFeatureName.trim(),
+        description: buildFeatureDesc.trim() || `Custom PhysiCore extension: ${buildFeatureName.trim()}`,
+        telemetry_keys,
+        fault_types: [],
+        hooks,
+        files_modified: [filename],
+        conversation: [],
+        generated_files: { [filename]: buildCode },
+        createdAt: new Date().toISOString(),
+      };
+
+      setBuildFeatures(prev => [...prev, feature]);
+      setSelectedBuildFile(filename);
+
+      if (user && activeProject) {
+        const updatedFeatures = [...(activeProject.features || []), feature];
+        const updatedExts = [...(activeProject.customExtensions || []), {
+          id: feature.id, name: feature.name, description: feature.description,
+          code: buildCode, createdAt: feature.createdAt,
+        }];
+        setActiveProject(prev => prev ? { ...prev, features: updatedFeatures, customExtensions: updatedExts } : prev);
+        try {
+          await updateDoc(doc(db, 'users', user.uid, 'projects', activeProject.id), {
+            features: updatedFeatures, customExtensions: updatedExts,
+            updatedAt: new Date().toISOString(),
+          });
+          console.log('[BUILD] Feature saved:', feature.name);
+        } catch (e: any) {
+          console.warn('[BUILD] Firestore save failed (saved locally):', e?.message);
+        }
+      }
+
+      setBuildFeatureName('');
+      setBuildFeatureDesc('');
+      setBuildCode(`# PhysiCore Extension
+# Subclass PhysiCoreExtension and implement the hooks you need.
+#
+# Available hooks:
+#   pre_step(self, state, params)           — runs before each MPC step
+#   post_step(self, state, control, params) — runs after each MPC step
+#   on_fault(self, fault_type, state, params) — called when a fault is detected
+#   on_telemetry(self, telemetry_dict)      — called on every telemetry packet
+#
+# Emit telemetry keys like this:
+#   self.telemetry_output["my_key"] = value
+# They appear in the LIVE tab dashboard automatically.
+
+class MyFeature(PhysiCoreExtension):
+    def __init__(self):
+        self.telemetry_output = {}
+
+    def post_step(self, state, control, params):
+        self.telemetry_output["control_effort"] = abs(float(control[0]))
+`);
+      setBuildSaving(false);
+    };
 
     return (
       <div className="pt-[52px] h-screen bg-void flex overflow-hidden">
-        {/* Left sidebar — features list */}
+
+        {/* Left sidebar — saved features */}
         <div className="w-64 shrink-0 border-r border-border flex flex-col">
           <div className="p-4 border-b border-border">
-            <div className="micro-label text-textDim uppercase mb-3">Features</div>
+            <div className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-3">Saved Features</div>
             {uniqueFeatures.length === 0 ? (
-              <div className="font-mono text-[10px] text-textDim italic">No features yet — describe one below</div>
+              <div className="font-mono text-[10px] text-textDim italic leading-relaxed">
+                No features yet. Write your first extension and click Save Feature.
+              </div>
             ) : (
               <div className="space-y-2">
-                {uniqueFeatures.map(f => (
-                  <div
-                    key={f.id}
-                    onClick={() => { const first = Object.keys(f.generated_files)[0]; if (first) setSelectedBuildFile(first); }}
-                    className={`p-2 border cursor-pointer transition-all ${selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile) ? 'border-amber bg-amber/10' : 'border-border hover:border-amber/40'}`}
-                  >
-                    <div className="font-display text-[10px] font-bold text-white uppercase tracking-widest truncate">{f.name}</div>
-                    <div className="font-mono text-[9px] text-textDim mt-0.5 truncate">{f.description}</div>
-                    {f.telemetry_keys.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {f.telemetry_keys.map(k => (
-                          <span key={k} className="px-1 py-0 font-mono text-[8px] bg-cyan/10 text-cyan border border-cyan/20">{k}</span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+                {uniqueFeatures.map(f => {
+                  const firstFile = Object.keys(f.generated_files)[0];
+                  const isSelected = selectedBuildFile && Object.keys(f.generated_files).includes(selectedBuildFile);
+                  return (
+                    <div
+                      key={f.id}
+                      onClick={() => { if (firstFile) setSelectedBuildFile(firstFile); }}
+                      className={`p-2 border cursor-pointer transition-all ${isSelected ? 'border-amber bg-amber/10' : 'border-border hover:border-amber/40'}`}
+                    >
+                      <div className="font-display text-[10px] font-bold text-white uppercase tracking-widest truncate">{f.name}</div>
+                      <div className="font-mono text-[9px] text-textDim mt-0.5 truncate">{f.description}</div>
+                      {f.hooks.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {f.hooks.map(h => (
+                            <span key={h} className="px-1 font-mono text-[8px] bg-amber/10 text-amber border border-amber/20">{h}</span>
+                          ))}
+                        </div>
+                      )}
+                      {f.telemetry_keys.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {f.telemetry_keys.map(k => (
+                            <span key={k} className="px-1 font-mono text-[8px] bg-cyan/10 text-cyan border border-cyan/20">{k}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
-          <div className="flex-1" />
+
+          {activeFeature && selectedBuildFile && (
+            <div className="flex-1 flex flex-col min-h-0">
+              <div className="p-3 border-b border-border flex items-center gap-2">
+                <FileJson size={11} className="text-textDim" />
+                <span className="font-mono text-[9px] text-textDim truncate">{selectedBuildFile}</span>
+                <button
+                  onClick={() => navigator.clipboard.writeText(activeFeature.generated_files[selectedBuildFile] || '')}
+                  className="ml-auto p-1 text-textDim hover:text-white transition-colors"
+                  title="Copy code"
+                >
+                  <Copy size={11} />
+                </button>
+              </div>
+              <div className="flex-1 overflow-hidden">
+                <PhysiEditor
+                  code={activeFeature.generated_files[selectedBuildFile] || ''}
+                  language="python"
+                  readOnly
+                />
+              </div>
+            </div>
+          )}
+
           <div className="p-4 border-t border-border">
             <button
-              onClick={() => { setBuildMessages([]); setSelectedBuildFile(null); }}
+              onClick={() => setSelectedBuildFile(null)}
               className="w-full py-2 border border-amber/30 text-amber font-display text-[9px] font-bold uppercase tracking-widest hover:bg-amber hover:text-black transition-all"
             >
-              + New Feature
+              + Write New Feature
             </button>
           </div>
         </div>
 
-        {/* Center — Socratic conversation */}
-        <div className="flex-1 flex flex-col min-w-0 border-r border-border">
-          <div className="p-4 border-b border-border flex items-center gap-3">
+        {/* Main area — editor */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <div className="p-4 border-b border-border flex items-center gap-3 shrink-0">
             <Code2 size={16} className="text-amber" />
-            <span className="font-display text-sm font-bold text-white uppercase tracking-widest">Feature Architect</span>
-            <span className="font-mono text-[9px] text-textDim">Describe a feature in plain English — the AI writes the code</span>
+            <span className="font-display text-sm font-bold text-white uppercase tracking-widest">Extension Editor</span>
+            <span className="font-mono text-[9px] text-textDim">Write a PhysiCoreExtension subclass — telemetry keys appear in LIVE tab automatically.</span>
           </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {buildMessages.length === 0 && (
-              <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
-                <div className="w-12 h-12 border border-amber/40 flex items-center justify-center">
-                  <Puzzle size={20} className="text-amber" />
-                </div>
-                <div className="space-y-2">
-                  <div className="font-display text-sm font-bold text-white uppercase tracking-widest">Build a feature</div>
-                  <div className="font-body text-xs text-textSecondary max-w-xs">
-                    Tell the Feature Architect what you want to add. It will ask 4 questions, then write the complete PhysiCore extension.
-                  </div>
-                </div>
-              </div>
-            )}
-            {buildMessages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[80%] px-4 py-3 ${m.role === 'user' ? 'bg-amber/20 border border-amber/30' : 'bg-bgRaised border border-border'}`}>
-                  {m.text.includes('[GENERATE_FEATURE]') ? (
-                    <div className="space-y-2">
-                      <div className="font-mono text-[10px] text-green font-bold">✓ Feature generated</div>
-                      <div className="font-body text-xs text-textSecondary">{m.text.split('[GENERATE_FEATURE]')[0].trim()}</div>
-                    </div>
-                  ) : (
-                    <div className="font-body text-sm text-textPrimary whitespace-pre-wrap">{m.text}</div>
-                  )}
-                </div>
-              </div>
-            ))}
-            {isBuildLoading && (
-              <div className="flex justify-start">
-                <div className="px-4 py-3 bg-bgRaised border border-border flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
-            )}
-          </div>
-          <div className="p-4 border-t border-border flex gap-3">
-            <input
-              value={buildInput}
-              onChange={e => setBuildInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBuildMessage(buildInput); } }}
-              placeholder="Describe a feature or answer the question above..."
-              className="flex-1 bg-bgRaised border border-border px-4 py-2 font-mono text-sm text-white focus:border-amber outline-none placeholder:text-textDim"
-            />
-            <button
-              onClick={() => sendBuildMessage(buildInput)}
-              disabled={isBuildLoading || !buildInput.trim()}
-              className="px-4 py-2 bg-amber text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40"
-            >
-              Send
-            </button>
-          </div>
-        </div>
 
-        {/* Right pane — code editor */}
-        <div className="w-[480px] shrink-0 flex flex-col">
-          <div className="p-4 border-b border-border flex items-center gap-3">
-            <FileJson size={14} className="text-textDim" />
-            <span className="font-mono text-[10px] text-textDim truncate">{selectedBuildFile ?? 'No file selected'}</span>
-            {selectedBuildFile && editorCode && (
-              <button
-                onClick={() => { navigator.clipboard.writeText(editorCode); }}
-                className="ml-auto p-1.5 text-textDim hover:text-white transition-colors"
-                title="Copy"
-              >
-                <Copy size={12} />
-              </button>
-            )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-hidden">
-            {selectedBuildFile && editorCode ? (
-              <PhysiEditor
-                code={editorCode}
-                language={selectedBuildFile.endsWith('.yaml') || selectedBuildFile.endsWith('.yml') ? 'yaml' : 'python'}
-                readOnly
+          <div className="p-4 border-b border-border flex gap-4 shrink-0">
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Feature Name</label>
+              <input
+                value={buildFeatureName}
+                onChange={e => setBuildFeatureName(e.target.value)}
+                placeholder="e.g. Terrain Logger"
+                className="bg-bgRaised border border-border px-3 py-2 font-mono text-sm text-white focus:border-amber outline-none placeholder:text-textDim"
               />
-            ) : (
-              <div className="flex items-center justify-center" style={{ height: '100%' }}>
-                <div className="text-center space-y-3">
-                  <div className="font-mono text-[10px] text-textDim italic">Generated code will appear here</div>
-                  <div className="font-mono text-[9px] text-textDim/50">Use the chat on the left to describe a feature</div>
+            </div>
+            <div className="flex flex-col gap-1 flex-[2]">
+              <label className="font-mono text-[9px] text-textDim uppercase tracking-widest">Description (optional)</label>
+              <input
+                value={buildFeatureDesc}
+                onChange={e => setBuildFeatureDesc(e.target.value)}
+                placeholder="What does this feature do?"
+                className="bg-bgRaised border border-border px-3 py-2 font-mono text-sm text-white focus:border-amber outline-none placeholder:text-textDim"
+              />
+            </div>
+            <div className="flex flex-col justify-end">
+              <button
+                onClick={saveFeature}
+                disabled={buildSaving || !buildFeatureName.trim() || !buildCode.trim()}
+                className="px-6 py-2 bg-amber text-black font-display text-[10px] font-bold uppercase tracking-widest hover:bg-white transition-all disabled:opacity-40 whitespace-nowrap"
+              >
+                {buildSaving ? 'Saving...' : 'Save Feature'}
+              </button>
+            </div>
+          </div>
+
+          <div className="px-4 py-3 border-b border-border bg-bgRaised shrink-0">
+            <div className="font-mono text-[9px] text-textDim uppercase tracking-widest mb-2">PhysiCoreExtension — available hooks</div>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-1">
+              {[
+                ['pre_step(self, state, params)', 'Before each MPC step'],
+                ['post_step(self, state, control, params)', 'After each MPC step'],
+                ['on_fault(self, fault_type, state, params)', 'When a fault is detected'],
+                ['on_telemetry(self, telemetry_dict)', 'Every telemetry packet from hardware'],
+              ].map(([sig, desc]) => (
+                <div key={sig} className="flex gap-3 items-start">
+                  <code className="font-mono text-[9px] text-amber shrink-0">{sig}</code>
+                  <span className="font-mono text-[9px] text-textDim">{desc}</span>
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
+            <div className="mt-2 font-mono text-[9px] text-cyan">
+              Emit telemetry: <code className="text-white">self.telemetry_output["my_key"] = value</code> → appears in LIVE tab automatically.
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-hidden">
+            <PhysiEditor
+              code={buildCode}
+              language="python"
+              onChange={setBuildCode}
+              readOnly={false}
+            />
           </div>
         </div>
       </div>
