@@ -255,6 +255,32 @@ SENTINEL_PRESETS: Dict[str, SentinelConfig] = {
         max_residual_nominal=0.1, max_residual_cautious=1.0,
         cautious_timeout_steps=1000, fallback_recovery_steps=5000,
     ),
+    "mobile_manipulator": SentinelConfig(
+        max_lyapunov_energy=500.0, lyapunov_alpha=0.12,
+        max_uncertainty_nominal=0.08, max_uncertainty_cautious=0.25,
+        max_residual_nominal=0.5, max_residual_cautious=2.0,
+        max_torque=150.0, max_accel=5.0, cautious_timeout_steps=50,
+    ),
+    "dual_arm": SentinelConfig(
+        max_lyapunov_energy=200.0, lyapunov_alpha=0.18,
+        max_uncertainty_nominal=0.04, max_uncertainty_cautious=0.12,
+        max_residual_nominal=0.2, max_residual_cautious=0.8,
+        max_torque=200.0, max_param_drift=0.3, cautious_timeout_steps=30,
+    ),
+    "exoskeleton": SentinelConfig(
+        # Most safety-critical: human in the loop
+        max_lyapunov_energy=50.0, lyapunov_alpha=0.35,
+        max_uncertainty_nominal=0.02, max_uncertainty_cautious=0.08,
+        max_residual_nominal=0.1, max_residual_cautious=0.4,
+        max_param_drift=0.15, max_torque=50.0,
+        cautious_timeout_steps=15, fallback_recovery_steps=200,
+    ),
+    "cable_driven": SentinelConfig(
+        max_lyapunov_energy=300.0, lyapunov_alpha=0.15,
+        max_uncertainty_nominal=0.06, max_uncertainty_cautious=0.20,
+        max_residual_nominal=0.3, max_residual_cautious=1.5,
+        max_torque=500.0,  # cable tension limit (N)
+    ),
 }
 
 

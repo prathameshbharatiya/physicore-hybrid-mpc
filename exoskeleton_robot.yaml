@@ -1,0 +1,17 @@
+# PhysiCore — Exoskeleton Config (lower/upper limb rehabilitation)
+name: My Exoskeleton
+platform: exoskeleton
+connection: ros2
+mass: 80.0        # human + exoskeleton combined mass (kg)
+exo_mass: 12.0    # exoskeleton-only mass (kg)
+dof: 5            # DOF per limb (5 for lower limb, 7 for upper limb)
+friction: 0.6
+admittance_k: 100.0
+ros2_distro: humble
+joint_topic: /joint_states
+force_topic: /interaction_forces
+control_hz: 200.0  # high-rate essential for admittance control
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true
+max_torque: 50.0

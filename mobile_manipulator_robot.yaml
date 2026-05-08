@@ -1,0 +1,16 @@
+# PhysiCore — Mobile Manipulator Config (e.g., Husky + UR5, Ridgeback + Panda)
+name: My Mobile Manipulator
+platform: mobile_manipulator
+connection: ros2
+mass: 20.0        # base platform mass (kg)
+arm_mass: 5.0     # robot arm mass (kg)
+dof: 6            # arm DOF: 6 for UR5/UR10, 7 for Franka Panda/iiwa
+friction: 0.4
+inertia: 0.3      # wheelbase (m)
+ros2_distro: humble
+base_topic: /cmd_vel
+joint_topic: /joint_states
+control_hz: 50.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true

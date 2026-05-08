@@ -255,22 +255,151 @@ def evtol_dynamics(state, action, params):
     return np.array([vx,vy,vz,fwd/m-b*vx/m,-b*vy/m,(1-tr)*lv+tr*lw-9.81,p,q,r,(rc-p)/tau,(pc-q)/tau,-r*0.5])
 
 def manipulator_arm_dynamics(state, action, params):
-    n=6; q_=state[:n]; dq=state[n:]; m=max(params.get("mass",2),0.01); fric=params.get("friction",0.3)
-    M=np.ones(n)*m*0.1+np.array([0.5,0.4,0.3,0.2,0.1,0.05])
-    gc=np.array([m*9.81*0.3*math.cos(q_[0]),m*9.81*0.2*math.cos(q_[1]),m*9.81*0.1*math.cos(q_[2]),0,0,0])
-    return np.concatenate([dq,(action+gc-fric*dq)/M])
+    """
+    N-DOF manipulator arm dynamics. Supports 1-174 joints.
+    state = [q_0..q_{n-1}, dq_0..dq_{n-1}]  shape: (2n,)
+    action = [tau_0..tau_{n-1}]               shape: (n,)
+    params: mass (total), friction (joint), inertia (base),
+            dof (int, default 6), link_masses (list), link_lengths (list)
+    """
+    n = int(params.get("dof", len(action) if len(action) > 0 else max(1, len(state) // 2)))
+    n = max(1, min(n, max(1, len(state) // 2)))
+    q_ = state[:n]
+    dq = state[n:n * 2]
+    m = max(params.get("mass", 2.0), 0.01)
+    fric = params.get("friction", 0.3)
+
+    # Per-joint inertia: use params.link_inertias if provided, else geometric decay
+    link_inertias = params.get("link_inertias", None)
+    if link_inertias is not None and len(link_inertias) >= n:
+        M = np.array(link_inertias[:n], dtype=float)
+    else:
+        # Geometric decay: distal joints have less inertia
+        M = np.array([max(m * 0.1 * (0.85 ** i), 0.001) for i in range(n)])
+
+    # Per-joint friction (Coulomb + viscous): use params.joint_frictions if provided
+    joint_frictions = params.get("joint_frictions", None)
+    if joint_frictions is not None and len(joint_frictions) >= n:
+        F = np.array(joint_frictions[:n], dtype=float)
+    else:
+        F = np.ones(n) * fric
+
+    # Gravity compensation: only first 3 joints have significant gravity torque
+    link_lengths = params.get("link_lengths", None)
+    gc = np.zeros(n)
+    g = 9.81
+    if link_lengths is not None:
+        for i in range(min(n, len(link_lengths))):
+            gc[i] = m * g * link_lengths[i] * math.cos(float(q_[i])) * (0.7 ** i)
+    else:
+        for i in range(min(n, 3)):
+            gc[i] = m * g * (0.3 * (0.6 ** i)) * math.cos(float(q_[i]))
+
+    # Enforce action matches n
+    tau = np.zeros(n, dtype=float)
+    a = np.asarray(action, dtype=float)
+    tau[:min(n, len(a))] = a[:min(n, len(a))]
+
+    ddq = (tau + gc - F * dq) / M
+    return np.concatenate([dq, ddq])
 
 def surgical_robot_dynamics(state, action, params):
-    n=6; dq=state[n:]; m=max(params.get("mass",0.05),1e-5); fric=params.get("friction",0.8); tk=params.get("inertia",0.1)
-    M=np.ones(n)*m*0.001+np.array([5e-3,4e-3,3e-3,2e-3,1e-3,5e-4])
-    return np.concatenate([dq,(action-fric*dq-tk*state[:n])/M])
+    """
+    N-DOF surgical/microsurgery robot. High stiffness, high friction.
+    Supports da Vinci (8 DOF instruments), cable-driven wrists, etc.
+    """
+    n = int(params.get("dof", len(action) if len(action) > 0 else max(1, len(state) // 2)))
+    n = max(1, min(n, max(1, len(state) // 2)))
+    dq = state[n:n * 2]
+    m = max(params.get("mass", 0.05), 1e-5)
+    fric = params.get("friction", 0.8)
+    tk = params.get("inertia", 0.1)
+
+    link_inertias = params.get("link_inertias", None)
+    if link_inertias is not None and len(link_inertias) >= n:
+        M = np.array(link_inertias[:n], dtype=float)
+    else:
+        M = np.array([max(m * 0.001 * (0.8 ** i), 1e-7) for i in range(n)])
+
+    tau = np.zeros(n, dtype=float)
+    a = np.asarray(action, dtype=float)
+    tau[:min(n, len(a))] = a[:min(n, len(a))]
+    ddq = (tau - fric * dq - tk * state[:n]) / M
+    return np.concatenate([dq, ddq])
 
 def legged_robot_dynamics(state, action, params):
-    m=max(params.get("mass",30),0.1); fric=params.get("friction",0.7); Ixx=max(params.get("inertia",0.5),0.001)
-    _,_,z,vx,vy,vz,_,_,_,p,q,r=state; fx,fy,fz,tr,tp,ty=action
-    fzc=max(fz,0) if z<=0.01 else 0
-    return np.array([vx,vy,vz,fx/m-fric*vx/m,fy/m-fric*vy/m,fzc/m-9.81*(1-min(1,max(0,-z*100))),
-                     p,q,r,tr/Ixx-fric*p,tp/Ixx-fric*q,ty/Ixx-fric*r])
+    """
+    N-DOF legged robot dynamics with hybrid contact model.
+
+    Two operating modes, selected by params['dof']:
+
+    MODE A - Floating-base body (dof <= 6 or not set):
+        state (12): [x,y,z, vx,vy,vz, roll,pitch,yaw, p,q,r]
+        action (6): [fx,fy,fz, torque_roll, torque_pitch, torque_yaw]
+        Used for: simple quadrupeds, base-only control
+
+    MODE B - Full joint-space (dof > 6):
+        state (6 + 2*n_joints): [x,y,z, vx,vy,vz, q_0..q_{n-1}, dq_0..dq_{n-1}]
+        action (n_joints): [tau_0..tau_{n-1}]
+        Used for: Spot (12 DOF), ANYmal (12 DOF), humanoids with leg joints
+        Contact forces computed from simplified centroidal model.
+    """
+    m = max(params.get("mass", 30.0), 0.1)
+    fric = params.get("friction", 0.7)
+    Ixx = max(params.get("inertia", 0.5), 0.001)
+    n_joints = int(params.get("dof", 0))
+
+    if n_joints <= 6 or len(state) == 12:
+        # MODE A: floating-base body dynamics (backward-compatible)
+        _, _, z, vx, vy, vz, _, _, _, p, q, r = state[:12]
+        fx, fy, fz, tr, tp, ty = action[:6]
+        fzc = max(fz, 0) if z <= 0.01 else 0
+        return np.array([vx, vy, vz,
+                         fx / m - fric * vx / m,
+                         fy / m - fric * vy / m,
+                         fzc / m - 9.81 * (1 - min(1, max(0, -z * 100))),
+                         p, q, r,
+                         tr / Ixx - fric * p,
+                         tp / Ixx - fric * q,
+                         ty / Ixx - fric * r])
+    else:
+        # MODE B: full joint-space with centroidal dynamics
+        base = state[:6]
+        q_j = state[6:6 + n_joints]
+        dq_j = state[6 + n_joints:6 + 2 * n_joints]
+        tau_in = np.zeros(n_joints, dtype=float)
+        tau_arr = np.asarray(action, dtype=float)
+        tau_in[:min(len(tau_arr), n_joints)] = tau_arr[:min(len(tau_arr), n_joints)]
+
+        # Centroidal: base accelerations from sum of contact forces
+        z = base[2]
+        in_contact = 1.0 if z <= 0.05 else 0.0
+        grf_z = m * 9.81 * in_contact
+
+        base_acc = np.array([
+            -fric * base[3],
+            -fric * base[4],
+            grf_z / m - 9.81,
+        ])
+
+        # Joint dynamics: simplified diagonal M and gravity
+        n_legs = params.get("n_legs", 4)
+        n_per_leg = n_joints // n_legs if n_legs > 0 else n_joints
+        M_j = np.array([max(m * 0.02 * (0.75 ** (i % max(n_per_leg, 1))), 0.001)
+                        for i in range(n_joints)])
+        gc_j = np.zeros(n_joints)
+        for i in range(n_joints):
+            if n_per_leg > 0 and i % n_per_leg == 0:
+                gc_j[i] = m * 9.81 * 0.1 * math.cos(float(q_j[i])) / max(n_legs, 1)
+
+        ddq_j = (tau_in - fric * dq_j - gc_j) / M_j
+
+        return np.concatenate([
+            base[3:6],
+            base_acc,
+            dq_j,
+            ddq_j,
+        ])
 
 def balancing_bot_dynamics(state, action, params):
     """Nonlinear inverted pendulum. State=[pitch,pitch_rate,x,v]. Action=[torque]."""
@@ -318,45 +447,88 @@ def rover_dynamics(state, action, params): return ground_rover_dynamics(state, a
 
 def humanoid_dynamics(state, action, params):
     """
-    Simplified bipedal humanoid dynamics with ZMP-based contact model.
-    State (18): [com_x, com_y, com_z, vx, vy, vz, roll, pitch, yaw, p, q, r,
-                 lfoot_z, rfoot_z, lcontact, rcontact, zmp_x, zmp_y]
-    Action (6): [fx, fy, fz, torque_roll, torque_pitch, torque_yaw]
-    ZMP stability: |zmp| < foot_half_width ensures stable gait.
+    Full-body humanoid dynamics. Supports two modes:
+
+    MODE A - Centroidal ZMP model (default, state_dim=18, action_dim=6):
+        For low-level balance and CoM trajectory tracking.
+        State (18): [com_x,com_y,com_z, vx,vy,vz, roll,pitch,yaw, p,q,r,
+                     lfoot_z, rfoot_z, lcontact, rcontact, zmp_x, zmp_y]
+        Action (6): [fx,fy,fz, torque_roll, torque_pitch, torque_yaw]
+
+    MODE B - Full joint-space (params['dof'] > 6):
+        For whole-body control of Atlas/H1/G1-class humanoids.
+        Supports 30-50+ DOF.
+        State (6 + 2*n_joints): [com_x,com_y,com_z, vx,vy,vz, q_0..q_{n-1}, dq_0..dq_{n-1}]
+        Action (n_joints): joint torques
     """
-    com_x,com_y,com_z,vx,vy,vz,roll,pitch,yaw,p,q,r,lf_z,rf_z,lc,rc,zmp_x,zmp_y = state
-    fx,fy,fz,tr,tp,ty = action
-    m   = max(params.get("mass", 60.0), 0.1)
-    fric= params.get("friction", 0.8)
-    h   = max(com_z, 0.01)
-    g   = 9.81
-    Ixx = max(params.get("inertia", 8.0), 0.001)
+    n_joints = int(params.get("dof", 0))
 
-    # Inverted pendulum COM acceleration
-    ax = fx/m - fric*vx + g*math.sin(pitch)
-    ay = fy/m - fric*vy
-    az = fz/m - g + fric*max(lc+rc, 0.01)*0.5
+    if n_joints <= 6 or len(state) == 18:
+        # MODE A: ZMP centroidal model (backward-compatible)
+        com_x, com_y, com_z, vx, vy, vz, roll, pitch, yaw, p, q, r, lf_z, rf_z, lc, rc, zmp_x, zmp_y = state[:18]
+        fx, fy, fz, tr, tp, ty = action[:6]
+        m = max(params.get("mass", 60.0), 0.1)
+        fric = params.get("friction", 0.8)
+        h = max(com_z, 0.01)
+        g = 9.81
+        Ixx = max(params.get("inertia", 8.0), 0.001)
+        ax = fx / m - fric * vx + g * math.sin(pitch)
+        ay = fy / m - fric * vy
+        az = fz / m - g + fric * max(lc + rc, 0.01) * 0.5
+        alpha_roll = tr / Ixx
+        alpha_pitch = tp / Ixx
+        alpha_yaw = ty / (Ixx * 2.0)
+        new_zmp_x = com_x - h / g * ax
+        new_zmp_y = com_y - h / g * ay
+        new_lf_z = max(lf_z - vz * 0.01, 0.0)
+        new_rf_z = max(rf_z - vz * 0.01, 0.0)
+        new_lc = 1.0 if new_lf_z < 0.02 else 0.0
+        new_rc = 1.0 if new_rf_z < 0.02 else 0.0
+        return np.array([vx, vy, vz, ax, ay, az, p, q, r,
+                         alpha_roll, alpha_pitch, alpha_yaw,
+                         new_lf_z - lf_z, new_rf_z - rf_z,
+                         new_lc - lc, new_rc - rc,
+                         new_zmp_x - zmp_x, new_zmp_y - zmp_y])
+    else:
+        # MODE B: full joint-space whole-body humanoid
+        base = state[:6]
+        q_j = state[6:6 + n_joints]
+        dq_j = state[6 + n_joints:6 + 2 * n_joints]
+        tau = np.zeros(n_joints, dtype=float)
+        tau_arr = np.asarray(action, dtype=float)
+        tau[:min(len(tau_arr), n_joints)] = tau_arr[:min(len(tau_arr), n_joints)]
 
-    # Angular dynamics (simplified single rigid body)
-    alpha_roll  = tr / Ixx
-    alpha_pitch = tp / Ixx
-    alpha_yaw   = ty / (Ixx * 2.0)
+        m = max(params.get("mass", 60.0), 0.1)
+        fric = params.get("friction", 0.5)
+        g = 9.81
 
-    # ZMP from linear inverted pendulum model
-    new_zmp_x = com_x - h/g * ax
-    new_zmp_y = com_y - h/g * ay
+        z = base[2]
+        in_contact = 1.0 if z <= 0.15 else 0.0
+        grf_z = m * g * in_contact
 
-    # Foot contact: simple ground penetration model
-    new_lf_z = max(lf_z - vz * 0.01, 0.0)
-    new_rf_z = max(rf_z - vz * 0.01, 0.0)
-    new_lc   = 1.0 if new_lf_z < 0.02 else 0.0
-    new_rc   = 1.0 if new_rf_z < 0.02 else 0.0
+        base_acc = np.array([
+            -fric * base[3] * 0.1,
+            -fric * base[4] * 0.1,
+            grf_z / m - g,
+        ])
 
-    return np.array([vx, vy, vz, ax, ay, az, p, q, r,
-                     alpha_roll, alpha_pitch, alpha_yaw,
-                     new_lf_z - lf_z, new_rf_z - rf_z,
-                     new_lc - lc, new_rc - rc,
-                     new_zmp_x - zmp_x, new_zmp_y - zmp_y])
+        M_j = np.array([max(m * 0.015 * math.exp(-0.12 * i), 0.0005)
+                        for i in range(n_joints)])
+
+        gc_j = np.zeros(n_joints)
+        n_leg_joints = params.get("n_leg_joints", 12)
+        for i in range(min(n_leg_joints, n_joints)):
+            leg_i = i % 6
+            gc_j[i] = (m / 2.0) * g * 0.08 * math.cos(float(q_j[i])) * math.exp(-0.3 * leg_i)
+
+        ddq_j = (tau - fric * dq_j - gc_j) / M_j
+
+        return np.concatenate([
+            base[3:6],
+            base_acc,
+            dq_j,
+            ddq_j,
+        ])
 
 def rocket_aero_dynamics(state, action, params):
     """
@@ -394,21 +566,193 @@ def rocket_aero_dynamics(state, action, params):
                      omega,
                      (thrust * math.sin(gimbal) * lever) / Iz])
 
+
+def mobile_manipulator_dynamics(state, action, params):
+    """
+    Mobile manipulator: wheeled/tracked base (3 DOF) + N-DOF arm.
+    Total DOF = 3 (base: x, y, theta) + N (arm joints)
+    state: [x, y, theta, vx, vy, omega, q_0..q_{n-1}, dq_0..dq_{n-1}]
+    action: [v_left, v_right, tau_0..tau_{n-1}]  (differential drive + arm)
+    """
+    n_arm = int(params.get("dof", 6))
+    base_state = state[:6]
+    q_arm = state[6:6 + n_arm]
+    dq_arm = state[6 + n_arm:6 + 2 * n_arm]
+
+    m_base = max(params.get("mass", 20.0), 0.1)
+    m_arm = max(params.get("arm_mass", 5.0), 0.01)
+    fric = params.get("friction", 0.4)
+    wb = max(params.get("inertia", 0.3), 0.01)
+    Iz = m_base * wb**2 / 12.0
+
+    vl = action[0] if len(action) > 0 else 0.0
+    vr = action[1] if len(action) > 1 else 0.0
+    theta = base_state[2]
+    v = (vl + vr) / 2.0
+    w = (vr - vl) / wb
+    base_dot = np.array([
+        base_state[3], base_state[4], base_state[5],
+        (v * math.cos(theta) - fric * base_state[3]) / m_base,
+        (v * math.sin(theta) - fric * base_state[4]) / m_base,
+        (w - fric * base_state[5]) / Iz,
+    ])
+
+    tau_arm = np.zeros(n_arm, dtype=float)
+    if len(action) > 2:
+        arr = np.asarray(action[2:2 + n_arm], dtype=float)
+        tau_arm[:len(arr)] = arr
+    M_arm = np.array([max(m_arm * 0.1 * (0.8 ** i), 0.001) for i in range(n_arm)])
+    gc = np.zeros(n_arm)
+    for i in range(min(n_arm, 3)):
+        gc[i] = m_arm * 9.81 * 0.25 * math.cos(float(q_arm[i])) * (0.6 ** i)
+    ddq_arm = (tau_arm + gc - fric * dq_arm) / M_arm
+
+    return np.concatenate([base_dot, dq_arm, ddq_arm])
+
+
+def dual_arm_dynamics(state, action, params):
+    """
+    Dual-arm robot: two N-DOF arms (typically 7+7 = 14 DOF).
+    state: [q_L0..q_L{n-1}, dq_L0..dq_L{n-1}, q_R0..q_R{n-1}, dq_R0..dq_R{n-1}]
+    action: [tau_L0..tau_L{n-1}, tau_R0..tau_R{n-1}]
+    """
+    n = int(params.get("dof", 7))
+    n2 = n * 2
+
+    q_L = state[:n]
+    dq_L = state[n:n2]
+    q_R = state[n2:n2 + n]
+    dq_R = state[n2 + n:n2 * 2]
+
+    tau_L = np.zeros(n, dtype=float)
+    tau_R = np.zeros(n, dtype=float)
+    a = np.asarray(action, dtype=float)
+    tau_L[:min(n, len(a))] = a[:min(n, len(a))]
+    if len(a) > n:
+        tail = a[n:n2]
+        tau_R[:len(tail)] = tail
+
+    m = max(params.get("mass", 3.0), 0.01)
+    fric = params.get("friction", 0.25)
+
+    M = np.array([max(m * 0.12 * (0.8 ** i), 0.001) for i in range(n)])
+    gc = np.zeros(n)
+    for i in range(min(n, 3)):
+        gc[i] = m * 9.81 * 0.3 * math.cos(float(q_L[i])) * (0.6 ** i)
+
+    ddq_L = (tau_L + gc - fric * dq_L) / M
+
+    gc_R = np.zeros(n)
+    for i in range(min(n, 3)):
+        gc_R[i] = m * 9.81 * 0.3 * math.cos(float(q_R[i])) * (0.6 ** i)
+    ddq_R = (tau_R + gc_R - fric * dq_R) / M
+
+    return np.concatenate([dq_L, ddq_L, dq_R, ddq_R])
+
+
+def cable_driven_dynamics(state, action, params):
+    """
+    Cable-driven parallel robot (CDPR) or cable-driven serial robot.
+    Redundant actuation: n_cables >= n_dof.
+    state: [q_0..q_{n-1}, dq_0..dq_{n-1}]
+    action: [f_0..f_{m-1}]
+    """
+    n_dof = int(params.get("dof", 6))
+    n_cables = int(params.get("n_cables", n_dof + 2))
+    q = state[:n_dof]
+    dq = state[n_dof:n_dof * 2]
+    tau = np.zeros(n_cables, dtype=float)
+    a = np.asarray(action, dtype=float)
+    tau[:min(n_cables, len(a))] = a[:min(n_cables, len(a))]
+    tau = np.maximum(tau, 0)
+
+    m = max(params.get("mass", 2.0), 0.01)
+    fric = params.get("friction", 0.1)
+
+    J_flat = params.get("cable_jacobian", None)
+    if J_flat is not None and len(J_flat) == n_cables * n_dof:
+        J = np.array(J_flat).reshape(n_cables, n_dof)
+    else:
+        J = np.zeros((n_cables, n_dof))
+        for i in range(n_cables):
+            J[i, i % n_dof] = 1.0
+
+    gen_forces = J.T @ tau
+
+    M = np.array([max(m * 0.1 * (0.9 ** i), 0.001) for i in range(n_dof)])
+    gc = np.zeros(n_dof)
+    for i in range(min(n_dof, 3)):
+        gc[i] = m * 9.81 * 0.2 * math.cos(float(q[i])) * (0.7 ** i)
+
+    ddq = (gen_forces - gc - fric * dq) / M
+    return np.concatenate([dq, ddq])
+
+
+def exoskeleton_dynamics(state, action, params):
+    """
+    Lower/upper limb exoskeleton: bilateral joint assistance.
+    state: [q_L0..q_L{n-1}, dq_L, q_R0..q_R{n-1}, dq_R, f_L, f_R]
+    action: [tau_assist_L0..tau_assist_L{n-1}, tau_assist_R0..tau_assist_R{n-1}]
+    """
+    n = int(params.get("dof", 5))
+    n2 = n * 2
+    q_L = state[:n]
+    dq_L = state[n:n2]
+    q_R = state[n2:n2 + n]
+    dq_R = state[n2 + n:n2 * 2]
+    f_L = float(state[n2 * 2]) if len(state) > n2 * 2 else 0.0
+    f_R = float(state[n2 * 2 + 1]) if len(state) > n2 * 2 + 1 else 0.0
+
+    tau_L = np.zeros(n, dtype=float)
+    tau_R = np.zeros(n, dtype=float)
+    a = np.asarray(action, dtype=float)
+    tau_L[:min(n, len(a))] = a[:min(n, len(a))]
+    if len(a) > n:
+        tail = a[n:n2]
+        tau_R[:len(tail)] = tail
+
+    m_total = max(params.get("mass", 80.0), 1.0)
+    fric = params.get("friction", 0.6)
+    k_adm = params.get("admittance_k", 100.0)
+
+    M = np.array([max(m_total * 0.04 * (0.75 ** i), 0.01) for i in range(n)])
+
+    tau_human_L = np.ones(n) * f_L * 0.3 / max(n, 1)
+    tau_human_R = np.ones(n) * f_R * 0.3 / max(n, 1)
+
+    gc = np.zeros(n)
+    for i in range(min(n, 3)):
+        gc[i] = m_total * 9.81 * 0.15 * math.cos(float(q_L[i])) * (0.5 ** i)
+
+    ddq_L = (tau_L + tau_human_L - gc - fric * dq_L) / M
+    ddq_R = (tau_R + tau_human_R - gc - fric * dq_R) / M
+
+    df_L = k_adm * (-f_L) * 0.01
+    df_R = k_adm * (-f_R) * 0.01
+
+    return np.concatenate([dq_L, ddq_L, dq_R, ddq_R, [df_L, df_R]])
+
 PLATFORM_DYNAMICS: Dict[str, Tuple[Callable, int, int]] = {
-    "quadrotor":       (quadrotor_dynamics,       13, 4),
-    "fixed_wing":      (fixed_wing_dynamics,       12, 4),
-    "evtol":           (evtol_dynamics,            12, 4),
-    "manipulator_arm": (manipulator_arm_dynamics,  12, 6),
-    "surgical_robot":  (surgical_robot_dynamics,   12, 6),
-    "legged_robot":    (legged_robot_dynamics,     12, 6),
-    "balancing_bot":   (balancing_bot_dynamics,     4, 1),
-    "rocket":          (rocket_dynamics,            6, 2),
-    "ground_rover":    (ground_rover_dynamics,      6, 2),
-    "rover":           (ground_rover_dynamics,      6, 2),
-    "auv":             (auv_dynamics,              12, 4),
-    "satellite":       (satellite_dynamics,         12, 4),
-    "humanoid":        (humanoid_dynamics,          18, 6),
-    "rocket_aero":     (rocket_aero_dynamics,        6, 2),
+    # --- Existing platforms (unchanged) ---
+    "quadrotor":          (quadrotor_dynamics,        13, 4),
+    "fixed_wing":         (fixed_wing_dynamics,        12, 4),
+    "evtol":              (evtol_dynamics,             12, 4),
+    "manipulator_arm":    (manipulator_arm_dynamics,   12, 6),
+    "surgical_robot":     (surgical_robot_dynamics,    12, 6),
+    "legged_robot":       (legged_robot_dynamics,      12, 6),
+    "balancing_bot":      (balancing_bot_dynamics,      4, 1),
+    "rocket":             (rocket_dynamics,              6, 2),
+    "ground_rover":       (ground_rover_dynamics,        6, 2),
+    "rover":              (ground_rover_dynamics,        6, 2),
+    "auv":                (auv_dynamics,               12, 4),
+    "satellite":          (satellite_dynamics,          12, 4),
+    "humanoid":           (humanoid_dynamics,           18, 6),
+    "rocket_aero":        (rocket_aero_dynamics,         6, 2),
+    # --- New platforms ---
+    "mobile_manipulator": (mobile_manipulator_dynamics, 18, 8),
+    "dual_arm":           (dual_arm_dynamics,           28, 14),
+    "cable_driven":       (cable_driven_dynamics,       12, 8),
+    "exoskeleton":        (exoskeleton_dynamics,        22, 10),
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -694,6 +1038,53 @@ class PhysiCore:
         if Q is None: Q=np.eye(state_dim)*cfg.q_scale
         if R is None: R=np.eye(action_dim)*cfg.r_scale
         return cls(cfg,fn,initial_params,Q,R,action_bounds)
+
+    @classmethod
+    def for_platform_dof(cls, platform: str, dof: int,
+                         initial_params: Optional[Dict] = None,
+                         Q: Optional[np.ndarray] = None,
+                         R: Optional[np.ndarray] = None,
+                         action_bounds=None,
+                         control_hz: float = 60.0,
+                         **kw) -> "PhysiCore":
+        """
+        Create a PhysiCore engine for any DOF count on configurable platforms.
+        """
+        VARIABLE_DOF_PLATFORMS = {
+            'manipulator_arm':    lambda n: (n * 2, n),
+            'surgical_robot':     lambda n: (n * 2, n),
+            'legged_robot':       lambda n: (6 + n * 2, n),
+            'humanoid':           lambda n: (6 + n * 2, n),
+            'dual_arm':           lambda n: (n * 4, n * 2),
+            'cable_driven':       lambda n: (n * 2, n + 2),
+            'exoskeleton':        lambda n: (n * 4 + 2, n * 2),
+            'mobile_manipulator': lambda n: (6 + n * 2, 2 + n),
+        }
+
+        if platform not in VARIABLE_DOF_PLATFORMS:
+            return cls.for_platform(platform, initial_params=initial_params,
+                                    Q=Q, R=R, action_bounds=action_bounds,
+                                    control_hz=control_hz)
+
+        if platform not in PLATFORM_DYNAMICS:
+            raise ValueError(f"Platform '{platform}' not in PLATFORM_DYNAMICS")
+
+        fn, _, _ = PLATFORM_DYNAMICS[platform]
+        state_dim, action_dim = VARIABLE_DOF_PLATFORMS[platform](dof)
+
+        params = initial_params or {"mass": 1.0, "friction": 0.3, "inertia": 0.1, "dof": dof}
+        params["dof"] = dof
+
+        cfg = PhysiCoreConfig(
+            platform=platform, state_dim=state_dim, action_dim=action_dim,
+            control_hz=control_hz, initial_params=params,
+        )
+        cfg.cem_samples = 6; cfg.horizon = 5; cfg.cem_iters = 2
+
+        if Q is None: Q = np.eye(state_dim) * cfg.q_scale
+        if R is None: R = np.eye(action_dim) * cfg.r_scale
+
+        return cls(cfg, fn, params, Q, R, action_bounds)
 
     def step(self, state, x_ref):
         t0=time.perf_counter()

@@ -1,0 +1,14 @@
+# PhysiCore — Cable-Driven Robot Config (CDPR or cable-driven serial)
+name: My Cable Robot
+platform: cable_driven
+connection: ros2
+mass: 2.0         # end-effector mass (kg)
+dof: 6            # end-effector DOF (3 translational, 3 rotational)
+n_cables: 8       # number of cables (must be >= dof + 1 for full wrench)
+friction: 0.1
+ros2_distro: humble
+joint_topic: /cable_tensions
+control_hz: 100.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true

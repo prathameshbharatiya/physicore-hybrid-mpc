@@ -1,0 +1,14 @@
+# PhysiCore — Dual Arm Robot Config (e.g., ABB YuMi, KUKA LBR, Baxter)
+name: My Dual Arm Robot
+platform: dual_arm
+connection: ros2
+mass: 3.0         # per-arm mass (kg) — end effector + max payload
+dof: 7            # DOF per arm: 7 for Franka/iiwa/YuMi, 6 for UR/KUKA
+friction: 0.25
+inertia: 0.1
+ros2_distro: humble
+joint_topic: /joint_states
+control_hz: 60.0
+use_registry: true
+opt_in_telemetry: false
+sentinel_enabled: true

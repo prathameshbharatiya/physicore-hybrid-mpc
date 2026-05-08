@@ -9,7 +9,8 @@ const ELITES = 4;
 const ITERATIONS = 1;
 const UNCERTAINTY_LAMBDA = 3.0; 
 
-let previousOptimalSequence: ControlInput[] = Array(HORIZON).fill([0, 0] as ControlInput);
+let previousOptimalSequence: ControlInput[] = Array(HORIZON).fill([] as ControlInput);
+let _cachedDof = 2;
 
 /**
  * Model Predictive Control (MPC) via Sampling-based Optimization (CEM)
@@ -17,13 +18,25 @@ let previousOptimalSequence: ControlInput[] = Array(HORIZON).fill([0, 0] as Cont
  */
 export const computeMPCAction = (
   x0: StateVector,
-  target: [number, number],
+  target: number[],
   p: PhysicalParams,
-  weights: { q: number; r: number } = { q: 1.0, r: 0.1 }
+  weights: { q: number; r: number } = { q: 1.0, r: 0.1 },
+  dof?: number
 ): { action: ControlInput, ensembleUncertainty: number } => {
-  
-  let currentMean: ControlInput[] = [...previousOptimalSequence.slice(1), [0, 0] as ControlInput];
-  let currentStd: ControlInput[] = Array(HORIZON).fill([0.15, 0.15] as ControlInput);
+  const actionDim = dof ?? (target.length > 2 ? target.length : 2);
+
+  // Reset warm start if DOF changed
+  if (actionDim !== _cachedDof) {
+    previousOptimalSequence = Array(HORIZON).fill(new Array(actionDim).fill(0));
+    _cachedDof = actionDim;
+  }
+
+  const last = previousOptimalSequence.slice(1);
+  let currentMean: ControlInput[] = [
+    ...last.map((a) => (a.length === actionDim ? [...a] : new Array(actionDim).fill(0))),
+    new Array(actionDim).fill(0)
+  ];
+  let currentStd: ControlInput[] = Array.from({ length: HORIZON }, () => new Array(actionDim).fill(0.15));
 
   let totalUncertaintyAtStep0 = 0;
 
@@ -36,10 +49,9 @@ export const computeMPCAction = (
       let xt = [...x0] as StateVector;
 
       for (let h = 0; h < HORIZON; h++) {
-        const a: ControlInput = [
-          currentMean[h][0] + (Math.random() - 0.5) * 2 * currentStd[h][0],
-          currentMean[h][1] + (Math.random() - 0.5) * 2 * currentStd[h][1]
-        ];
+        const a: ControlInput = Array.from({ length: actionDim }, (_, j) =>
+          (currentMean[h][j] ?? 0) + (Math.random() - 0.5) * 2 * (currentStd[h][j] ?? 0.15)
+        );
         sequence.push(a);
 
         // Perform physics step using RK4
@@ -55,8 +67,11 @@ export const computeMPCAction = (
         xt = xPhys.map((v, i) => v + residual[i]) as StateVector;
         
         // Compute quadratic cost: State deviation + Control effort + Epistemic uncertainty penalty
-        const distSq = Math.pow(xt[0] - target[0], 2) + Math.pow(xt[1] - target[1], 2);
-        const effortSq = Math.pow(a[0], 2) + Math.pow(a[1], 2);
+        const distSq = target.reduce((sum, t, i) => {
+          const xv = xt[i] ?? 0;
+          return sum + Math.pow(xv - t, 2);
+        }, 0);
+        const effortSq = a.reduce((s, v) => s + v * v, 0);
         
         cost += distSq * weights.q + effortSq * weights.r + variance * UNCERTAINTY_LAMBDA;
       }
@@ -69,13 +84,15 @@ export const computeMPCAction = (
     
     // Refine the action distribution parameters (mean and standard deviation) from elite samples
     for (let h = 0; h < HORIZON; h++) {
-      const meanX = elites.reduce((acc, e) => acc + e.sequence[h][0], 0) / ELITES;
-      const meanY = elites.reduce((acc, e) => acc + e.sequence[h][1], 0) / ELITES;
-      currentMean[h] = [meanX, meanY];
-      
-      const varX = elites.reduce((acc, e) => acc + Math.pow(e.sequence[h][0] - meanX, 2), 0) / ELITES;
-      const varY = elites.reduce((acc, e) => acc + Math.pow(e.sequence[h][1] - meanY, 2), 0) / ELITES;
-      currentStd[h] = [Math.sqrt(varX) + 0.01, Math.sqrt(varY) + 0.01];
+      const meanVec = Array.from({ length: actionDim }, (_, j) =>
+        elites.reduce((acc, e) => acc + (e.sequence[h][j] ?? 0), 0) / ELITES
+      );
+      currentMean[h] = meanVec;
+
+      const varVec = Array.from({ length: actionDim }, (_, j) =>
+        elites.reduce((acc, e) => acc + Math.pow((e.sequence[h][j] ?? 0) - meanVec[j], 2), 0) / ELITES
+      );
+      currentStd[h] = varVec.map((v) => Math.sqrt(v) + 0.01);
     }
   }
 

@@ -5,15 +5,30 @@ export enum SimMode {
   BENCHMARK_SHIFT = 'BENCHMARK_SHIFT'
 }
 
-/** 
- * State Vector [x, y, vx, vy, theta, omega]
+/**
+ * State Vector — variable length depending on platform and DOF.
+ * Examples:
+ *   balancing_bot:   length 4   [pitch, pitch_rate, x, v]
+ *   ground_rover:    length 6   [x, y, theta, vx, vy, omega]
+ *   quadrotor:       length 13  [x,y,z, vx,vy,vz, qw,qx,qy,qz, p,q,r]
+ *   manipulator(6):  length 12  [q0..q5, dq0..dq5]
+ *   manipulator(7):  length 14  [q0..q6, dq0..dq6]
+ *   legged(12 DOF):  length 30  [base(6), q0..q11, dq0..dq11]
+ *   humanoid(36DOF): length 78  [base(6), q0..q35, dq0..dq35]
  */
-export type StateVector = [number, number, number, number, number, number];
+export type StateVector = number[];
 
 /**
- * Control Input [Fx, Fy]
+ * Control Input — variable length depending on platform and DOF.
+ * Examples:
+ *   balancing_bot:  length 1   [torque]
+ *   ground_rover:   length 2   [v_left, v_right]
+ *   quadrotor:      length 4   [thrust, roll_cmd, pitch_cmd, yaw_cmd]
+ *   manipulator(6): length 6   [tau0..tau5]
+ *   manipulator(7): length 7   [tau0..tau6]
+ *   dual_arm(7+7):  length 14  [tau_L0..tau_L6, tau_R0..tau_R6]
  */
-export type ControlInput = [number, number];
+export type ControlInput = number[];
 
 export interface PhysicalParams {
   mass: number;
@@ -21,11 +36,35 @@ export interface PhysicalParams {
   gravity: number;
   textile_k: number;
   damping: number;
+  // High-DOF extensions
+  dof?: number;
+  link_masses?: number[];
+  link_lengths?: number[];
+  joint_frictions?: number[];
+  link_inertias?: number[];
+}
+
+export interface PlatformDOFConfig {
+  platform: string;
+  dof: number;
+  state_dim: number;
+  action_dim: number;
+  joint_names?: string[];
+  joint_limits_lo?: number[];
+  joint_limits_hi?: number[];
+}
+
+export interface JointState {
+  positions: number[];
+  velocities: number[];
+  efforts: number[];
+  names: string[];
+  n_joints: number;
 }
 
 export interface SimState {
   current: StateVector;
-  target: [number, number];
+  target: number[];
   estimatedParams: PhysicalParams;
   predictionError: number;
   controlEffort: number;
@@ -34,6 +73,10 @@ export interface SimState {
   controlAction: ControlInput;
   uncertainty: number;
   isBenchmarking: boolean;
+  // High-DOF additions
+  jointState?: JointState;
+  platformDOF?: PlatformDOFConfig;
+  dof?: number;
 }
 
 export interface TelemetryPoint {

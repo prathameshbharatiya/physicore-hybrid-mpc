@@ -83,6 +83,10 @@ PLATFORM_PROFILES = {
     "ros2_ground_rover":     {"mode":"ros2",         "baud":0,      "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "engine_platform":"ground_rover",   "default_connection":"ros2"},
     "ros2_auv":              {"mode":"ros2",         "baud":0,      "vehicle_type":"AUV",          "domain":"ROBOTICS",  "engine_platform":"auv",            "default_connection":"ros2"},
     "ros2_surgical":         {"mode":"ros2",         "baud":0,      "vehicle_type":"SURGICAL",    "domain":"ROBOTICS",  "engine_platform":"surgical_robot", "default_connection":"ros2"},
+    "ros2_mobile_manipulator": {"mode":"ros2", "baud":0, "vehicle_type":"MOBILE_MANIPULATOR", "domain":"ROBOTICS", "engine_platform":"mobile_manipulator", "default_connection":"ros2"},
+    "ros2_dual_arm":           {"mode":"ros2", "baud":0, "vehicle_type":"DUAL_ARM",           "domain":"ROBOTICS", "engine_platform":"dual_arm",           "default_connection":"ros2"},
+    "ros2_exoskeleton":        {"mode":"ros2", "baud":0, "vehicle_type":"EXOSKELETON",        "domain":"ROBOTICS", "engine_platform":"exoskeleton",        "default_connection":"ros2"},
+    "ros2_cable_driven":       {"mode":"ros2", "baud":0, "vehicle_type":"CABLE_DRIVEN",       "domain":"ROBOTICS", "engine_platform":"cable_driven",       "default_connection":"ros2"},
     "balancing_bot_arduino": {"mode":"robot_serial", "baud":115200, "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "engine_platform":"balancing_bot",  "default_connection":"COM3"},
     "custom_rocket_fc":      {"mode":"robot_serial", "baud":115200, "vehicle_type":"ROCKET",      "domain":"ROCKETS",   "engine_platform":"rocket",         "default_connection":"COM3"},
     "ground_rover_serial":   {"mode":"robot_serial", "baud":115200, "vehicle_type":"GROUND_ROVER","domain":"ROBOTICS",  "engine_platform":"ground_rover",   "default_connection":"COM3"},
@@ -132,6 +136,12 @@ class TelemetryState:
         self.estimated_friction = 0.0
         self.physicore_active = False
         self.step_count     = 0
+        # High-DOF joint state (populated by ROS2 joint_cb)
+        self.joint_positions:  list = []
+        self.joint_velocities: list = []
+        self.joint_efforts:    list = []
+        self.joint_names:      list = []
+        self.n_joints:         int  = 0
 
     def to_dict(self) -> dict:
         return {
@@ -172,6 +182,9 @@ class TelemetryState:
                 "uncertainty":      round(self.uncertainty, 6),
                 "physicore_active": self.physicore_active,
                 "step_count":       self.step_count,
+                "joint_positions":  self.joint_positions[:32] if self.joint_positions else [],
+                "joint_velocities": self.joint_velocities[:32] if self.joint_velocities else [],
+                "n_joints":         self.n_joints,
             }
         }
 
@@ -181,39 +194,90 @@ engine            = None   # PhysiCore engine instance — initialized on startu
 control_active    = False  # Set by dashboard "ACTIVE CONTROL" button
 x_ref             = None   # Target state from dashboard
 
-def state_to_vector(platform: str) -> np.ndarray:
-    """Convert current telemetry to engine state vector for the given platform."""
-    if platform == 'balancing_bot':
+def state_to_vector(platform: str, n_joints: int = 0) -> np.ndarray:
+    """Convert current telemetry to engine state vector."""
+    import math as _math
+
+    # High-DOF joint platforms — read from joint_positions global if available
+    if platform in ('manipulator_arm', 'surgical_robot', 'dual_arm',
+                    'cable_driven', 'exoskeleton'):
+        n = n_joints if n_joints > 0 else 6
+        jp = getattr(state, 'joint_positions', None)
+        jv = getattr(state, 'joint_velocities', None)
+        if jp is not None and len(jp) >= n:
+            q = np.array(jp[:n])
+            dq = np.array(jv[:n]) if jv and len(jv) >= n else np.zeros(n)
+            return np.concatenate([q, dq])
+        return np.zeros(n * 2)
+
+    elif platform in ('legged_robot', 'humanoid'):
+        n = n_joints if n_joints > 0 else 0
+        if n > 6:
+            jp = getattr(state, 'joint_positions', None)
+            jv = getattr(state, 'joint_velocities', None)
+            base = np.array([0, 0, state.altitude,
+                             state.velocity_x, state.velocity_y, state.velocity_z])
+            if jp is not None and len(jp) >= n:
+                q = np.array(jp[:n])
+                dq = np.array(jv[:n]) if jv and len(jv) >= n else np.zeros(n)
+                return np.concatenate([base, q, dq])
+            return np.zeros(6 + n * 2)
+        else:
+            return np.array([0, 0, state.altitude,
+                             state.velocity_x, state.velocity_y, state.velocity_z,
+                             _math.radians(state.roll), _math.radians(state.pitch), _math.radians(state.yaw),
+                             state.gyro_x, state.gyro_y, state.gyro_z])
+
+    elif platform == 'mobile_manipulator':
+        n = n_joints if n_joints > 0 else 6
+        jp = getattr(state, 'joint_positions', None)
+        jv = getattr(state, 'joint_velocities', None)
+        base = np.array([0, 0, _math.radians(state.yaw),
+                         state.velocity_x, state.velocity_y, state.gyro_z])
+        if jp is not None and len(jp) >= n:
+            q = np.array(jp[:n])
+            dq = np.array(jv[:n]) if jv and len(jv) >= n else np.zeros(n)
+            return np.concatenate([base, q, dq])
+        return np.zeros(6 + n * 2)
+
+    elif platform == 'balancing_bot':
         return np.array([
-            math.radians(state.pitch),  # pitch in radians
-            math.radians(state.gyro_x), # pitch rate in rad/s — gyro_x is pitch axis on MPU6050
-            0.0,                         # x position (not available from IMU)
-            state.velocity_x,            # x velocity
+            _math.radians(state.pitch),
+            _math.radians(state.gyro_x),
+            0.0,
+            state.velocity_x,
         ])
     elif platform in ('quadrotor', 'evtol', 'fixed_wing'):
-        roll_r  = math.radians(state.roll)
-        pitch_r = math.radians(state.pitch)
-        yaw_r   = math.radians(state.yaw)
+        roll_r = _math.radians(state.roll)
+        pitch_r = _math.radians(state.pitch)
+        yaw_r = _math.radians(state.yaw)
         if platform == 'quadrotor':
             from physicore.core.engine import euler_to_quat
             q = euler_to_quat(roll_r, pitch_r, yaw_r)
-            return np.array([0,0,state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
-                             q[0],q[1],q[2],q[3], state.gyro_x,state.gyro_y,state.gyro_z])
-        return np.array([0,0,state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
-                         roll_r,pitch_r,yaw_r, state.gyro_x,state.gyro_y,state.gyro_z])
+            return np.array([0, 0, state.altitude,
+                             state.velocity_x, state.velocity_y, state.velocity_z,
+                             q[0], q[1], q[2], q[3],
+                             state.gyro_x, state.gyro_y, state.gyro_z])
+        return np.array([0, 0, state.altitude,
+                         state.velocity_x, state.velocity_y, state.velocity_z,
+                         roll_r, pitch_r, yaw_r,
+                         state.gyro_x, state.gyro_y, state.gyro_z])
     elif platform == 'rocket':
-        return np.array([0, state.altitude, state.velocity_x, state.velocity_z, 1.0, math.radians(state.pitch)])
+        return np.array([0, state.altitude, state.velocity_x, state.velocity_z,
+                         1.0, _math.radians(state.pitch)])
     elif platform in ('ground_rover', 'rover'):
-        return np.array([0, 0, math.radians(state.yaw), state.velocity_x, state.velocity_y, state.gyro_z])
+        return np.array([0, 0, _math.radians(state.yaw),
+                         state.velocity_x, state.velocity_y, state.gyro_z])
     elif platform == 'auv':
-        return np.array([0,0,-state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
-                         math.radians(state.roll),math.radians(state.pitch),math.radians(state.yaw),
-                         state.gyro_x,state.gyro_y,state.gyro_z])
+        return np.array([0, 0, -state.altitude,
+                         state.velocity_x, state.velocity_y, state.velocity_z,
+                         _math.radians(state.roll), _math.radians(state.pitch), _math.radians(state.yaw),
+                         state.gyro_x, state.gyro_y, state.gyro_z])
     else:
-        # Generic 12-dim
-        return np.array([0,0,state.altitude, state.velocity_x,state.velocity_y,state.velocity_z,
-                         math.radians(state.roll),math.radians(state.pitch),math.radians(state.yaw),
-                         state.gyro_x,state.gyro_y,state.gyro_z])
+        return np.array([0, 0, state.altitude,
+                         state.velocity_x, state.velocity_y, state.velocity_z,
+                         _math.radians(state.roll), _math.radians(state.pitch), _math.radians(state.yaw),
+                         state.gyro_x, state.gyro_y, state.gyro_z])
 
 # ── MAVLink reader ─────────────────────────────────────────────────────────────
 def mavlink_reader(connection_string: str, baud: int):
@@ -291,7 +355,8 @@ def mavlink_reader(connection_string: str, baud: int):
             # PhysiCore engine step
             if engine and control_active:
                 try:
-                    current_x = state_to_vector(engine.cfg.platform)
+                    current_x = state_to_vector(engine.cfg.platform,
+                                                n_joints=state.n_joints or engine.cfg.action_dim)
                     ref       = np.array(x_ref) if x_ref else np.zeros(engine.cfg.state_dim)
                     ref       = ref[:engine.cfg.state_dim] if len(ref) >= engine.cfg.state_dim else np.pad(ref, (0, engine.cfg.state_dim - len(ref)))
                     step      = engine.step(current_x, ref)
@@ -360,7 +425,8 @@ def robot_serial_reader(connection_string: str, baud: int):
                     # ── PHYSICORE ACTIVE CONTROL ──────────────────────────────
                     if engine and control_active:
                         try:
-                            current_x = state_to_vector(engine.cfg.platform)
+                            current_x = state_to_vector(engine.cfg.platform,
+                                                        n_joints=state.n_joints or engine.cfg.action_dim)
                             ref       = np.array(x_ref) if x_ref else np.zeros(engine.cfg.state_dim)
                             if len(ref) < engine.cfg.state_dim:
                                 ref = np.pad(ref, (0, engine.cfg.state_dim - len(ref)))
@@ -474,13 +540,22 @@ def ros2_reader(topic: str):
             state.timestamp = time.time()
 
         def joint_cb(self, msg):
-            if len(msg.position) >= 1: state.pitch = math.degrees(msg.position[0])
-            if len(msg.position) >= 2: state.roll  = math.degrees(msg.position[1])
-            if len(msg.velocity)  >= 1: state.gyro_x = math.degrees(msg.velocity[0])
-            if len(msg.velocity)  >= 2: state.gyro_y = math.degrees(msg.velocity[1])
-            if len(msg.effort)    >= 1: state.motor_l = msg.effort[0]
-            if len(msg.effort)    >= 2: state.motor_r = msg.effort[1]
-            state.connected = True; state.timestamp = time.time()
+            """Full joint state — supports arbitrary DOF."""
+            n = len(msg.name) if msg.name else len(msg.position)
+            state.joint_names = list(msg.name) if msg.name else [f"joint_{i}" for i in range(n)]
+            state.joint_positions = [float(p) for p in msg.position]
+            state.joint_velocities = [float(v) for v in msg.velocity] if msg.velocity else [0.0] * n
+            state.joint_efforts = [float(e) for e in msg.effort] if msg.effort else [0.0] * n
+            state.n_joints = n
+            # Backward-compat: keep old pitch/roll fields for simple bots
+            if n >= 1: state.pitch = math.degrees(msg.position[0])
+            if n >= 2: state.roll = math.degrees(msg.position[1])
+            if n >= 1: state.gyro_x = math.degrees(msg.velocity[0]) if msg.velocity else 0.0
+            if n >= 2: state.gyro_y = math.degrees(msg.velocity[1]) if msg.velocity and len(msg.velocity) > 1 else 0.0
+            if n >= 1: state.motor_l = msg.effort[0] if msg.effort else 0.0
+            if n >= 2: state.motor_r = msg.effort[1] if msg.effort and len(msg.effort) > 1 else 0.0
+            state.connected = True
+            state.timestamp = time.time()
 
     rclpy.init()
     rclpy.spin(BridgeNode())
@@ -710,7 +785,6 @@ if __name__ == "__main__":
         import sys; sys.exit(0)
 
     # Handle --config: load robot config from YAML
-    global _robot_config
     if hasattr(args, 'config') and args.config and HAS_REGISTRY:
         try:
             _robot_config = RobotConfig.from_yaml(args.config)
@@ -751,7 +825,17 @@ if __name__ == "__main__":
                 if _robot_config:
                     init_params = _robot_config.initial_params
 
-                engine = PhysiCore.for_platform(ep, init_params)
+                from physicore.core.engine import PhysiCore, PLATFORM_DYNAMICS
+                # Use for_platform_dof() for variable-DOF platforms
+                if _robot_config and _robot_config.is_high_dof:
+                    engine = PhysiCore.for_platform_dof(
+                        ep,
+                        dof=_robot_config.effective_dof,
+                        initial_params=init_params,
+                    )
+                    print(f"[ENGINE] High-DOF mode: platform='{ep}' dof={_robot_config.effective_dof} state_dim={engine.cfg.state_dim} action_dim={engine.cfg.action_dim}")
+                else:
+                    engine = PhysiCore.for_platform(ep, init_params)
 
                 # Load saved model from registry if available
                 registry_key = ep
@@ -781,7 +865,6 @@ if __name__ == "__main__":
                     print(f"[Extensions] Auto-load error: {_ext_err}")
 
                 # Start telemetry if opted in
-                global _telemetry_mgr
                 if HAS_REGISTRY and _robot_config and _robot_config.opt_in_telemetry:
                     hw_class = f"{_robot_config.imu}_{_robot_config.motor_driver}_{_robot_config.mcu}".lower()
                     _telemetry_mgr = get_telemetry(enabled=True)

@@ -69,6 +69,22 @@ PLATFORM_ALIASES = {
     "auv":                    "ros2_auv",
     "underwater":             "ros2_auv",
     "surgical":               "ros2_surgical",
+    # Mobile manipulator
+    "mobile_manipulator":    "mobile_manipulator",
+    "mobile_arm":            "mobile_manipulator",
+    "spot_arm":              "mobile_manipulator",
+    # Dual arm
+    "dual_arm":              "dual_arm",
+    "bimanual":              "dual_arm",
+    "yumi":                  "dual_arm",
+    # Cable driven
+    "cable_driven":          "cable_driven",
+    "cdpr":                  "cable_driven",
+    "cable_robot":           "cable_driven",
+    # Exoskeleton
+    "exoskeleton":           "exoskeleton",
+    "exo":                   "exoskeleton",
+    "orthosis":              "exoskeleton",
     # Serial
     "rocket":                 "custom_rocket_fc",
     "sounding_rocket":        "custom_rocket_fc",
@@ -90,6 +106,10 @@ ENGINE_PLATFORM = {
     "ros2_surgical":          "surgical_robot",
     "custom_rocket_fc":       "rocket",
     "satellite_serial":       "satellite",
+    "mobile_manipulator":    "mobile_manipulator",
+    "dual_arm":              "dual_arm",
+    "cable_driven":          "cable_driven",
+    "exoskeleton":           "exoskeleton",
 }
 
 
@@ -122,6 +142,12 @@ class RobotConfig:
     imu:         str         = "MPU6050"
     motor_driver:str         = "L298N"
     mcu:         str         = "Arduino Uno"
+    # Joint configuration (for multi-DOF platforms)
+    dof:         int          = 0
+    joint_names: List[str]    = field(default_factory=list)
+    joint_limits_lo: List[float] = field(default_factory=list)
+    joint_limits_hi: List[float] = field(default_factory=list)
+    joint_types: List[str]    = field(default_factory=list)
 
     # PhysiCore behaviour
     control_hz:  float       = 60.0
@@ -180,8 +206,38 @@ class RobotConfig:
     def is_ros2(self) -> bool:
         return self.bridge_platform in (
             "ros2_manipulator", "ros2_legged",
-            "ros2_ground_rover", "ros2_auv", "ros2_surgical"
+            "ros2_ground_rover", "ros2_auv", "ros2_surgical",
+            "mobile_manipulator", "dual_arm", "cable_driven", "exoskeleton"
         )
+
+    @property
+    def is_high_dof(self) -> bool:
+        """True if this platform uses variable DOF and needs for_platform_dof()."""
+        return self.dof > 6 or self.engine_platform in (
+            'manipulator_arm', 'surgical_robot', 'legged_robot',
+            'humanoid', 'mobile_manipulator', 'dual_arm',
+            'cable_driven', 'exoskeleton',
+        )
+
+    @property
+    def effective_dof(self) -> int:
+        """Resolved DOF: explicit if set, else platform default."""
+        if self.dof > 0:
+            return self.dof
+        defaults = {
+            'manipulator_arm': 6, 'surgical_robot': 6, 'legged_robot': 12,
+            'humanoid': 36, 'mobile_manipulator': 6, 'dual_arm': 14,
+            'cable_driven': 6, 'exoskeleton': 10,
+        }
+        return defaults.get(self.engine_platform, 6)
+
+    @property
+    def joint_action_bounds(self):
+        """Returns (lo, hi) arrays from joint_limits if set."""
+        if self.joint_limits_lo and self.joint_limits_hi:
+            import numpy as _np
+            return (_np.array(self.joint_limits_lo), _np.array(self.joint_limits_hi))
+        return None
 
     @property
     def resolved_connection(self) -> str:
@@ -229,6 +285,7 @@ class RobotConfig:
             "connection", "baud", "timeout",
             "mass", "friction", "inertia",
             "imu", "motor_driver", "mcu",
+            "dof", "joint_names", "joint_limits_lo", "joint_limits_hi", "joint_types",
             "control_hz", "wind",
             "use_registry", "opt_in_telemetry",
             "sentinel_enabled", "max_torque",
@@ -258,8 +315,20 @@ class RobotConfig:
 
     @classmethod
     def ros2_arm(cls, dof=6, mass=2.0, **kw) -> "RobotConfig":
-        return cls(platform="ros2_arm", mass=mass,
-                   extra={"dof": dof}, **kw)
+        return cls(platform="ros2_arm", mass=mass, dof=dof, **kw)
+
+    @classmethod
+    def mobile_manipulator(cls, base_connection="auto", arm_dof=6, mass=20.0, **kw) -> "RobotConfig":
+        return cls(platform="mobile_manipulator", connection=base_connection,
+                   mass=mass, dof=arm_dof, **kw)
+
+    @classmethod
+    def dual_arm(cls, dof_per_arm=7, mass=30.0, **kw) -> "RobotConfig":
+        return cls(platform="dual_arm", mass=mass, dof=dof_per_arm, **kw)
+
+    @classmethod
+    def exoskeleton(cls, dof_per_limb=5, human_mass=75.0, **kw) -> "RobotConfig":
+        return cls(platform="exoskeleton", mass=human_mass, dof=dof_per_limb, **kw)
 
     @classmethod
     def rocket(cls, connection="auto", dry_mass=5.0, **kw) -> "RobotConfig":
@@ -351,6 +420,51 @@ dof: 6
 control_hz: 60.0
 use_registry: true
 opt_in_telemetry: false
+""",
+    "mobile_manipulator": """\
+# PhysiCore — Mobile Manipulator Config
+name: My Mobile Manipulator
+platform: mobile_manipulator
+connection: ros2
+mass: 20.0
+arm_mass: 5.0
+dof: 6
+friction: 0.4
+inertia: 0.3
+ros2_distro: humble
+base_topic: /cmd_vel
+joint_topic: /joint_states
+control_hz: 50.0
+use_registry: true
+""",
+    "dual_arm": """\
+# PhysiCore — Dual Arm Config
+name: My Dual Arm Robot
+platform: dual_arm
+connection: ros2
+mass: 3.0
+dof: 7
+friction: 0.25
+inertia: 0.1
+ros2_distro: humble
+joint_topic: /joint_states
+control_hz: 60.0
+use_registry: true
+""",
+    "exoskeleton": """\
+# PhysiCore — Exoskeleton Config
+name: My Exoskeleton
+platform: exoskeleton
+connection: ros2
+mass: 80.0
+exo_mass: 12.0
+dof: 5
+friction: 0.6
+admittance_k: 100.0
+ros2_distro: humble
+control_hz: 200.0
+use_registry: true
+sentinel_enabled: true
 """,
 }
 
