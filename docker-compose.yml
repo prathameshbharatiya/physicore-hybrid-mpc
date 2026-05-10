@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PHYSICORE_HOST=0.0.0.0
+      - PHYSICORE_PORT=8000
+      # Set your API keys via a .env file or environment — never hardcode
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+      # - VITE_FIREBASE_API_KEY=${VITE_FIREBASE_API_KEY}
+    volumes:
+      # Persist learned parameters across container restarts
+      - physicore_registry:/root/.physicore/registry
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Optional: Redis for Round 3 fleet persistence ──────────────────────────
+  # Uncomment when fleet state persistence across restarts is needed.
+  #
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   command: redis-server --appendonly yes
+  #   restart: unless-stopped
+
+volumes:
+  physicore_registry:
+    driver: local
+  # redis_data:
+  #   driver: local

@@ -468,7 +468,7 @@ const COLORS = {
 };
 
 // --- TYPES ---
-type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper';
+type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper' | 'dashboard';
 type ProjectTab = 'integrate' | 'build' | 'debug' | 'live';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
@@ -7262,7 +7262,7 @@ class FrictionLogger(PhysiCoreExtension):
               <SimulationCanvas 
                 mode={simMode}
                 onStateUpdate={setSimState}
-                target={simState.target}
+                target={simState.target as [number, number]}
                 controlAction={simState.controlAction}
                 physicsPriors={simState.estimatedParams}
               />

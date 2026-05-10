@@ -994,6 +994,120 @@ async def sentinel_faults():
             "count": len(engine_state.sentinel.fault_log)}
 
 
+# ── Fleet endpoints ────────────────────────────────────────────────────────────
+
+try:
+    from physicore.core.fleet import FleetManager, FleetRobotSpec
+    _fleet = FleetManager()
+    HAS_FLEET = True
+except ImportError:
+    HAS_FLEET = False
+    _fleet = None
+
+
+class FleetAddRequest(BaseModel):
+    robot_id: str
+    platform: Optional[str] = None
+    urdf_path: Optional[str] = None
+    control_hz: float = 60.0
+
+
+@app.get("/fleet/health")
+async def fleet_health():
+    """Return health snapshot for all robots in the fleet."""
+    if not HAS_FLEET or _fleet is None:
+        raise HTTPException(503, "Fleet manager not available")
+    health = _fleet.health()
+    robots_out: Dict[str, Any] = {}
+    for rid, h in health.items():
+        robot = _fleet._robots.get(rid)
+        params: Dict[str, float] = {}
+        residual_norm = 0.0
+        uncertainty = 0.0
+        loop_time_ms = 0.0
+        if robot is not None:
+            try:
+                d = robot.engine.diagnostics_full
+                params = d.get("params", {})
+                residual_norm = float(d.get("residual_norm", 0.0))
+                uncertainty = float(d.get("uncertainty", 0.0))
+                loop_time_ms = float(d.get("loop_time_ms", 0.0))
+            except Exception:
+                pass
+        robots_out[rid] = {
+            "robot_id": rid,
+            "platform": getattr(robot, "platform", "unknown") if robot else "unknown",
+            "status": h.status,
+            "step_count": h.step_count,
+            "loop_time_ms": loop_time_ms,
+            "residual_norm": residual_norm,
+            "uncertainty": uncertainty,
+            "params": params,
+            "tags": list(getattr(robot, "tags", set())),
+        }
+    healthy = sum(1 for h in health.values() if h.status == "healthy")
+    degraded = sum(1 for h in health.values() if h.status == "degraded")
+    critical = sum(1 for h in health.values() if h.status == "critical")
+    return {
+        "total": len(health),
+        "healthy": healthy,
+        "degraded": degraded,
+        "critical": critical,
+        "robots": robots_out,
+        "timestamp": time.time(),
+    }
+
+
+@app.post("/fleet/add")
+async def fleet_add(req: FleetAddRequest):
+    """Add a robot to the fleet by platform name or URDF path."""
+    if not HAS_FLEET or _fleet is None:
+        raise HTTPException(503, "Fleet manager not available")
+    try:
+        if req.urdf_path:
+            _fleet.add_from_urdf(req.robot_id, req.urdf_path, control_hz=req.control_hz)
+            return {"status": "added", "robot_id": req.robot_id, "source": "urdf"}
+        elif req.platform:
+            if req.platform not in PLATFORM_DYNAMICS:
+                raise HTTPException(400, f"Unknown platform '{req.platform}'")
+            from physicore.core.engine import PhysiCore
+            engine = PhysiCore.for_platform(req.platform, control_hz=req.control_hz)
+            _fleet.add_from_config(req.robot_id, engine, req.platform)
+            return {"status": "added", "robot_id": req.robot_id, "source": "platform"}
+        else:
+            raise HTTPException(400, "Provide either 'platform' or 'urdf_path'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to add robot: {e}")
+
+
+@app.delete("/fleet/robot/{robot_id}")
+async def fleet_remove(robot_id: str):
+    """Remove a robot from the fleet."""
+    if not HAS_FLEET or _fleet is None:
+        raise HTTPException(503, "Fleet manager not available")
+    try:
+        _fleet.remove(robot_id)
+        return {"status": "removed", "robot_id": robot_id}
+    except KeyError:
+        raise HTTPException(404, f"Robot '{robot_id}' not in fleet")
+
+
+@app.get("/fleet/robots")
+async def fleet_list():
+    """List all robot IDs in the fleet."""
+    if not HAS_FLEET or _fleet is None:
+        raise HTTPException(503, "Fleet manager not available")
+    return {"robots": _fleet.list_robots(), "count": len(_fleet.list_robots())}
+
+
+@app.get("/health")
+async def health_check():
+    """Simple health check for load balancers and scripts/healthcheck.sh."""
+    return {"status": "ok", "version": "1.1.0", "timestamp": time.time()}
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn

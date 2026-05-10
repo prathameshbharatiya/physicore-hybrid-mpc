@@ -107,3 +107,147 @@ export const clampToJointLimits = (
   if (!limitsLo || !limitsHi) return action;
   return action.map((v, i) => Math.max(limitsLo[i] ?? -Infinity, Math.min(limitsHi[i] ?? Infinity, v)));
 };
+
+// ── WebSocket with exponential backoff reconnect ─────────────────────────────
+
+export interface ManagedWebSocketOptions {
+  onMessage: (data: unknown) => void;
+  onStatusChange?: (status: 'connected' | 'reconnecting' | 'disconnected') => void;
+  onOpen?: () => void;
+  maxRetryMs?: number; // default 30000
+}
+
+export class ManagedWebSocket {
+  // Manages a WebSocket with automatic exponential backoff reconnect.
+  // Delays: 1s, 2s, 4s, 8s, 16s, 30s (capped at maxRetryMs).
+  // Call connect() to start, close() to stop permanently.
+  private ws: WebSocket | null = null;
+  private retryDelay = 1000;
+  private readonly maxRetry: number;
+  private stopped = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly url: string;
+  private readonly opts: ManagedWebSocketOptions;
+
+  constructor(url: string, opts: ManagedWebSocketOptions) {
+    this.url = url;
+    this.opts = opts;
+    this.maxRetry = opts.maxRetryMs ?? 30000;
+  }
+
+  connect(): void {
+    if (this.stopped) return;
+
+    // Clear any pending retry timer
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+
+    // Close existing socket if open
+    if (this.ws !== null) {
+      // Remove handlers to avoid double-triggering reconnect logic
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(this.url);
+    } catch {
+      // Construction failed (e.g. invalid URL), treat as a connection error
+      this.opts.onStatusChange?.('reconnecting');
+      this.scheduleReconnect();
+      return;
+    }
+
+    this.ws = ws;
+
+    ws.onopen = () => {
+      if (this.stopped) {
+        ws.close();
+        return;
+      }
+      // Reset backoff on successful connection
+      this.retryDelay = 1000;
+      this.opts.onStatusChange?.('connected');
+      this.opts.onOpen?.();
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      if (this.stopped) return;
+      let parsed: unknown = event.data;
+      if (typeof event.data === 'string') {
+        try {
+          parsed = JSON.parse(event.data) as unknown;
+        } catch {
+          parsed = event.data;
+        }
+      }
+      this.opts.onMessage(parsed);
+    };
+
+    ws.onclose = () => {
+      if (this.stopped) {
+        this.opts.onStatusChange?.('disconnected');
+        return;
+      }
+      this.opts.onStatusChange?.('reconnecting');
+      this.scheduleReconnect();
+    };
+
+    ws.onerror = () => {
+      // onerror is always followed by onclose; let onclose handle reconnect.
+      // We notify status here so the UI reflects the problem immediately.
+      if (!this.stopped) {
+        this.opts.onStatusChange?.('reconnecting');
+      }
+    };
+  }
+
+  private scheduleReconnect(): void {
+    if (this.stopped) return;
+    const delay = this.retryDelay;
+    // Exponential backoff, capped at maxRetry
+    this.retryDelay = Math.min(this.retryDelay * 2, this.maxRetry);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.connect();
+    }, delay);
+  }
+
+  close(): void {
+    this.stopped = true;
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.ws !== null) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.close();
+      this.ws = null;
+    }
+    this.opts.onStatusChange?.('disconnected');
+  }
+
+  get readyState(): number {
+    return this.ws?.readyState ?? WebSocket.CLOSED;
+  }
+}
+
+// Factory for simple one-off managed WebSocket
+export const createManagedWebSocket = (
+  url: string,
+  opts: ManagedWebSocketOptions
+): ManagedWebSocket => {
+  const mws = new ManagedWebSocket(url, opts);
+  mws.connect();
+  return mws;
+};
