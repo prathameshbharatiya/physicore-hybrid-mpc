@@ -323,6 +323,24 @@ def satellite_dynamics(state, action, params):
 
 def rover_dynamics(state, action, params): return ground_rover_dynamics(state, action, params)
 
+# ── Extra platform dynamics (mobile_manipulator, dual_arm, cable_driven, exoskeleton)
+try:
+    from physicore.core.extra_dynamics import (
+        mobile_manipulator_dynamics,
+        dual_arm_dynamics,
+        cable_driven_dynamics,
+        exoskeleton_dynamics,
+    )
+    _HAS_EXTRA_DYNAMICS = True
+except ImportError as _extra_err:
+    print(f"[Engine] Extra dynamics not available: {_extra_err}")
+    _HAS_EXTRA_DYNAMICS = False
+    # Stubs so PLATFORM_DYNAMICS doesn't crash
+    def mobile_manipulator_dynamics(s, a, p): return np.zeros_like(s)
+    def dual_arm_dynamics(s, a, p):           return np.zeros_like(s)
+    def cable_driven_dynamics(s, a, p):        return np.zeros_like(s)
+    def exoskeleton_dynamics(s, a, p):         return np.zeros_like(s)
+
 def humanoid_dynamics(state, action, params):
     """
     Simplified bipedal humanoid dynamics with ZMP-based contact model.
@@ -353,11 +371,25 @@ def humanoid_dynamics(state, action, params):
     new_zmp_x = com_x - h/g * ax
     new_zmp_y = com_y - h/g * ay
 
-    # Foot contact: simple ground penetration model
-    new_lf_z = max(lf_z - vz * 0.01, 0.0)
-    new_rf_z = max(rf_z - vz * 0.01, 0.0)
-    new_lc   = 1.0 if new_lf_z < 0.02 else 0.0
-    new_rc   = 1.0 if new_rf_z < 0.02 else 0.0
+    # Proper penalty-based contact model (Hertz normal + Coulomb friction)
+    from physicore.core.urdf_loader import ProperContactModel as _CM
+    _contact = _CM(stiffness=5000.0, damping=200.0, friction_mu=fric)
+    _foot_r  = 0.03   # 3 cm foot radius
+    _lf_pos  = np.array([com_x - 0.1, com_y, new_lf_z if 'new_lf_z' in dir() else lf_z])
+    _rf_pos  = np.array([com_x + 0.1, com_y, new_rf_z if 'new_rf_z' in dir() else rf_z])
+    _lf_vel  = np.array([vx, vy, vz])
+    _rf_vel  = _lf_vel.copy()
+    lf_F     = _contact.contact_force(_lf_pos, _lf_vel, radius=_foot_r)
+    rf_F     = _contact.contact_force(_rf_pos, _rf_vel, radius=_foot_r)
+    new_lf_z = max(lf_z + vz * 0.01, 0.0)
+    new_rf_z = max(rf_z + vz * 0.01, 0.0)
+    new_lc   = 1.0 if lf_F[2] > 0.0 else 0.0
+    new_rc   = 1.0 if rf_F[2] > 0.0 else 0.0
+    # Feed contact forces back into COM acceleration
+    _m = max(m, 0.1)
+    ax += (lf_F[0] + rf_F[0]) / _m
+    ay += (lf_F[1] + rf_F[1]) / _m
+    az += (lf_F[2] + rf_F[2]) / _m
 
     return np.array([vx, vy, vz, ax, ay, az, p, q, r,
                      alpha_roll, alpha_pitch, alpha_yaw,
@@ -415,7 +447,11 @@ PLATFORM_DYNAMICS: Dict[str, Tuple[Callable, int, int]] = {
     "auv":             (auv_dynamics,              12, 4),
     "satellite":       (satellite_dynamics,         12, 4),
     "humanoid":        (humanoid_dynamics,          18, 6),
-    "rocket_aero":     (rocket_aero_dynamics,        6, 2),
+    "rocket_aero":           (rocket_aero_dynamics,           6,  2),
+    "mobile_manipulator":    (mobile_manipulator_dynamics,   14,  6),
+    "dual_arm":              (dual_arm_dynamics,              20, 14),
+    "cable_driven":          (cable_driven_dynamics,          12,  6),
+    "exoskeleton":           (exoskeleton_dynamics,           16, 10),
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -750,6 +786,65 @@ class PhysiCore:
         if Q is None: Q=np.eye(state_dim)*cfg.q_scale
         if R is None: R=np.eye(action_dim)*cfg.r_scale
         return cls(cfg,fn,initial_params,Q,R,action_bounds)
+
+    @classmethod
+    def for_urdf(
+        cls,
+        path: str,
+        platform_hint: str = None,
+        control_hz: float = 60.0,
+        Q=None,
+        R=None,
+        contact_stiffness: float = 5000.0,
+        contact_damping:   float =  200.0,
+        friction_mu:       float =    0.8,
+    ):
+        """
+        Load any URDF or MJCF file and return a ready PhysiCore engine.
+        Example
+        -------
+        >>> engine, cfg = PhysiCore.for_urdf("my_robot.urdf")
+        >>> result = engine.step(np.zeros(engine.cfg.state_dim),
+        ...                      np.zeros(engine.cfg.state_dim))
+        """
+        from physicore.core.urdf_loader import load_robot
+        return load_robot(
+            path,
+            platform_hint=platform_hint,
+            control_hz=control_hz,
+            Q=Q,
+            R=R,
+            contact_stiffness=contact_stiffness,
+            contact_damping=contact_damping,
+            friction_mu=friction_mu,
+        )
+
+    @staticmethod
+    def register_platform(
+        name: str,
+        dynamics_fn,
+        state_dim: int,
+        action_dim: int,
+    ):
+        """
+        Register a custom dynamics function so it can be used with for_platform().
+        Parameters
+        ----------
+        name        : Unique platform identifier string
+        dynamics_fn : Callable(state, action, params) -> dstate/dt
+        state_dim   : Dimension of the state vector
+        action_dim  : Dimension of the action vector
+        Example
+        -------
+        >>> def my_dyn(s, a, p): return np.zeros_like(s)
+        >>> PhysiCore.register_platform("my_bot", my_dyn, 8, 2)
+        >>> engine = PhysiCore.for_platform("my_bot")
+        """
+        PLATFORM_DYNAMICS[name] = (dynamics_fn, state_dim, action_dim)
+        print(
+            f"[PhysiCore] Registered custom platform '{name}' "
+            f"(state_dim={state_dim}, action_dim={action_dim})"
+        )
 
     def step(self, state, x_ref):
         t0=time.perf_counter()
