@@ -17,6 +17,7 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import SimulationCanvas from './src/components/SimulationCanvas';
 import PhysiEditor from './src/components/PhysiEditor';
 import SafetyPanel from './src/components/SafetyPanel';
+import PluginDashboard from './src/components/PluginDashboard';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -470,7 +471,7 @@ const COLORS = {
 
 // --- TYPES ---
 type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper' | 'dashboard';
-type ProjectTab = 'integrate' | 'build' | 'debug' | 'live' | 'safety';
+type ProjectTab = 'integrate' | 'build' | 'debug' | 'live' | 'safety' | 'plugins';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -4531,15 +4532,15 @@ Be direct, technical, confident. You are the world's best robotics integration e
             <ChevronRight size={12} className="text-textDim shrink-0" />
             <span className="font-mono text-[10px] text-white uppercase tracking-widest truncate max-w-[120px]">{activeProject.name}</span>
             <div className="h-4 w-px bg-border mx-2 shrink-0" />
-            {(['integrate', 'build', 'debug', 'live', 'safety'] as ProjectTab[]).map(tab => (
+            {(['integrate', 'build', 'debug', 'live', 'safety', 'plugins'] as ProjectTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setProjectTab(tab)}
                 className={`px-2.5 py-1 font-display text-[9px] font-bold uppercase tracking-widest transition-all shrink-0 ${projectTab === tab
-                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : tab === 'safety' ? 'bg-red-700 text-white' : 'bg-green text-black'
+                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : tab === 'safety' ? 'bg-red-700 text-white' : tab === 'plugins' ? 'bg-violet-600 text-white' : 'bg-green text-black'
                   : 'text-textDim hover:text-textPrimary border border-transparent hover:border-border'}`}
               >
-                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : tab === 'safety' ? 'SAFETY' : 'LIVE'}
+                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : tab === 'safety' ? 'SAFETY' : tab === 'plugins' ? 'PLUGINS' : 'LIVE'}
                 {tab === 'debug' && (telemetry.isFaulted || failureLogs.length > 0) && (
                   <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
                 )}
@@ -8031,6 +8032,19 @@ class FrictionLogger(PhysiCoreExtension):
                    style={{ minHeight: 600 }}>
                 <SafetyPanel apiBase="http://localhost:8000" />
               </div>
+            </div>
+          </div>
+        );
+        case 'plugins': return (
+          <div className="min-h-screen bg-[#0a0e1a] p-6">
+            <div className="max-w-5xl mx-auto">
+              <div className="flex items-center gap-3 mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/><line x1="16" y1="8" x2="2" y2="22"/><line x1="17.5" y1="15" x2="9" y2="15"/></svg>
+                <h2 className="font-mono text-sm font-bold text-white uppercase tracking-widest">
+                  Plugin Dashboard
+                </h2>
+              </div>
+              <PluginDashboard apiBase="http://localhost:8000" />
             </div>
           </div>
         );

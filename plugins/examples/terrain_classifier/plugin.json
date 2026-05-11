@@ -1,0 +1,29 @@
+{
+  "plugin_id": "terrain_classifier",
+  "name": "Terrain Classifier",
+  "version": "1.0.0",
+  "description": "Classifies terrain type from state dynamics and visualises confidence scores.",
+  "author": "PhysiCore Examples",
+  "entry_point": "main",
+  "permissions": ["read_state", "read_telemetry"],
+  "hooks": ["post_step"],
+  "tags": ["terrain", "classification", "perception"],
+  "panels": [
+    {
+      "panel_id": "terrain_confidence",
+      "title": "Terrain Classification",
+      "chart_type": "bar",
+      "data_endpoint": "terrain_confidence/data",
+      "refresh_hz": 4.0,
+      "position": {"row": 0, "col": 0, "w": 6, "h": 4}
+    },
+    {
+      "panel_id": "terrain_label",
+      "title": "Current Terrain",
+      "chart_type": "value",
+      "data_endpoint": "terrain_label/data",
+      "refresh_hz": 4.0,
+      "position": {"row": 0, "col": 6, "w": 3, "h": 2}
+    }
+  ]
+}

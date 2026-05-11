@@ -1,0 +1,37 @@
+{
+  "plugin_id": "energy_monitor",
+  "name": "Energy Monitor",
+  "version": "1.0.0",
+  "description": "Tracks instantaneous power, cumulative energy expenditure, and efficiency score.",
+  "author": "PhysiCore Examples",
+  "entry_point": "main",
+  "permissions": ["read_state", "read_telemetry"],
+  "hooks": ["post_step"],
+  "tags": ["energy", "power", "efficiency"],
+  "panels": [
+    {
+      "panel_id": "power_timeline",
+      "title": "Instantaneous Power (W)",
+      "chart_type": "line",
+      "data_endpoint": "power_timeline/data",
+      "refresh_hz": 5.0,
+      "position": {"row": 0, "col": 0, "w": 8, "h": 4}
+    },
+    {
+      "panel_id": "energy_gauge",
+      "title": "Total Energy (J)",
+      "chart_type": "gauge",
+      "data_endpoint": "energy_gauge/data",
+      "refresh_hz": 2.0,
+      "position": {"row": 0, "col": 8, "w": 4, "h": 4}
+    },
+    {
+      "panel_id": "efficiency_value",
+      "title": "Efficiency Score",
+      "chart_type": "value",
+      "data_endpoint": "efficiency_value/data",
+      "refresh_hz": 2.0,
+      "position": {"row": 4, "col": 0, "w": 4, "h": 2}
+    }
+  ]
+}
