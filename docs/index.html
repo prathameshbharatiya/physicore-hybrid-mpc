@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>PhysiCore — Documentation</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html">
+    <div>
+      <span>PhysiCore</span>
+      <em>Hybrid MPC Engine</em>
+    </div>
+  </a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="hero">
+    <h1>PhysiCore</h1>
+    <p class="subtitle">Hybrid Uncertainty-Aware Sim-to-Real Synchronization Engine</p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="quickstart.html">Get Started →</a>
+      <a class="btn btn-secondary" href="api-reference.html">API Reference</a>
+      <a class="btn btn-secondary" href="https://github.com/prathameshbharatiya/physicore-hybrid-mpc">GitHub</a>
+    </div>
+  </div>
+
+  <h2>What is PhysiCore?</h2>
+  <p>
+    PhysiCore is a production-grade Model Predictive Control (MPC) engine for real robots.
+    It combines physics-based dynamics, residual neural networks, online system identification,
+    and CEM optimization into a single cohesive runtime that works on any platform — from
+    balancing bots to satellite attitude control.
+  </p>
+
+  <h2>Feature Highlights</h2>
+  <table>
+    <thead><tr><th>Feature</th><th>Description</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Hybrid MPC</strong></td><td>CEM optimizer + physics + residual ensembles</td><td><span class="badge badge-green">Core</span></td></tr>
+      <tr><td><strong>Online SysID</strong></td><td>Real-time parameter estimation (mass, drag, friction)</td><td><span class="badge badge-green">Core</span></td></tr>
+      <tr><td><strong>12 Platforms</strong></td><td>Quadrotor, legged, manipulator, satellite, rocket…</td><td><span class="badge badge-green">Core</span></td></tr>
+      <tr><td><strong>URDF Loading</strong></td><td>Parse any robot description file, build numerical model</td><td><span class="badge badge-blue">P1</span></td></tr>
+      <tr><td><strong>Fleet Manager</strong></td><td>Multi-robot coordination with health monitoring</td><td><span class="badge badge-blue">P1</span></td></tr>
+      <tr><td><strong>REST API</strong></td><td>FastAPI server with WebSocket telemetry</td><td><span class="badge badge-blue">P2</span></td></tr>
+      <tr><td><strong>Plugin SDK</strong></td><td>Sandboxed marketplace with AST safety scanning</td><td><span class="badge badge-purple">P7</span></td></tr>
+      <tr><td><strong>Multi-tenant</strong></td><td>Organizations, quotas, audit logs, metering</td><td><span class="badge badge-purple">P7</span></td></tr>
+      <tr><td><strong>Perception Fusion</strong></td><td>EKF-based multi-sensor fusion</td><td><span class="badge badge-purple">P6</span></td></tr>
+      <tr><td><strong>Trajectory Planning</strong></td><td>Joint/task space, waypoints, circular arcs</td><td><span class="badge badge-purple">P6</span></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Quick Install</h2>
+  <pre><code class="language-bash"># One-line installer
+curl -fsSL https://raw.githubusercontent.com/prathameshbharatiya/physicore-hybrid-mpc/main/install.sh | bash
+
+# Or via pip
+pip install physicore[all]
+
+# Or from source
+git clone https://github.com/prathameshbharatiya/physicore-hybrid-mpc.git
+cd physicore-hybrid-mpc
+python install.py</code></pre>
+
+  <h2>30-Second Example</h2>
+  <pre><code class="language-python">import numpy as np
+from physicore import PhysiCore, PLATFORM_DYNAMICS
+
+# Build engine for a balancing bot
+engine = PhysiCore.for_platform("balancing_bot", {"mass": 1.0, "friction": 0.15, "inertia": 0.01})
+
+# Simulate 100 MPC steps
+x = np.array([0.1, 0.0, 0.0, 0.0])  # [angle, ang_vel, pos, vel]
+for _ in range(100):
+    step = engine.step(x, np.zeros(1))
+    xdot = PLATFORM_DYNAMICS["balancing_bot"](x, step.action, {"mass": 1.0, "friction": 0.15, "inertia": 0.01})
+    x = x + 0.02 * xdot
+
+print(f"Final angle: {x[0]:.4f} rad")</code></pre>
+
+  <h2>Architecture Overview</h2>
+  <p>See the <a href="architecture.html">Architecture</a> page for a detailed breakdown of all components.</p>
+
+  <div class="callout tip">
+    <strong>New to PhysiCore?</strong> Start with the <a href="quickstart.html">Quick Start</a> guide — you'll have a running simulation in under 5 minutes.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

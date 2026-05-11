@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Quick Start — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Quick Start</div>
+  <h1>Quick Start</h1>
+  <p>Get PhysiCore running in under 5 minutes.</p>
+
+  <h2>Prerequisites</h2>
+  <ul>
+    <li>Python 3.9 or later</li>
+    <li>Node.js 18+ (for the React dashboard)</li>
+    <li>Git</li>
+  </ul>
+
+  <h2>Option A — One-Line Installer (Linux / macOS)</h2>
+  <pre><code class="language-bash">curl -fsSL https://raw.githubusercontent.com/prathameshbharatiya/physicore-hybrid-mpc/main/install.sh | bash</code></pre>
+
+  <h2>Option B — From Source</h2>
+  <pre><code class="language-bash"># 1. Clone the repository
+git clone https://github.com/prathameshbharatiya/physicore-hybrid-mpc.git
+cd physicore-hybrid-mpc
+
+# 2. Run the installer (handles pip + verification)
+python install.py
+
+# 3. Install frontend dependencies
+npm install</code></pre>
+
+  <h2>Option C — pip</h2>
+  <pre><code class="language-bash">pip install physicore[all]</code></pre>
+
+  <h2>Start the Server</h2>
+  <pre><code class="language-bash"># Using the CLI
+physicore serve
+
+# Or directly with uvicorn
+uvicorn physicore.api.server:app --host 0.0.0.0 --port 8000
+
+# Start the React dev server (separate terminal)
+npm run dev</code></pre>
+
+  <div class="callout">
+    Open the dashboard at <code>http://localhost:5173</code> and the API at <code>http://localhost:8000/docs</code>
+  </div>
+
+  <h2>Your First MPC Step</h2>
+  <pre><code class="language-python">import numpy as np
+from physicore import PhysiCore, PLATFORM_DYNAMICS
+
+# Create engine for a balancing bot
+engine = PhysiCore.for_platform(
+    "balancing_bot",
+    params={"mass": 1.0, "friction": 0.15, "inertia": 0.01}
+)
+
+# Initial state: [angle, angular_velocity, position, velocity]
+x = np.array([0.1, 0.0, 0.0, 0.0])
+
+# Run 200 MPC steps
+for t in range(200):
+    step = engine.step(x, np.zeros(engine.cfg.action_dim))
+    xdot = PLATFORM_DYNAMICS["balancing_bot"](x, step.action, engine.platform_params)
+    x = x + engine.cfg.dt * xdot
+    if t % 50 == 0:
+        print(f"t={t:3d}  angle={x[0]:+.4f} rad  residual={step.residual_norm:.5f}")
+
+print("Done!")</code></pre>
+
+  <h2>Run an Example</h2>
+  <pre><code class="language-bash"># Run a built-in example
+physicore run balancing_bot_sim
+physicore run quadrotor_sim
+physicore run fleet_two_robots
+physicore run full_pipeline
+
+# Or run directly
+python examples/balancing_bot_sim.py</code></pre>
+
+  <h2>CLI Cheatsheet</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>physicore serve</code></td><td>Start API server on :8000</td></tr>
+      <tr><td><code>physicore status</code></td><td>Show system health</td></tr>
+      <tr><td><code>physicore run &lt;script&gt;</code></td><td>Run a script or example</td></tr>
+      <tr><td><code>physicore robot new &lt;name&gt;</code></td><td>Scaffold a robot YAML config</td></tr>
+      <tr><td><code>physicore plugins list</code></td><td>Show installed plugins</td></tr>
+      <tr><td><code>physicore fleet status</code></td><td>Show all fleet robots</td></tr>
+      <tr><td><code>physicore data sessions</code></td><td>List telemetry sessions</td></tr>
+      <tr><td><code>physicore version</code></td><td>Print version info</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Docker</h2>
+  <pre><code class="language-bash"># Build and run everything in one container
+docker compose up
+
+# Or build manually
+docker build -t physicore .
+docker run -p 8000:8000 physicore</code></pre>
+
+  <div class="callout tip">
+    <strong>Next:</strong> Read the <a href="architecture.html">Architecture</a> page to understand how PhysiCore's layers fit together.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

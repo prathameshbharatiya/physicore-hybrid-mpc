@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Architecture — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Architecture</div>
+  <h1>Architecture</h1>
+  <p>PhysiCore is structured as layered subsystems, each with a clear responsibility.</p>
+
+  <h2>System Diagram</h2>
+  <pre><code>┌─────────────────────────────────────────────────────┐
+│                  Browser / Client                    │
+│   React 18 + TypeScript + Tailwind CSS               │
+│   WebSocket telemetry · REST API calls               │
+└──────────────────┬──────────────────────────────────┘
+                   │ HTTP / WebSocket
+┌──────────────────▼──────────────────────────────────┐
+│               FastAPI Server (:8000)                 │
+│  /api/fleet/*  /api/telemetry/*  /api/marketplace/* │
+│  /api/orgs/*   /api/plan/*       /api/execute/*     │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│                PhysiCore Engine                      │
+│  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
+│  │CEMOptimizer│  │OnlineSystemID│  │ResidualEnsem.│  │
+│  └────────────┘  └─────────────┘  └──────────────┘  │
+│  ┌────────────┐  ┌─────────────┐  ┌──────────────┐  │
+│  │PhysicsLayer│  │StateEstimator│  │FleetManager  │  │
+│  └────────────┘  └─────────────┘  └──────────────┘  │
+└──────────────────┬──────────────────────────────────┘
+                   │
+┌──────────────────▼──────────────────────────────────┐
+│              Platform Layer                          │
+│  12 dynamics functions (quadrotor, balancing_bot…)  │
+│  URDF loader · Custom dynamics fn support           │
+└─────────────────────────────────────────────────────┘</code></pre>
+
+  <h2>Core Engine</h2>
+  <h3>CEMOptimizer</h3>
+  <p>Cross-Entropy Method optimizer. Samples <code>N</code> action sequences, evaluates each against the physics + residual model, keeps the top <code>k</code> elites, and refits a Gaussian for the next iteration.</p>
+  <pre><code class="language-python">cfg = PhysiCoreConfig(
+    cem_samples=512,    # candidate action sequences per iteration
+    cem_elites=64,      # top-k kept for Gaussian refitting
+    cem_iterations=5,   # optimization iterations per step
+    horizon=20,         # planning horizon (steps)
+)</code></pre>
+
+  <h3>PhysicsLayer</h3>
+  <p>Wraps the platform dynamics function. Applies noise injection for robustness and caches the nominal trajectory for residual computation.</p>
+
+  <h3>ResidualEnsemble</h3>
+  <p>An ensemble of lightweight linear models that learn the sim-to-real gap online. The ensemble mean is added to the physics prediction; the variance is used as an uncertainty estimate.</p>
+
+  <h3>OnlineSystemID</h3>
+  <p>Recursive least-squares estimator for physical parameters (mass, drag coefficient, friction). Updates after every real transition.</p>
+
+  <h2>State Estimator (EKF)</h2>
+  <p>Extended Kalman Filter that fuses observations from multiple <code>PerceptionSource</code> adapters.</p>
+  <pre><code class="language-python">from physicore.perception.interface import PerceptionFusion, PoseSource
+from physicore.core.state_estimator import StateEstimator
+
+estimator = StateEstimator(state_dim=12, obs_dim=6)
+fusion = PerceptionFusion(estimator)
+fusion.register(PoseSource())
+fusion.start_polling(hz=50)
+fused = fusion.fuse()</code></pre>
+
+  <h2>Fleet Manager</h2>
+  <p>Manages a pool of <code>PhysiCore</code> engine instances, one per robot. Provides unified health monitoring, step dispatch, and cross-robot coordination hooks.</p>
+
+  <h2>Perception Layer</h2>
+  <table>
+    <thead><tr><th>Adapter</th><th>Obs dim</th><th>Typical source</th></tr></thead>
+    <tbody>
+      <tr><td><code>PoseSource</code></td><td>6</td><td>OptiTrack, SLAM, GPS/IMU</td></tr>
+      <tr><td><code>DepthSource</code></td><td>3</td><td>RGBD camera point</td></tr>
+      <tr><td><code>MarkerSource</code></td><td>3×n</td><td>ArUco, QR markers</td></tr>
+      <tr><td><code>JointEncoderSource</code></td><td>n_joints</td><td>Encoder ticks</td></tr>
+      <tr><td><code>IMUSource</code></td><td>6</td><td>Accel + gyro</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Planning Layer</h2>
+  <ul>
+    <li><strong>TrajectoryPlanner</strong> — joint-space, task-space (via IK), waypoints, circular arcs</li>
+    <li><strong>IKSolver</strong> — Jacobian pseudoinverse with null-space joint-limit avoidance</li>
+    <li><strong>TrajectoryExecutor</strong> — sync/async execution with abort support</li>
+    <li><strong>ObstacleMap</strong> — sphere and box obstacles with path-clearance checks</li>
+  </ul>
+
+  <h2>Plugin System</h2>
+  <p>Plugins are Python packages loaded at runtime. Before installation, every plugin is scanned with an AST walker + regex pass that blocks <code>socket</code>, <code>subprocess</code>, <code>eval</code>, <code>exec</code>, and network libraries. Allowed: <code>open('/plugins/...')</code> for local data access.</p>
+
+  <h2>Multi-tenant Platform</h2>
+  <ul>
+    <li><strong>OrgStore</strong> — SQLite-backed organizations, memberships, invites, quotas</li>
+    <li><strong>UsageMetering</strong> — daily step counters, storage, active robots</li>
+    <li><strong>AuditLog</strong> — append-only event log with org/user/action indexes</li>
+  </ul>
+
+  <div class="callout tip">
+    <strong>Next:</strong> See <a href="platforms.html">Platforms</a> for the full list of supported robot types.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

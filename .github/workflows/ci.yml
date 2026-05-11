@@ -21,8 +21,8 @@ jobs:
 
       - name: Install PhysiCore and test dependencies
         run: |
-          pip install -e . --quiet
-          pip install pytest pytest-cov numpy --quiet
+          pip install -e ".[all]" --quiet
+          pip install pytest pytest-cov numpy scipy --quiet
 
       - name: Run pytest
         id: pytest

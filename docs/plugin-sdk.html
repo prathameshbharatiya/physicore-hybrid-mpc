@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Plugin SDK — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Plugin SDK</div>
+  <h1>Plugin SDK</h1>
+  <p>PhysiCore plugins extend the engine at runtime — adding perception adapters, custom safety checks, analytics, or actuation overrides. Every plugin is scanned for security before installation.</p>
+
+  <h2>Scaffold a Plugin</h2>
+  <pre><code class="language-bash">physicore plugins new my-plugin --author alice
+# Creates: my-plugin/manifest.json, my-plugin/plugin.py, my-plugin/README.md</code></pre>
+
+  <h2>Plugin Interface</h2>
+  <pre><code class="language-python">from physicore.sdk.plugin_loader import PhysicorePlugin, PluginMeta
+
+class MyPlugin(PhysicorePlugin):
+
+    @property
+    def meta(self) -> PluginMeta:
+        return PluginMeta(
+            id="my-plugin",
+            name="My Plugin",
+            version="1.0.0",
+            description="Does something useful",
+            author="alice",
+        )
+
+    def on_load(self):
+        """Called once when the plugin is activated."""
+        pass
+
+    def on_step(self, state, action, dt: float) -> dict:
+        """Called every control step. Return a dict of extra telemetry."""
+        return {"my_metric": 42.0}
+
+    def on_unload(self):
+        """Called when the plugin is deactivated."""
+        pass</code></pre>
+
+  <h2>manifest.json</h2>
+  <pre><code class="language-json">{
+  "id": "my-plugin",
+  "name": "My Plugin",
+  "version": "1.0.0",
+  "description": "Does something useful",
+  "category": "analytics",
+  "author": "alice",
+  "entry_point": "plugin.py",
+  "dependencies": [],
+  "price": 0.0,
+  "screenshots": []
+}</code></pre>
+
+  <h3>Categories</h3>
+  <table>
+    <thead><tr><th>Category</th><th>Use case</th></tr></thead>
+    <tbody>
+      <tr><td><code>perception</code></td><td>Sensor adapters, fusion sources</td></tr>
+      <tr><td><code>safety</code></td><td>E-stop logic, bounds checking, watchdogs</td></tr>
+      <tr><td><code>analytics</code></td><td>Logging, metrics, dashboards</td></tr>
+      <tr><td><code>actuation</code></td><td>Action post-processing, gravity comp, filters</td></tr>
+      <tr><td><code>communication</code></td><td>ROS2 bridges, MAVLink adapters, MQTT</td></tr>
+      <tr><td><code>demo</code></td><td>Examples, tutorials</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Security Scanning</h2>
+  <p>Before a plugin is stored in the marketplace, <code>scan_source()</code> performs two passes:</p>
+
+  <h3>Pass 1 — Regex patterns</h3>
+  <p>Blocks any use of: <code>socket</code>, <code>subprocess</code>, <code>ctypes</code>, <code>os.system</code>, <code>eval(</code>, <code>exec(</code>, <code>__import__</code>, <code>requests</code>, <code>urllib</code>, <code>aiohttp</code>, <code>httpx</code>.</p>
+
+  <h3>Pass 2 — AST walk</h3>
+  <p>Walks every <code>import</code> and <code>from … import</code> statement, blocking the same module list at the AST level (catches aliased imports).</p>
+
+  <div class="callout warn">
+    <strong>Exception:</strong> <code>open('/plugins/...')</code> is allowed for reading local plugin data files.
+  </div>
+
+  <pre><code class="language-python">from physicore.sdk.marketplace import scan_source
+
+result = scan_source(source_code, filename="plugin.py")
+print(result.safe)       # True / False
+print(result.violations) # list of {line, pattern, snippet}</code></pre>
+
+  <h2>Submitting to the Marketplace</h2>
+  <pre><code class="language-python">from physicore.sdk.marketplace import get_marketplace
+
+mkt = get_marketplace()
+entry_id = mkt.submit(
+    manifest=my_manifest,
+    source_files={"plugin.py": open("plugin.py").read()},
+    author_id="alice",
+    category="analytics",
+    price=0.0,
+)
+print(f"Submitted: {entry_id}")</code></pre>
+
+  <h2>Installing a Plugin</h2>
+  <pre><code class="language-bash"># Via CLI
+physicore plugins install gravity-comp
+
+# Via Python
+from physicore.sdk.marketplace import get_marketplace
+mkt = get_marketplace()
+install_path = mkt.install("gravity-comp", user_id="alice")</code></pre>
+
+  <h2>Loading a Plugin at Runtime</h2>
+  <pre><code class="language-python">from physicore.sdk.plugin_loader import PluginLoader
+
+loader = PluginLoader()
+loader.load_from_path("/path/to/my-plugin/plugin.py")
+
+# All loaded plugins receive on_step() calls
+for plugin in loader.active_plugins():
+    result = plugin.on_step(state, action, dt=0.02)
+    print(result)</code></pre>
+
+  <div class="callout tip">
+    <strong>Example:</strong> See <code>examples/custom_plugin.py</code> for a full inline plugin demo with gravity compensation.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

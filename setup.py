@@ -45,6 +45,7 @@ setup(
     },
     entry_points={
         "console_scripts": [
+            "physicore=physicore.cli:main",
             "physicore-bridge=physicore.bridge.physicore_bridge:main",
             "physicore-api=physicore.api.server:app",
         ],

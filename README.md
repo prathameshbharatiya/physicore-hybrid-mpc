@@ -2,177 +2,271 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# PhysiCore — Hybrid MPC Engine
+<div align="center">
 
-A production-grade Model Predictive Control engine with online system identification, residual learning, and multi-robot fleet management. Runs a FastAPI backend and React dashboard in one command.
+[![CI](https://github.com/prathameshbharatiya/physicore-hybrid-mpc/actions/workflows/ci.yml/badge.svg)](https://github.com/prathameshbharatiya/physicore-hybrid-mpc/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/physicore.svg)](https://pypi.org/project/physicore/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://hub.docker.com)
+
+**Hybrid Uncertainty-Aware Sim-to-Real Synchronization Engine**
+
+[Quick Start](#quick-start) · [Documentation](docs/index.html) · [Examples](examples/) · [API Reference](docs/api-reference.html) · [Plugin SDK](docs/plugin-sdk.html)
+
+</div>
+
+---
+
+PhysiCore is a production-grade **Model Predictive Control (MPC)** engine for real robots. It combines physics-based dynamics, residual neural networks, online system identification, and CEM optimization into a single cohesive runtime — from simulation to deployment in one command.
+
+## Features
+
+| Feature | Description |
+|---|---|
+| **Hybrid MPC** | CEM optimizer + physics layer + residual ensembles in one loop |
+| **Online System ID** | Real-time mass/drag/friction estimation from observations |
+| **12 Built-in Platforms** | Quadrotor, balancing bot, legged robot, satellite, rocket, AUV… |
+| **URDF Loading** | Parse any robot description, build numerical FK + Jacobian |
+| **Fleet Manager** | Multi-robot coordination with per-robot health monitoring |
+| **Perception Fusion** | EKF-based multi-sensor fusion (pose, depth, IMU, encoders) |
+| **Trajectory Planning** | Joint/task space, waypoints, circular arcs, collision avoidance |
+| **REST API + WebSocket** | FastAPI server with live telemetry streaming |
+| **React Dashboard** | Real-time visualisation, fleet control, telemetry replay |
+| **Plugin Marketplace** | Sandboxed plugins with AST safety scanning |
+| **Multi-tenant** | Orgs, roles, quotas, audit logs, usage metering |
+| **CLI** | `physicore serve`, `robot new`, `plugins install`, `fleet status`… |
 
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Clone and enter the repo
-git clone https://github.com/prathameshbharatiya/physicore-hybrid-mpc.git && cd physicore-hybrid-mpc
+# Option A — one-line installer (Linux / macOS)
+curl -fsSL https://raw.githubusercontent.com/prathameshbharatiya/physicore-hybrid-mpc/main/install.sh | bash
 
-# 2. Launch backend + frontend (installs deps automatically)
-./scripts/start.sh
+# Option B — from source
+git clone https://github.com/prathameshbharatiya/physicore-hybrid-mpc.git
+cd physicore-hybrid-mpc
+python install.py
+npm install
 
-# 3. Open the dashboard
-open http://localhost:5173
+# Option C — pip
+pip install physicore[all]
 ```
 
-> **Docker alternative:** `docker compose up` — serves everything on port 8000.
+**Start everything:**
+
+```bash
+physicore serve          # API on :8000
+npm run dev              # Dashboard on :5173
+```
+
+**Docker:**
+
+```bash
+docker compose up        # API + built frontend on :8000
+```
+
+---
+
+## 30-Second Example
+
+```python
+import numpy as np
+from physicore import PhysiCore, PLATFORM_DYNAMICS
+
+# Build MPC engine for a balancing bot
+engine = PhysiCore.for_platform(
+    "balancing_bot",
+    params={"mass": 1.0, "friction": 0.15, "inertia": 0.01}
+)
+
+# Simulate 200 steps from a tilted initial condition
+x = np.array([0.15, 0.0, 0.0, 0.0])   # [angle, angular_vel, pos, vel]
+
+for t in range(200):
+    step = engine.step(x, np.zeros(1))
+    xdot = PLATFORM_DYNAMICS["balancing_bot"](x, step.action, engine.platform_params)
+    x += engine.cfg.dt * xdot
+
+print(f"Final angle: {x[0]:.4f} rad  ({step.residual_norm:.5f} residual)")
+```
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Browser / Client                         │
-│   React 18 + TypeScript + Tailwind  │  WebSocket (port 8765)   │
-└──────────────────┬──────────────────┴────────────┬─────────────┘
-                   │ HTTP REST                      │ Telemetry
-┌──────────────────▼────────────────────────────────▼─────────────┐
-│                    FastAPI  (port 8000)                          │
-│  /api/platforms  /fleet/*  /health  /ws/telemetry               │
-└──────────────────┬───────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     Browser / Client                         │
+│   React 18 + TypeScript + Tailwind  │  WebSocket telemetry  │
+└──────────────────┬───────────────────────────────┬───────────┘
+                   │ HTTP REST                      │ WS
+┌──────────────────▼───────────────────────────────▼───────────┐
+│                   FastAPI  (port 8000)                        │
+│  /api/fleet/*   /api/plan/*   /api/marketplace/*             │
+│  /api/orgs/*    /api/telemetry/*   /ws/telemetry             │
+└──────────────────┬────────────────────────────────────────────┘
                    │
-┌──────────────────▼───────────────────────────────────────────────┐
-│                     PhysiCore Engine                             │
-│                                                                   │
-│  ┌──────────────┐  ┌───────────────┐  ┌───────────────────────┐  │
-│  │ CEMOptimizer │  │ OnlineSystemID│  │  ResidualEnsemble     │  │
-│  │  (MPC loop)  │  │  (mass, drag) │  │  (neural residuals)   │  │
-│  └──────────────┘  └───────────────┘  └───────────────────────┘  │
-│                                                                   │
-│  ┌──────────────┐  ┌───────────────┐  ┌───────────────────────┐  │
-│  │ ModelRegistry│  │  SentinelOS   │  │   FleetManager        │  │
-│  │ (persistence)│  │  (safety)     │  │   (multi-robot)       │  │
-│  └──────────────┘  └───────────────┘  └───────────────────────┘  │
-└───────────────────────────────────────────────────────────────────┘
+┌──────────────────▼────────────────────────────────────────────┐
+│                    PhysiCore Engine                           │
+│  CEMOptimizer · OnlineSystemID · ResidualEnsemble            │
+│  PhysicsLayer · StateEstimator (EKF) · SentinelOS            │
+└──────────────────┬────────────────────────────────────────────┘
                    │
-┌──────────────────▼───────────────────────────────────────────────┐
-│             Platform Dynamics Library                            │
-│  quadrotor · humanoid · car · rocket · auv · rover              │
-│  mobile_manipulator · dual_arm · cable_driven · exoskeleton      │
-│  + any URDF / MJCF robot via load_robot()                        │
-└───────────────────────────────────────────────────────────────────┘
+┌──────────────────▼────────────────────────────────────────────┐
+│                    Platform Layer                             │
+│  12 dynamics functions · URDF loader · Custom dynamics fn    │
+└───────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## API Reference
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Liveness check — returns `{"status":"ok"}` |
-| `GET` | `/api/platforms` | List all registered platform names |
-| `POST` | `/api/optimize` | Run one MPC step; body: `{platform, state, goal, config?}` |
-| `GET` | `/fleet/health` | Health snapshot for all fleet robots |
-| `GET` | `/fleet/robots` | List robot IDs currently in the fleet |
-| `POST` | `/fleet/add` | Add a robot; body: `{robot_id, platform}` or `{robot_id, urdf_path}` |
-| `DELETE` | `/fleet/robot/{id}` | Remove a robot from the fleet |
-| `WS` | `/ws/telemetry` | Real-time telemetry stream (JSON frames per robot) |
-
-### `/api/optimize` request body
-
-```json
-{
-  "platform": "quadrotor",
-  "state": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  "goal":  [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  "config": {
-    "horizon": 20,
-    "n_samples": 512,
-    "dt": 0.05
-  }
-}
-```
-
----
-
-## Loading Your Own Robot
-
-Point `load_robot()` at any URDF or MJCF file and get a fully configured `PhysiCore` engine back in one call:
-
-```python
-from physicore import load_robot
-
-engine = load_robot("path/to/my_robot.urdf")
-action = engine.step(state, goal)
-```
-
-The loader auto-detects DOF, extracts joint limits, builds the kinematic chain, and wires up the CEM optimizer. No config required.
-
-**With custom MPC settings:**
-
-```python
-from physicore import load_robot, PhysiCoreConfig
-
-config = PhysiCoreConfig(horizon=30, n_samples=1024, dt=0.02)
-engine = load_robot("my_robot.urdf", config=config)
-```
-
-**Register it for REST API access:**
-
-```python
-from physicore import PhysiCore
-PhysiCore.register_platform("my_robot", "path/to/my_robot.urdf")
-```
-
-After registration, `POST /api/optimize` with `"platform": "my_robot"` works immediately.
 
 ---
 
 ## Supported Platforms
 
-| Key | DOF | State dim | Description |
-|-----|-----|-----------|-------------|
-| `quadrotor` | 4 | 12 | Position + velocity + attitude |
-| `humanoid` | 12 | 24 | Full-body with contact model |
-| `car` | 2 | 6 | Bicycle model |
-| `rocket` | 3 | 9 | Thrust-vector control |
-| `auv` | 5 | 10 | Underwater vehicle |
-| `rover` | 2 | 6 | Differential drive |
-| `mobile_manipulator` | 6 | 14 | Mobile base + 6-DOF arm |
-| `dual_arm` | 14 | 20 | Bimanual manipulation |
-| `cable_driven` | 6 | 12 | Tendon-driven robot |
-| `exoskeleton` | 10 | 16 | Human-assist wearable |
+| Platform | State | Action | Notes |
+|---|---|---|---|
+| `balancing_bot` | 4 | 1 | Inverted pendulum |
+| `quadrotor` | 12 | 4 | 3D flight |
+| `fixed_wing` | 12 | 4 | Aerodynamic model |
+| `evtol` | 12 | 6 | Tilt-rotor VTOL |
+| `manipulator_arm` | 2n | n | n-DOF serial arm |
+| `legged_robot` | 18 | 12 | Quadruped |
+| `ground_rover` | 6 | 2 | Differential drive |
+| `rocket` | 12 | 4 | TVC launch vehicle |
+| `auv` | 12 | 6 | Underwater vehicle |
+| `satellite` | 7 | 3 | Attitude control |
+| `rover` | 8 | 4 | Planetary rover |
+| `surgical_robot` | 14 | 7 | Cable-driven arm |
+
+Plus 4 composite platforms: `mobile_manipulator`, `dual_arm`, `cable_driven`, `exoskeleton`.
 
 ---
 
-## Environment Variables
-
-Copy `.env.local.example` to `.env.local` and fill in the values:
+## CLI
 
 ```bash
-GEMINI_API_KEY=your_key_here
-VITE_FIREBASE_API_KEY=your_key_here
-VITE_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your_project_id
+physicore serve                          # Start API server
+physicore serve --host 0.0.0.0 --reload  # Hot-reload dev mode
+physicore status                         # System health
+physicore run balancing_bot_sim          # Run an example
+physicore robot new my_arm --platform manipulator_arm
+physicore robot load my_arm.yaml
+physicore plugins list
+physicore plugins install gravity-comp
+physicore plugins new my-plugin --author alice
+physicore fleet status
+physicore data sessions
+physicore data export <session-id> --format csv
+physicore docs quickstart
+physicore version
 ```
 
-For Docker deployment, pass these via `docker compose` environment or a `.env` file — never hardcode them.
+---
+
+## Examples
+
+| Script | Description |
+|---|---|
+| [`balancing_bot_sim.py`](examples/balancing_bot_sim.py) | 200-step balancing bot with ASCII trajectory |
+| [`quadrotor_sim.py`](examples/quadrotor_sim.py) | 3D quadrotor hover from below |
+| [`load_any_urdf.py`](examples/load_any_urdf.py) | URDF loading, FK, Jacobian inspection |
+| [`fleet_two_robots.py`](examples/fleet_two_robots.py) | Two robots running in parallel |
+| [`custom_plugin.py`](examples/custom_plugin.py) | Inline gravity compensation plugin |
+| [`full_pipeline.py`](examples/full_pipeline.py) | End-to-end: perception → planning → MPC → telemetry |
+
+```bash
+physicore run balancing_bot_sim
+python examples/full_pipeline.py
+```
+
+---
+
+## Plugin SDK
+
+```python
+from physicore.sdk.plugin_loader import PhysicorePlugin, PluginMeta
+
+class GravityCompPlugin(PhysicorePlugin):
+    @property
+    def meta(self) -> PluginMeta:
+        return PluginMeta(id="gravity-comp", name="Gravity Comp",
+                          version="1.0.0", description="...", author="alice")
+
+    def on_load(self): pass
+
+    def on_step(self, state, action, dt):
+        torque = 9.81 * 0.3 * state[0]   # gravity torque
+        return {"gravity_torque": torque}
+
+    def on_unload(self): pass
+```
+
+```bash
+physicore plugins new my-plugin --author alice
+```
+
+Every plugin is AST-scanned before installation — `socket`, `subprocess`, `eval`, `exec`, and network libs are blocked.
+
+---
+
+## Documentation
+
+Open the docs locally:
+
+```bash
+physicore docs            # opens docs/index.html
+physicore docs quickstart
+physicore docs api-reference
+```
+
+Or browse the HTML files in [`docs/`](docs/):
+
+- [Introduction](docs/index.html)
+- [Quick Start](docs/quickstart.html)
+- [Architecture](docs/architecture.html)
+- [Platforms](docs/platforms.html)
+- [Robot Loading](docs/robot-loading.html)
+- [API Reference](docs/api-reference.html)
+- [Plugin SDK](docs/plugin-sdk.html)
+- [Safety](docs/safety.html)
+- [Deployment](docs/deployment.html)
 
 ---
 
 ## Development
 
 ```bash
-# Run Python tests
+# Run tests
 pytest tests/ -v
 
-# TypeScript type check
-npm run lint
+# Type check
+npm run lint    # or: npx tsc --noEmit
 
-# Build for production
-npm run build
-
-# Health check against a running instance
-./scripts/healthcheck.sh localhost 8000
+# Run specific test modules
+pytest tests/test_phase6.py tests/test_phase7.py tests/test_launch_readiness.py -v
 ```
+
+---
+
+## Contributing
+
+1. Fork the repo
+2. Create a branch: `git checkout -b feat/my-feature`
+3. Run tests: `pytest tests/ -v && npm run lint`
+4. Submit a PR
+
+Please follow the existing code style and add tests for new features.
+
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
+
+---
+
+<div align="center">
+Built by <a href="https://github.com/prathameshbharatiya">Prathamesh Shirbhate</a> · <a href="https://physicore.ai">physicore.ai</a>
+</div>

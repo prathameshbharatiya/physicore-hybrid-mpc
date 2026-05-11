@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Platforms — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Platforms</div>
+  <h1>Platforms</h1>
+  <p>PhysiCore ships 12 built-in platform dynamics functions plus 4 composite platforms. Each is accessed by name via <code>PhysiCore.for_platform()</code> or <code>PLATFORM_DYNAMICS[name]</code>.</p>
+
+  <h2>Core Platforms</h2>
+  <table>
+    <thead><tr><th>Platform ID</th><th>State dim</th><th>Action dim</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>balancing_bot</code></td><td>4</td><td>1</td><td>Inverted pendulum on wheels. State: [θ, θ̇, x, ẋ]</td></tr>
+      <tr><td><code>quadrotor</code></td><td>12</td><td>4</td><td>3D quadrotor. State: pos(3) + vel(3) + euler(3) + omega(3)</td></tr>
+      <tr><td><code>fixed_wing</code></td><td>12</td><td>4</td><td>Fixed-wing aircraft with aerodynamic lift/drag model</td></tr>
+      <tr><td><code>evtol</code></td><td>12</td><td>6</td><td>Electric vertical take-off/landing with tilt rotors</td></tr>
+      <tr><td><code>manipulator_arm</code></td><td>2n</td><td>n</td><td>n-DOF serial arm. State: q(n) + q̇(n)</td></tr>
+      <tr><td><code>surgical_robot</code></td><td>14</td><td>7</td><td>7-DOF surgical manipulator with cable stiffness</td></tr>
+      <tr><td><code>legged_robot</code></td><td>18</td><td>12</td><td>Quadruped with body pose + 12 joint states</td></tr>
+      <tr><td><code>ground_rover</code></td><td>6</td><td>2</td><td>Differential-drive rover. State: [x, y, θ, vx, vy, ω]</td></tr>
+      <tr><td><code>rocket</code></td><td>12</td><td>4</td><td>Launch vehicle with TVC and gimbal</td></tr>
+      <tr><td><code>auv</code></td><td>12</td><td>6</td><td>Autonomous underwater vehicle with hydrodynamics</td></tr>
+      <tr><td><code>satellite</code></td><td>7</td><td>3</td><td>Attitude control. State: quaternion(4) + omega(3)</td></tr>
+      <tr><td><code>rover</code></td><td>8</td><td>4</td><td>Planetary rover with suspension dynamics</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Composite Platforms</h2>
+  <table>
+    <thead><tr><th>Platform ID</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>mobile_manipulator</code></td><td>Mobile base + arm (combined dynamics)</td></tr>
+      <tr><td><code>dual_arm</code></td><td>Two coordinated manipulator arms</td></tr>
+      <tr><td><code>cable_driven</code></td><td>Cable-driven parallel robot</td></tr>
+      <tr><td><code>exoskeleton</code></td><td>Human-coupled exoskeleton with interaction forces</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Platform Parameters</h2>
+  <h3>balancing_bot</h3>
+  <pre><code class="language-python">params = {
+    "mass": 1.0,      # kg — total robot mass
+    "friction": 0.15, # Nm·s/rad — rotational friction
+    "inertia": 0.01,  # kg·m² — moment of inertia
+}</code></pre>
+
+  <h3>quadrotor</h3>
+  <pre><code class="language-python">params = {
+    "mass": 1.5,          # kg
+    "arm_length": 0.25,   # m — motor-to-center distance
+    "k_thrust": 3.16e-6,  # N/(rad/s)² — thrust coefficient
+    "k_torque": 7.94e-9,  # Nm/(rad/s)² — torque coefficient
+    "Ixx": 0.0213,        # kg·m² — roll inertia
+    "Iyy": 0.0213,        # kg·m² — pitch inertia
+    "Izz": 0.04,          # kg·m² — yaw inertia
+}</code></pre>
+
+  <h3>satellite</h3>
+  <pre><code class="language-python">params = {
+    "Ixx": 10.0,  # kg·m²
+    "Iyy": 12.0,
+    "Izz": 8.0,
+    "max_torque": 0.1,  # Nm — reaction wheel saturation
+}</code></pre>
+
+  <h2>Custom Dynamics</h2>
+  <p>Any callable matching the signature <code>f(state, action, params) → xdot</code> can be used as a platform:</p>
+  <pre><code class="language-python">def my_dynamics(state, action, params):
+    # state: np.ndarray shape (state_dim,)
+    # action: np.ndarray shape (action_dim,)
+    # params: dict of physical parameters
+    # returns: xdot np.ndarray shape (state_dim,)
+    ...
+
+engine = PhysiCore(cfg, dynamics_fn=my_dynamics, platform_params=params)</code></pre>
+
+  <h2>Listing All Platforms</h2>
+  <pre><code class="language-python">from physicore import PLATFORM_DYNAMICS
+print(list(PLATFORM_DYNAMICS.keys()))
+
+# Via CLI
+physicore status  # shows available platforms
+
+# Via API
+# GET /api/platforms</code></pre>
+
+  <div class="callout tip">
+    <strong>Tip:</strong> All platforms support online system identification — PhysiCore will adapt physical parameters (mass, friction, drag) from real observations after each step.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

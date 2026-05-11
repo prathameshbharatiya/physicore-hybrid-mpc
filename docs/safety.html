@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Safety — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Safety</div>
+  <h1>Safety</h1>
+  <p>PhysiCore is designed for production robotics where failures can damage hardware or injure people. This page covers every safety layer built into the engine.</p>
+
+  <div class="callout danger">
+    <strong>Warning:</strong> PhysiCore is research software. Always validate in simulation before deploying to real hardware. Never disable safety layers in production.
+  </div>
+
+  <h2>SentinelOS</h2>
+  <p>The runtime safety watchdog. Runs in a background thread and monitors every control step.</p>
+  <pre><code class="language-python">from physicore.core.sentinel import SentinelOS, SentinelConfig
+
+sentinel = SentinelOS(SentinelConfig(
+    max_residual=0.5,       # trigger if residual_norm exceeds this
+    max_action_norm=10.0,   # clip action if norm exceeds this
+    watchdog_timeout_s=0.1, # e-stop if no step within 100 ms
+    state_bounds={          # per-dimension hard limits
+        0: (-1.57, 1.57),   # joint 0: ±90°
+        2: (-5.0, 5.0),     # position: ±5 m
+    },
+))
+sentinel.start()
+
+# In control loop:
+action = sentinel.check_and_clip(state, action, residual_norm)</code></pre>
+
+  <h2>State Bounds</h2>
+  <p>Hard limits on individual state dimensions. The sentinel clips actions to prevent bound violations:</p>
+  <pre><code class="language-python">cfg = SentinelConfig(
+    state_bounds={
+        0: (-3.14, 3.14),    # angle: ±π
+        2: (-10.0, 10.0),    # position: ±10 m
+        1: (-5.0, 5.0),      # angular velocity
+    }
+)</code></pre>
+
+  <h2>Action Clipping</h2>
+  <p>All actions are clipped to the platform's defined action space before being sent to the actuators. The CEM optimizer respects these bounds during sampling.</p>
+  <pre><code class="language-python">cfg = PhysiCoreConfig(
+    action_min=np.array([-10.0]),   # per-dimension lower bounds
+    action_max=np.array([10.0]),    # per-dimension upper bounds
+)</code></pre>
+
+  <h2>Residual Watchdog</h2>
+  <p>If the residual norm (sim-to-real error) exceeds a threshold, the sentinel can trigger a configurable response:</p>
+  <ul>
+    <li><strong>WARN</strong> — log and continue (default below threshold)</li>
+    <li><strong>CLIP</strong> — scale action down proportionally</li>
+    <li><strong>ESTOP</strong> — zero all actuators immediately</li>
+  </ul>
+  <pre><code class="language-python">cfg = SentinelConfig(
+    residual_warn=0.2,
+    residual_estop=0.8,
+    on_estop="zero_action",  # "zero_action" | "hold_last" | "raise"
+)</code></pre>
+
+  <h2>Plugin Safety Scanning</h2>
+  <p>Every plugin uploaded to the marketplace is scanned before storage. The scanner blocks:</p>
+  <table>
+    <thead><tr><th>Blocked module / pattern</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td><code>socket</code></td><td>Arbitrary network access</td></tr>
+      <tr><td><code>subprocess</code></td><td>Shell command execution</td></tr>
+      <tr><td><code>ctypes</code></td><td>Native code / memory access</td></tr>
+      <tr><td><code>os.system</code></td><td>Shell execution via os</td></tr>
+      <tr><td><code>eval</code> / <code>exec</code></td><td>Dynamic code execution</td></tr>
+      <tr><td><code>__import__</code></td><td>Dynamic import bypass</td></tr>
+      <tr><td><code>requests</code> / <code>urllib</code> / <code>aiohttp</code></td><td>Outbound HTTP</td></tr>
+    </tbody>
+  </table>
+  <p>File access is allowed only under <code>/plugins/</code>.</p>
+
+  <h2>Audit Logging</h2>
+  <p>Every org-level action is written to an append-only SQLite audit log:</p>
+  <pre><code class="language-python">from physicore.api.audit import get_audit_log
+
+log = get_audit_log()
+events = log.query(org_id="org-abc", action="plugin.install", limit=50)
+for e in events:
+    print(f"{e.timestamp}  {e.user_id}  {e.action}  {e.status}")</code></pre>
+
+  <h2>Hardware E-Stop Integration</h2>
+  <p>For real hardware, wire your physical e-stop to call <code>sentinel.trigger_estop()</code>:</p>
+  <pre><code class="language-python">import signal
+
+def on_sigterm(sig, frame):
+    sentinel.trigger_estop(reason="SIGTERM received")
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, on_sigterm)
+signal.signal(signal.SIGINT, on_sigterm)</code></pre>
+
+  <div class="callout warn">
+    <strong>Best practice:</strong> Always test your e-stop path before a real-robot deployment. Confirm that <code>trigger_estop()</code> reaches the actuators within your hardware's safe response window.
+  </div>
+
+  <h2>Checklist Before Real Deployment</h2>
+  <ul>
+    <li>Run 1000+ simulation steps at 10× speed and verify no sentinel triggers</li>
+    <li>Confirm state bounds match your physical workspace</li>
+    <li>Set <code>residual_estop</code> to a value calibrated from sim-to-real gap measurements</li>
+    <li>Test hardware e-stop path end-to-end</li>
+    <li>Enable audit logging for all robot actions</li>
+    <li>Set <code>watchdog_timeout_s</code> below your actuator's safe coastdown time</li>
+  </ul>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

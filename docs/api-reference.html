@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>API Reference — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>API Reference</div>
+  <h1>API Reference</h1>
+  <p>The PhysiCore FastAPI server exposes a REST API on <code>http://localhost:8000</code>. Interactive docs available at <code>/docs</code> (Swagger) and <code>/redoc</code>.</p>
+
+  <div class="callout">Start the server with <code>physicore serve</code> or <code>uvicorn physicore.api.server:app</code></div>
+
+  <h2>Core</h2>
+
+  <h3><span class="badge badge-green">GET</span> /health</h3>
+  <p>Returns server health and version info.</p>
+  <pre><code class="language-json">{ "status": "ok", "version": "1.3.0", "platform_count": 12 }</code></pre>
+
+  <h3><span class="badge badge-blue">GET</span> /api/platforms</h3>
+  <p>List all supported platform identifiers.</p>
+  <pre><code class="language-json">["balancing_bot", "quadrotor", "fixed_wing", "evtol", "manipulator_arm",
+ "legged_robot", "ground_rover", "rocket", "auv", "satellite"]</code></pre>
+
+  <h2>Fleet</h2>
+
+  <h3><span class="badge badge-green">POST</span> /api/fleet/register</h3>
+  <p>Register a new robot in the fleet.</p>
+  <pre><code class="language-json">// Request body
+{
+  "robot_id": "bot-001",
+  "platform": "balancing_bot",
+  "params": { "mass": 1.0, "friction": 0.15, "inertia": 0.01 }
+}
+// Response
+{ "robot_id": "bot-001", "status": "registered" }</code></pre>
+
+  <h3><span class="badge badge-blue">GET</span> /api/fleet/health</h3>
+  <p>Returns health status for all registered robots.</p>
+  <pre><code class="language-json">[
+  { "robot_id": "bot-001", "platform": "balancing_bot", "status": "healthy", "residual_norm": 0.0012 }
+]</code></pre>
+
+  <h3><span class="badge badge-green">POST</span> /api/fleet/{robot_id}/step</h3>
+  <p>Run one MPC step for a specific robot.</p>
+  <pre><code class="language-json">// Request body
+{ "state": [0.1, 0.0, 0.0, 0.0], "action_hint": [0.0] }
+// Response
+{ "action": [0.23], "residual_norm": 0.0034, "step_time_ms": 4.2 }</code></pre>
+
+  <h2>Telemetry</h2>
+
+  <h3><span class="badge badge-blue">GET</span> /api/telemetry/sessions</h3>
+  <p>List all recorded telemetry sessions.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/telemetry/sessions/{session_id}</h3>
+  <p>Get all steps for a session.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/telemetry/sessions/{session_id}/export</h3>
+  <p>Export session data. Query param: <code>format=csv</code> or <code>format=json</code>.</p>
+
+  <h3><span class="badge badge-red">DELETE</span> /api/telemetry/sessions/{session_id}</h3>
+  <p>Delete a session and all its steps.</p>
+
+  <h2>Trajectory Planning</h2>
+
+  <h3><span class="badge badge-green">POST</span> /api/plan/joint</h3>
+  <pre><code class="language-json">// Request
+{ "robot_id": "arm-001", "q_start": [0,0,0,0], "q_goal": [1,0.5,-0.3,0], "duration": 3.0 }
+// Response
+{ "trajectory_id": "traj-abc123", "n_points": 150, "duration": 3.0,
+  "collision_clear": true }</code></pre>
+
+  <h3><span class="badge badge-green">POST</span> /api/plan/task</h3>
+  <p>Plan a trajectory to a task-space target (uses IK internally).</p>
+
+  <h3><span class="badge badge-green">POST</span> /api/plan/waypoints</h3>
+  <p>Plan through a sequence of joint configurations with quintic blending.</p>
+
+  <h3><span class="badge badge-green">POST</span> /api/plan/circular</h3>
+  <p>Plan a circular arc trajectory in task space.</p>
+
+  <h3><span class="badge badge-green">POST</span> /api/execute/{trajectory_id}</h3>
+  <p>Execute a previously planned trajectory. Query param: <code>async_mode=true</code>.</p>
+
+  <h2>Organizations</h2>
+
+  <h3><span class="badge badge-green">POST</span> /api/orgs</h3>
+  <p>Create a new organization. Header: <code>X-User-Id</code>.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/orgs/{org_id}</h3>
+  <p>Get organization details.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/orgs/{org_id}/members</h3>
+  <p>List all members and their roles.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/orgs/{org_id}/usage</h3>
+  <p>Get current usage vs. quota for the organization.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/orgs/{org_id}/audit</h3>
+  <p>Query the audit log. Query params: <code>action</code>, <code>since</code>, <code>limit</code>.</p>
+
+  <h2>Marketplace</h2>
+
+  <h3><span class="badge badge-blue">GET</span> /api/marketplace</h3>
+  <p>Search/list plugins. Query params: <code>q</code>, <code>category</code>, <code>free_only</code>, <code>verified_only</code>.</p>
+
+  <h3><span class="badge badge-blue">GET</span> /api/marketplace/{plugin_id}</h3>
+  <p>Get full plugin details including reviews and screenshots.</p>
+
+  <h3><span class="badge badge-green">POST</span> /api/marketplace/{plugin_id}/install</h3>
+  <p>Install a plugin for a user. Header: <code>X-User-Id</code>.</p>
+
+  <h3><span class="badge badge-green">POST</span> /api/marketplace/{plugin_id}/rate</h3>
+  <p>Submit a rating and review for a plugin.</p>
+
+  <h2>WebSocket</h2>
+  <h3>ws://localhost:8000/ws/telemetry</h3>
+  <p>Real-time telemetry stream. The server pushes a JSON frame every control step:</p>
+  <pre><code class="language-json">{
+  "robot_id": "bot-001",
+  "t": 1.24,
+  "state": [0.02, -0.01, 0.1, 0.03],
+  "action": [0.14],
+  "residual_norm": 0.0008
+}</code></pre>
+
+  <div class="callout tip">
+    <strong>Interactive docs:</strong> Visit <code>http://localhost:8000/docs</code> while the server is running for a live Swagger UI with try-it-out for every endpoint.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

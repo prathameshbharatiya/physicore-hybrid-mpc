@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Deployment — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Deployment</div>
+  <h1>Deployment</h1>
+  <p>PhysiCore can be deployed as a local process, a Docker container, or a cloud-native service.</p>
+
+  <h2>Local (Development)</h2>
+  <pre><code class="language-bash"># Start API server
+physicore serve --host 0.0.0.0 --port 8000
+
+# Start React dev server (separate terminal)
+npm run dev
+
+# Open dashboard
+open http://localhost:5173</code></pre>
+
+  <h2>Docker (Single Container)</h2>
+  <pre><code class="language-bash"># Build
+docker build -t physicore:latest .
+
+# Run — serves API + built frontend on :8000
+docker run -p 8000:8000 \
+  -v ~/.physicore:/root/.physicore \
+  physicore:latest</code></pre>
+
+  <h2>Docker Compose (Recommended)</h2>
+  <pre><code class="language-bash">docker compose up          # foreground
+docker compose up -d       # background
+docker compose logs -f     # follow logs
+docker compose down        # stop</code></pre>
+
+  <pre><code class="language-yaml"># docker-compose.yml (already included in the repo)
+services:
+  physicore:
+    build: .
+    ports: ["8000:8000"]
+    volumes:
+      - ~/.physicore:/root/.physicore
+    environment:
+      - PHYSICORE_HOST=0.0.0.0
+      - PHYSICORE_PORT=8000
+    restart: unless-stopped</code></pre>
+
+  <h2>Environment Variables</h2>
+  <table>
+    <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>PHYSICORE_HOST</code></td><td><code>127.0.0.1</code></td><td>API server bind address</td></tr>
+      <tr><td><code>PHYSICORE_PORT</code></td><td><code>8000</code></td><td>API server port</td></tr>
+      <tr><td><code>PHYSICORE_REGISTRY</code></td><td><code>~/.physicore/registry</code></td><td>Model registry path</td></tr>
+      <tr><td><code>PHYSICORE_DB</code></td><td><code>~/.physicore/physicore.db</code></td><td>SQLite database path</td></tr>
+      <tr><td><code>PHYSICORE_WORKERS</code></td><td><code>1</code></td><td>Uvicorn worker count</td></tr>
+      <tr><td><code>PHYSICORE_LOG_LEVEL</code></td><td><code>info</code></td><td>Logging level</td></tr>
+      <tr><td><code>NO_COLOR</code></td><td>unset</td><td>Disable CLI colour output</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Production Hardening</h2>
+  <h3>Multiple Workers</h3>
+  <pre><code class="language-bash">physicore serve --workers 4
+# or
+uvicorn physicore.api.server:app --workers 4 --host 0.0.0.0</code></pre>
+
+  <div class="callout warn">
+    <strong>Note:</strong> The in-memory fleet state is not shared across workers. Use a single worker for fleet management, or move fleet state to Redis/PostgreSQL for multi-worker deployments.
+  </div>
+
+  <h3>Reverse Proxy (nginx)</h3>
+  <pre><code class="language-nginx">server {
+    listen 443 ssl;
+    server_name api.yourrobot.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 300s;
+    }
+}</code></pre>
+
+  <h3>Systemd Service</h3>
+  <pre><code class="language-ini">[Unit]
+Description=PhysiCore API Server
+After=network.target
+
+[Service]
+User=physicore
+WorkingDirectory=/opt/physicore
+ExecStart=physicore serve --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+Environment=PHYSICORE_LOG_LEVEL=info
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+  <pre><code class="language-bash">sudo systemctl enable physicore
+sudo systemctl start physicore</code></pre>
+
+  <h2>CI/CD — GitHub Actions</h2>
+  <p>The repo ships two workflows:</p>
+  <ul>
+    <li><strong>ci.yml</strong> — runs on every push/PR: pytest, TypeScript check, Docker build</li>
+    <li><strong>release.yml</strong> — triggered on <code>v*</code> tags: test → Docker push → PyPI publish → GitHub Release</li>
+  </ul>
+  <pre><code class="language-bash"># Tag and release v1.0.0
+git tag v1.0.0
+git push --tags
+# GitHub Actions picks up the tag and runs release.yml automatically</code></pre>
+
+  <h2>Cloud Platforms</h2>
+  <table>
+    <thead><tr><th>Platform</th><th>Command</th></tr></thead>
+    <tbody>
+      <tr><td>Fly.io</td><td><code>fly launch --image physicore:latest</code></td></tr>
+      <tr><td>Railway</td><td>Connect GitHub repo, set <code>START_COMMAND=physicore serve</code></td></tr>
+      <tr><td>Render</td><td>Docker deploy, set <code>PORT=8000</code></td></tr>
+      <tr><td>AWS ECS</td><td>Push image to ECR, create Fargate task with port 8000</td></tr>
+      <tr><td>GCP Cloud Run</td><td><code>gcloud run deploy physicore --image gcr.io/…/physicore</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout tip">
+    <strong>Vercel frontend:</strong> The repo includes <code>vercel.json</code> — run <code>vercel deploy</code> to host the React dashboard on Vercel's CDN while keeping the Python API on your server.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>

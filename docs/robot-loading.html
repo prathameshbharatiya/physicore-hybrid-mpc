@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Robot Loading — PhysiCore</title>
+  <link rel="stylesheet" href="_base.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+</head>
+<body>
+<aside id="sidebar">
+  <a class="logo" href="index.html"><div><span>PhysiCore</span><em>Hybrid MPC Engine</em></div></a>
+  <div id="search-wrap">
+    <input id="search-input" type="search" placeholder="Search docs…" autocomplete="off"/>
+    <div id="search-results"></div>
+  </div>
+</aside>
+
+<main id="main">
+  <div class="breadcrumb"><a href="index.html">Docs</a><span>›</span>Robot Loading</div>
+  <h1>Robot Loading</h1>
+  <p>PhysiCore supports three ways to define a robot: built-in platform dynamics, URDF files, and custom dynamics functions.</p>
+
+  <h2>Option 1 — Built-in Platform</h2>
+  <p>The fastest way to get started. Choose from 12 pre-built platforms:</p>
+  <pre><code class="language-python">from physicore import PhysiCore
+
+engine = PhysiCore.for_platform(
+    "quadrotor",
+    params={"mass": 1.5, "arm_length": 0.25, "k_thrust": 3.16e-6,
+            "k_torque": 7.94e-9, "Ixx": 0.02, "Iyy": 0.02, "Izz": 0.04}
+)</code></pre>
+
+  <h2>Option 2 — URDF File</h2>
+  <pre><code class="language-python">from physicore.core.urdf_loader import load_robot, build_robot_model
+
+# Parse the URDF — returns joint/link structure
+model = load_robot("my_robot.urdf")
+print(f"Robot: {model.robot_name}, {model.n_joints} joints")
+
+for joint in model.joints:
+    print(f"  {joint.name}: {joint.joint_type}  limits=[{joint.limit_lower:.2f}, {joint.limit_upper:.2f}]")
+
+# Build a numerical model (FK, Jacobian, IK)
+robot = build_robot_model("my_robot.urdf")
+
+import numpy as np
+q = np.zeros(robot.n_joints)
+T = robot.forward_kinematics(q)   # 4×4 homogeneous transform
+J = robot.jacobian(q)             # 6×n Jacobian</code></pre>
+
+  <h2>Option 3 — YAML Config</h2>
+  <pre><code class="language-bash">physicore robot new my_arm --platform manipulator_arm
+# Generates my_arm.yaml</code></pre>
+
+  <pre><code class="language-yaml"># my_arm.yaml
+robot:
+  name: my_arm
+  platform: manipulator_arm
+  urdf: path/to/arm.urdf   # optional
+
+physics:
+  mass: 2.0
+  friction: 0.05
+  inertia: 0.02
+
+control:
+  state_dim: 8
+  action_dim: 4
+  dt: 0.01
+  horizon: 25
+
+mpc:
+  optimizer: cem
+  samples: 512
+  elites: 64
+  iterations: 5
+
+bridge:
+  type: sim   # sim | serial | mavlink | ros2
+  connection: null
+
+plugins: []</code></pre>
+
+  <pre><code class="language-bash">physicore robot load my_arm.yaml</code></pre>
+
+  <h2>Option 4 — Custom Dynamics Function</h2>
+  <pre><code class="language-python">import numpy as np
+from physicore import PhysiCore, PhysiCoreConfig
+
+def my_dynamics(state, action, params):
+    """Returns xdot = f(x, u, params)."""
+    x, v = state[0], state[1]
+    u = action[0]
+    m = params.get("mass", 1.0)
+    xdot = np.array([v, (u - params.get("friction", 0.1) * v) / m])
+    return xdot
+
+cfg = PhysiCoreConfig(state_dim=2, action_dim=1, horizon=20, dt=0.02)
+engine = PhysiCore(cfg, dynamics_fn=my_dynamics, platform_params={"mass": 1.0, "friction": 0.1})</code></pre>
+
+  <h2>JointInfo Fields</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+    <tbody>
+      <tr><td><code>name</code></td><td>str</td><td>Joint name from URDF</td></tr>
+      <tr><td><code>joint_type</code></td><td>str</td><td><code>revolute</code>, <code>prismatic</code>, <code>fixed</code>, <code>continuous</code></td></tr>
+      <tr><td><code>parent</code></td><td>str</td><td>Parent link name</td></tr>
+      <tr><td><code>child</code></td><td>str</td><td>Child link name</td></tr>
+      <tr><td><code>origin_xyz</code></td><td>array[3]</td><td>Translation offset</td></tr>
+      <tr><td><code>origin_rpy</code></td><td>array[3]</td><td>Rotation offset (roll-pitch-yaw)</td></tr>
+      <tr><td><code>axis</code></td><td>array[3]</td><td>Joint rotation/translation axis</td></tr>
+      <tr><td><code>limit_lower</code></td><td>float</td><td>Lower position limit (rad or m)</td></tr>
+      <tr><td><code>limit_upper</code></td><td>float</td><td>Upper position limit</td></tr>
+      <tr><td><code>limit_effort</code></td><td>float</td><td>Max torque/force (N·m or N)</td></tr>
+      <tr><td><code>limit_velocity</code></td><td>float</td><td>Max velocity (rad/s or m/s)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>CLI Shortcut</h2>
+  <pre><code class="language-bash"># Validate and inspect any robot file
+physicore robot load path/to/robot.urdf
+physicore robot load path/to/config.yaml</code></pre>
+
+  <div class="callout tip">
+    <strong>Example:</strong> See <code>examples/load_any_urdf.py</code> for a complete URDF loading demo with FK and Jacobian inspection.
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+<script src="_nav.js"></script>
+</body>
+</html>
