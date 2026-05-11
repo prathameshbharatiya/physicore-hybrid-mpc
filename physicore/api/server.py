@@ -1227,6 +1227,130 @@ async def safety_reset_estop():
 
 
 
+# ── Phase 5: Telemetry Store endpoints ────────────────────────────────────────
+
+try:
+    from physicore.data.telemetry_store import TelemetryStore as _TelemetryStore, get_store as _get_store
+    from physicore.tools.analytics import SessionAnalytics as _SessionAnalytics
+    HAS_TELEMETRY = True
+except ImportError:
+    HAS_TELEMETRY = False
+
+def _ts() -> "_TelemetryStore":
+    if not HAS_TELEMETRY:
+        raise HTTPException(503, "Telemetry store not available")
+    return _get_store()
+
+
+@app.get("/api/telemetry/sessions")
+async def telemetry_sessions(robot_id: Optional[str] = None, limit: int = 50):
+    """List telemetry sessions, optionally filtered by robot_id."""
+    store = _ts()
+    recs  = store.sessions(robot_id=robot_id, limit=limit)
+    return {"sessions": [r.to_dict() for r in recs], "count": len(recs)}
+
+
+@app.get("/api/telemetry/sessions/{session_id}")
+async def telemetry_session_detail(session_id: str):
+    """Full session record including metadata."""
+    store = _ts()
+    rec   = store.get_session(session_id)
+    if rec is None:
+        raise HTTPException(404, f"Session {session_id!r} not found")
+    data  = store.query_session(session_id)
+    return {
+        "session":        rec.to_dict(),
+        "available_keys": list(data.keys()),
+    }
+
+
+@app.get("/api/telemetry/sessions/{session_id}/data")
+async def telemetry_session_data(session_id: str, key: str = "residual", limit: int = 2000):
+    """Time-series data for a specific key within a session."""
+    store = _ts()
+    data  = store.query_session(session_id, keys=[key])
+    pts   = data.get(key, [])
+    return {"session_id": session_id, "key": key, "points": pts[:limit]}
+
+
+@app.get("/api/telemetry/sessions/{session_id}/export.csv")
+async def telemetry_export_csv(session_id: str):
+    """Download session data as CSV."""
+    import tempfile
+    from pathlib import Path as _Path
+    from fastapi.responses import FileResponse
+    store = _ts()
+    rec   = store.get_session(session_id)
+    if rec is None:
+        raise HTTPException(404, f"Session {session_id!r} not found")
+    tmp   = _Path(tempfile.mktemp(suffix=".csv", prefix="physicore_tel_"))
+    store.export_csv(session_id, tmp)
+    return FileResponse(
+        str(tmp),
+        media_type="text/csv",
+        filename=f"physicore_session_{session_id}.csv",
+    )
+
+
+@app.delete("/api/telemetry/sessions/{session_id}")
+async def telemetry_delete_session(session_id: str):
+    """Delete a session and all its telemetry rows."""
+    store   = _ts()
+    deleted = store.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(404, f"Session {session_id!r} not found")
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.get("/api/telemetry/stats")
+async def telemetry_stats():
+    """Database statistics — total sessions, rows, and disk size."""
+    return _ts().stats()
+
+
+# ── Phase 5: Analytics endpoints ──────────────────────────────────────────────
+
+def _analytics() -> "_SessionAnalytics":
+    if not HAS_TELEMETRY:
+        raise HTTPException(503, "Analytics not available")
+    return _SessionAnalytics(_ts())
+
+
+@app.get("/api/analytics/session/{session_id}/convergence")
+async def analytics_convergence(session_id: str):
+    """Exponential decay fit for the residual series — returns tau (convergence rate)."""
+    tau = _analytics().convergence_rate(session_id)
+    return {"session_id": session_id, "convergence_tau": tau}
+
+
+@app.get("/api/analytics/session/{session_id}/anomaly")
+async def analytics_anomaly(session_id: str):
+    """Mahalanobis distance from the platform prior — higher = more anomalous."""
+    score = _analytics().anomaly_score(session_id)
+    label = "normal" if score < 2.0 else ("unusual" if score < 4.0 else "anomalous")
+    return {"session_id": session_id, "anomaly_score": score, "label": label}
+
+
+@app.get("/api/analytics/compare")
+async def analytics_compare(a: str, b: str):
+    """Statistical comparison of two sessions."""
+    report = _analytics().compare(a, b)
+    return report.to_dict()
+
+
+@app.get("/api/analytics/fleet/summary")
+async def analytics_fleet_summary(robot_ids: Optional[str] = None):
+    """Fleet-wide analytics. robot_ids is a comma-separated list."""
+    store = _ts()
+    if robot_ids:
+        ids = [r.strip() for r in robot_ids.split(",") if r.strip()]
+    else:
+        recs = store.sessions(limit=500)
+        ids  = list({r.robot_id for r in recs})
+    report = _analytics().fleet_summary(ids)
+    return report.to_dict()
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn

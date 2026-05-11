@@ -775,6 +775,11 @@ class PhysiCore:
         self._interlock     = None   # HardwareSafetyInterlock | None
         self.is_estopped    = False
 
+        # ── Phase 5 attachments ────────────────────────────────────────
+        self._telemetry_store  = None   # TelemetryStore | None
+        self._tel_session_id   = None   # str | None
+        self._tel_robot_id     = None   # str | None
+
     @classmethod
     def for_platform(cls, platform, initial_params=None, Q=None, R=None,
                      action_bounds=None, control_hz=60.0, wind_intensity=0.0, **kw):
@@ -954,6 +959,11 @@ class PhysiCore:
 
         return result
 
+    def attach_telemetry_store(self, store, session_id: str, robot_id: str = "default") -> None:
+        self._telemetry_store = store
+        self._tel_session_id  = session_id
+        self._tel_robot_id    = robot_id
+
     def observe(self, state, action, next_state):
         if self._last_sim_pred is None: return
         self.ensemble.add_experience(state,action,self._last_sim_pred,next_state)
@@ -965,6 +975,24 @@ class PhysiCore:
             self.cem.update_params(new_params)
         if self._latency_comp is not None:
             self._latency_comp.update_params(new_params)
+        # Write step metrics to telemetry store if one is attached
+        if self._telemetry_store is not None and self._tel_session_id is not None:
+            d = self.diagnostics_full
+            metrics: dict = {
+                "residual":    d["residual_norm"],
+                "uncertainty": d["uncertainty"],
+            }
+            if d["sysid_loss_hist"]:
+                metrics["sysid_loss"] = d["sysid_loss_hist"][-1]
+            for k, v in new_params.items():
+                metrics[f"param_{k}"] = v
+            self._telemetry_store.write(
+                self._tel_robot_id,
+                self._tel_session_id,
+                self._step_count,
+                time.time(),
+                metrics,
+            )
 
     def set_wind(self, intensity):
         global _DEFAULT_WIND; _DEFAULT_WIND=WindField(intensity=intensity)
