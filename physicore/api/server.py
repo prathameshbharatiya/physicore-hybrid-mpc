@@ -1108,6 +1108,125 @@ async def health_check():
     return {"status": "ok", "version": "1.1.0", "timestamp": time.time()}
 
 
+# ── Safety Interlock endpoints ─────────────────────────────────────────────────
+
+try:
+    from physicore.core.safety import HardwareSafetyInterlock, SafetyConfig
+    HAS_SAFETY = True
+except ImportError:
+    HAS_SAFETY = False
+
+_interlock: Optional[HardwareSafetyInterlock] = None
+
+
+def _get_or_create_interlock() -> Optional["HardwareSafetyInterlock"]:
+    """Return interlock attached to current engine, or create a default one."""
+    global _interlock
+    if not HAS_SAFETY:
+        return None
+    engine = engine_state.engine
+    if engine is not None and getattr(engine, '_interlock', None) is not None:
+        _interlock = engine._interlock
+    if _interlock is None and engine is not None:
+        cfg = SafetyConfig(
+            torque_limits=np.full(engine.cfg.action_dim, 200.0),
+            action_dim=engine.cfg.action_dim,
+        )
+        _interlock = HardwareSafetyInterlock(cfg)
+        engine.attach_interlock(_interlock)
+    return _interlock
+
+
+@app.get("/api/safety/status")
+async def safety_status():
+    """Current hardware safety interlock state and violation log."""
+    if not HAS_SAFETY:
+        raise HTTPException(503, "Safety module not available")
+    il = _get_or_create_interlock()
+    if il is None:
+        raise HTTPException(503, "No engine configured — POST /api/engine/configure first")
+
+    engine = engine_state.engine
+    last_action = (engine._last_action.tolist()
+                   if engine is not None and engine._last_action is not None else [])
+    torque_limits = (il.config.torque_limits.tolist()
+                     if il.config.torque_limits is not None else None)
+
+    # Workspace check
+    workspace_inside = True
+    if engine is not None and engine._last_state is not None and il.config.workspace_box is not None:
+        pos = engine._last_state[:3]
+        lo, hi = il.config.workspace_box[0], il.config.workspace_box[1]
+        workspace_inside = bool(np.all(pos >= lo) and np.all(pos <= hi))
+
+    return {
+        "armed":            il.is_armed,
+        "is_estopped":      il.is_estopped,
+        "escalation_level": il.escalation_level.value,
+        "violations":       il.violation_log,
+        "action_dim":       il.config.action_dim,
+        "last_action":      last_action,
+        "torque_limits":    torque_limits,
+        "workspace_inside": workspace_inside,
+        "timestamp":        time.time(),
+    }
+
+
+@app.post("/api/safety/arm")
+async def safety_arm():
+    """Arm the hardware safety interlock."""
+    if not HAS_SAFETY:
+        raise HTTPException(503, "Safety module not available")
+    il = _get_or_create_interlock()
+    if il is None:
+        raise HTTPException(503, "No engine configured")
+    il.arm()
+    return {"status": "armed", "timestamp": time.time()}
+
+
+@app.post("/api/safety/disarm")
+async def safety_disarm():
+    """Disarm the hardware safety interlock."""
+    if not HAS_SAFETY:
+        raise HTTPException(503, "Safety module not available")
+    il = _get_or_create_interlock()
+    if il is None:
+        raise HTTPException(503, "No engine configured")
+    il.disarm()
+    return {"status": "disarmed", "timestamp": time.time()}
+
+
+@app.post("/api/safety/estop")
+async def safety_estop():
+    """Trigger emergency stop. Engine will return zero actions until reset."""
+    if not HAS_SAFETY:
+        raise HTTPException(503, "Safety module not available")
+    il = _get_or_create_interlock()
+    if il is None:
+        raise HTTPException(503, "No engine configured")
+    il.emergency_stop()
+    if engine_state.engine is not None:
+        engine_state.engine.is_estopped = True
+    return {"status": "estopped", "timestamp": time.time()}
+
+
+@app.post("/api/safety/reset_estop")
+async def safety_reset_estop():
+    """Reset emergency stop after hardware inspection."""
+    if not HAS_SAFETY:
+        raise HTTPException(503, "Safety module not available")
+    il = _get_or_create_interlock()
+    if il is None:
+        raise HTTPException(503, "No engine configured")
+    il.reset_estop()
+    if engine_state.engine is not None:
+        engine_state.engine.is_estopped = False
+    return {"status": "estop_reset", "timestamp": time.time()}
+
+
+
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn

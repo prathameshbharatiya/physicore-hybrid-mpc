@@ -16,6 +16,7 @@ import {
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import SimulationCanvas from './src/components/SimulationCanvas';
 import PhysiEditor from './src/components/PhysiEditor';
+import SafetyPanel from './src/components/SafetyPanel';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -469,7 +470,7 @@ const COLORS = {
 
 // --- TYPES ---
 type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper' | 'dashboard';
-type ProjectTab = 'integrate' | 'build' | 'debug' | 'live';
+type ProjectTab = 'integrate' | 'build' | 'debug' | 'live' | 'safety';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -4530,15 +4531,15 @@ Be direct, technical, confident. You are the world's best robotics integration e
             <ChevronRight size={12} className="text-textDim shrink-0" />
             <span className="font-mono text-[10px] text-white uppercase tracking-widest truncate max-w-[120px]">{activeProject.name}</span>
             <div className="h-4 w-px bg-border mx-2 shrink-0" />
-            {(['integrate', 'build', 'debug', 'live'] as ProjectTab[]).map(tab => (
+            {(['integrate', 'build', 'debug', 'live', 'safety'] as ProjectTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setProjectTab(tab)}
                 className={`px-2.5 py-1 font-display text-[9px] font-bold uppercase tracking-widest transition-all shrink-0 ${projectTab === tab
-                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : 'bg-green text-black'
+                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : tab === 'safety' ? 'bg-red-700 text-white' : 'bg-green text-black'
                   : 'text-textDim hover:text-textPrimary border border-transparent hover:border-border'}`}
               >
-                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : 'LIVE'}
+                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : tab === 'safety' ? 'SAFETY' : 'LIVE'}
                 {tab === 'debug' && (telemetry.isFaulted || failureLogs.length > 0) && (
                   <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
                 )}
@@ -8017,6 +8018,22 @@ class FrictionLogger(PhysiCoreExtension):
         case 'build': return renderBuildTab();
         case 'debug': return renderDebugger();
         case 'live': return renderDashboard();
+        case 'safety': return (
+          <div className="min-h-screen bg-[#0a0e1a] p-6">
+            <div className="max-w-2xl mx-auto">
+              <div className="flex items-center gap-3 mb-6">
+                <Shield size={20} className="text-red-400" />
+                <h2 className="font-mono text-sm font-bold text-white uppercase tracking-widest">
+                  Hardware Safety Interlock
+                </h2>
+              </div>
+              <div className="border border-slate-700/50 rounded-lg bg-slate-900/40 overflow-hidden"
+                   style={{ minHeight: 600 }}>
+                <SafetyPanel apiBase="http://localhost:8000" />
+              </div>
+            </div>
+          </div>
+        );
         default: return renderIntegrator();
       }
     };

@@ -769,6 +769,12 @@ class PhysiCore:
         # RT thread reference (set by bridge when PHYSICORE_RT=1)
         self._rt_thread = None
 
+        # ── Phase 3 attachments ────────────────────────────────────────
+        self._estimator     = None   # StateEstimator | None
+        self._contact_solver= None   # RigidContactSolver | None
+        self._interlock     = None   # HardwareSafetyInterlock | None
+        self.is_estopped    = False
+
     @classmethod
     def for_platform(cls, platform, initial_params=None, Q=None, R=None,
                      action_bounds=None, control_hz=60.0, wind_intensity=0.0, **kw):
@@ -846,8 +852,42 @@ class PhysiCore:
             f"(state_dim={state_dim}, action_dim={action_dim})"
         )
 
+    # ── Phase 3: attach methods ────────────────────────────────────────────────
+
+    def attach_estimator(self, estimator) -> None:
+        """Attach a StateEstimator. engine.step() will use estimator.estimate as state."""
+        self._estimator = estimator
+
+    def attach_contact_solver(self, solver) -> None:
+        """Attach a RigidContactSolver for use by contact-aware dynamics."""
+        self._contact_solver = solver
+
+    def attach_interlock(self, interlock) -> None:
+        """Attach a HardwareSafetyInterlock. Actions are clipped each step."""
+        self._interlock = interlock
+
     def step(self, state, x_ref):
         t0=time.perf_counter()
+
+        # ── E-stop fast path ───────────────────────────────────────────────
+        if self.is_estopped:
+            zero = np.zeros(self.cfg.action_dim)
+            return ControlStep(action=zero, state_predicted=np.asarray(state, dtype=float),
+                               residual=zero, residual_norm=0.0, residual_axis=zero,
+                               uncertainty=0.0, params=self.physics.params.copy(),
+                               loop_time_ms=0.0, step_count=self._step_count,
+                               action_clipped=True, certificate="ESTOPPED",
+                               failure_events=[])
+
+        # ── EKF state estimation ───────────────────────────────────────────
+        if self._estimator is not None:
+            self._estimator.predict(
+                np.asarray(state, dtype=float),
+                self._last_action if self._last_action is not None else np.zeros(self.cfg.action_dim),
+                self.physics.dynamics_fn, self.physics.params, self.cfg.dt,
+            )
+            state = self._estimator.estimate
+
         # Extension pre_step hooks
         if self._extensions:
             state, x_ref = self._extensions.run_pre_step(state, x_ref, self)
@@ -881,6 +921,21 @@ class PhysiCore:
             step=self._step_count,residual=residual_norm,uncertainty=unc,
             loop_ms=loop_ms,state=state,params=self.physics.params,
             action_clipped=clipped,sysid_loss=sysid_loss)
+
+        # ── Hardware safety interlock ──────────────────────────────────────
+        if self._interlock is not None and self._interlock.is_armed:
+            if self._interlock.is_estopped:
+                self.is_estopped = True
+                action = np.zeros_like(action)
+                clipped = True
+            else:
+                action, _viols = self._interlock.check_and_clip(
+                    action, np.asarray(state, dtype=float), self.physics.params
+                )
+                if _viols:
+                    clipped = True
+                if self._interlock.is_estopped:
+                    self.is_estopped = True
 
         self._last_action=action.copy(); self._last_state=state.copy()
         self._last_sim_pred=x_sim.copy(); self._step_count+=1
