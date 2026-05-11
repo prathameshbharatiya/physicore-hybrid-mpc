@@ -19,6 +19,7 @@ import PhysiEditor from './src/components/PhysiEditor';
 import SafetyPanel from './src/components/SafetyPanel';
 import PluginDashboard from './src/components/PluginDashboard';
 import TelemetryExplorer from './src/components/TelemetryExplorer';
+import TrajectoryPanel from './src/components/TrajectoryPanel';
 import { 
   Activity, Cpu, Shield, Zap, ChevronRight, ChevronLeft, 
   Play, Download, Terminal, AlertTriangle, CheckCircle2, 
@@ -472,7 +473,7 @@ const COLORS = {
 
 // --- TYPES ---
 type View = 'home' | 'project' | 'manual' | 'team' | 'projects' | 'whitepaper' | 'dashboard';
-type ProjectTab = 'integrate' | 'build' | 'debug' | 'live' | 'safety' | 'plugins' | 'data';
+type ProjectTab = 'integrate' | 'build' | 'debug' | 'live' | 'safety' | 'plugins' | 'data' | 'plan';
 type Platform = 'ROS2' | 'ARDUPILOT' | 'PX4' | 'MATLAB' | 'CUSTOM';
 
 interface SystemProfile {
@@ -4533,15 +4534,15 @@ Be direct, technical, confident. You are the world's best robotics integration e
             <ChevronRight size={12} className="text-textDim shrink-0" />
             <span className="font-mono text-[10px] text-white uppercase tracking-widest truncate max-w-[120px]">{activeProject.name}</span>
             <div className="h-4 w-px bg-border mx-2 shrink-0" />
-            {(['integrate', 'build', 'debug', 'live', 'safety', 'plugins', 'data'] as ProjectTab[]).map(tab => (
+            {(['integrate', 'build', 'debug', 'live', 'safety', 'plugins', 'data', 'plan'] as ProjectTab[]).map(tab => (
               <button
                 key={tab}
                 onClick={() => setProjectTab(tab)}
                 className={`px-2.5 py-1 font-display text-[9px] font-bold uppercase tracking-widest transition-all shrink-0 ${projectTab === tab
-                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : tab === 'safety' ? 'bg-red-700 text-white' : tab === 'plugins' ? 'bg-violet-600 text-white' : tab === 'data' ? 'bg-sky-600 text-white' : 'bg-green text-black'
+                  ? tab === 'live' ? 'bg-cyan text-black' : tab === 'debug' ? 'bg-red text-white' : tab === 'build' ? 'bg-amber text-black' : tab === 'safety' ? 'bg-red-700 text-white' : tab === 'plugins' ? 'bg-violet-600 text-white' : tab === 'data' ? 'bg-sky-600 text-white' : tab === 'plan' ? 'bg-emerald-600 text-white' : 'bg-green text-black'
                   : 'text-textDim hover:text-textPrimary border border-transparent hover:border-border'}`}
               >
-                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : tab === 'safety' ? 'SAFETY' : tab === 'plugins' ? 'PLUGINS' : tab === 'data' ? 'DATA' : 'LIVE'}
+                {tab === 'integrate' ? 'INTEGRATE' : tab === 'build' ? 'BUILD' : tab === 'debug' ? 'DEBUG' : tab === 'safety' ? 'SAFETY' : tab === 'plugins' ? 'PLUGINS' : tab === 'data' ? 'DATA' : tab === 'plan' ? 'PLAN' : 'LIVE'}
                 {tab === 'debug' && (telemetry.isFaulted || failureLogs.length > 0) && (
                   <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-red animate-pulse" />
                 )}
@@ -8059,6 +8060,19 @@ class FrictionLogger(PhysiCoreExtension):
                 </h2>
               </div>
               <TelemetryExplorer apiBase="http://localhost:8000" />
+            </div>
+          </div>
+        );
+        case 'plan': return (
+          <div className="min-h-screen bg-[#0a0e1a] p-6">
+            <div className="max-w-6xl mx-auto h-full">
+              <div className="flex items-center gap-3 mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <h2 className="font-mono text-sm font-bold text-white uppercase tracking-widest">
+                  Trajectory Planner
+                </h2>
+              </div>
+              <TrajectoryPanel baseUrl="http://localhost:8000" dof={6} />
             </div>
           </div>
         );

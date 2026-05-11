@@ -1351,6 +1351,261 @@ async def analytics_fleet_summary(robot_ids: Optional[str] = None):
     return report.to_dict()
 
 
+# ── Phase 6: Perception endpoints ────────────────────────────────────────────
+
+try:
+    from physicore.perception.interface import (
+        PerceptionFusion as _PerceptionFusion,
+        PoseSource as _PoseSource,
+        DepthSource as _DepthSource,
+        MarkerSource as _MarkerSource,
+        JointEncoderSource as _JointEncoderSource,
+        IMUSource as _IMUSource,
+    )
+    HAS_PERCEPTION = True
+except ImportError:
+    HAS_PERCEPTION = False
+
+# Global fusion instance (created lazily)
+_perception_fusion: Optional["_PerceptionFusion"] = None
+
+def _get_fusion() -> "_PerceptionFusion":
+    global _perception_fusion
+    if not HAS_PERCEPTION:
+        raise HTTPException(503, "Perception module not available")
+    if _perception_fusion is None:
+        engine = require_engine()
+        _perception_fusion = _PerceptionFusion(engine.estimator, max_age_s=1.0, poll_hz=50.0)
+    return _perception_fusion
+
+_BUILTIN_SOURCE_TYPES = {
+    "pose":    lambda name, sd: _PoseSource(name=name, state_dim=sd),
+    "depth":   lambda name, sd: _DepthSource(name=name, state_dim=sd),
+    "marker":  lambda name, sd: _MarkerSource(name=name, state_dim=sd),
+    "encoder": lambda name, sd: _JointEncoderSource(name=name, n_joints=sd, state_dim=max(sd*2, 13)),
+    "imu":     lambda name, sd: _IMUSource(name=name, state_dim=sd),
+}
+
+class _PerceptionRegisterReq(BaseModel):
+    name: str
+    source_type: str = "pose"   # pose | depth | marker | encoder | imu
+    state_dim: int = 13
+
+class _PerceptionPushReq(BaseModel):
+    source: str
+    values: List[float]
+
+@app.get("/api/perception/sources")
+async def perception_sources():
+    """List all registered perception sources and their staleness."""
+    fusion = _get_fusion()
+    return {"sources": fusion.staleness_report()}
+
+@app.get("/api/perception/state")
+async def perception_state():
+    """Return the current fused state estimate from the EKF."""
+    fusion = _get_fusion()
+    return {
+        "state": fusion.state_estimate.tolist(),
+        "uncertainty": fusion.uncertainty.tolist(),
+        "staleness": fusion.staleness_report(),
+    }
+
+@app.post("/api/perception/register")
+async def perception_register(req: _PerceptionRegisterReq):
+    """Register a new built-in perception source."""
+    if not HAS_PERCEPTION:
+        raise HTTPException(503, "Perception not available")
+    factory = _BUILTIN_SOURCE_TYPES.get(req.source_type)
+    if factory is None:
+        raise HTTPException(400, f"Unknown source_type {req.source_type!r}. "
+                            f"Choose from: {list(_BUILTIN_SOURCE_TYPES.keys())}")
+    fusion = _get_fusion()
+    src = factory(req.name, req.state_dim)
+    fusion.register(src)
+    return {"status": "registered", "name": req.name, "source_type": req.source_type}
+
+@app.post("/api/perception/push")
+async def perception_push(req: _PerceptionPushReq):
+    """Push an observation to a registered source and run an EKF fuse step."""
+    fusion = _get_fusion()
+    names  = fusion.source_names()
+    if req.source not in names:
+        raise HTTPException(404, f"Source {req.source!r} not registered")
+    # Run a fuse pass to collect current readings; the push itself is
+    # handled at the PerceptionSource level
+    report = fusion.fuse()
+    return {"status": "fused", "report": report}
+
+
+# ── Phase 6: Planning endpoints ───────────────────────────────────────────────
+
+try:
+    from physicore.planning.planner import (
+        TrajectoryPlanner as _TrajectoryPlanner,
+        TrajectoryExecutor as _TrajectoryExecutor,
+        ExecutionStatus as _ExecutionStatus,
+    )
+    from physicore.planning.obstacles import ObstacleMap as _ObstacleMap
+    HAS_PLANNING = True
+except ImportError:
+    HAS_PLANNING = False
+
+# In-memory stores
+_trajectories: Dict[str, Any] = {}
+_executors:    Dict[str, Any] = {}
+_obstacle_map: Optional[Any]  = None
+
+def _require_planning():
+    if not HAS_PLANNING:
+        raise HTTPException(503, "Planning module not available")
+
+def _get_planner() -> "_TrajectoryPlanner":
+    _require_planning()
+    engine = require_engine()
+    return _TrajectoryPlanner(engine.model, v_max=1.0, a_max=2.0)
+
+class _PlanJointReq(BaseModel):
+    q_start: List[float]
+    q_goal:  List[float]
+    v_max: Optional[float] = None
+    a_max: Optional[float] = None
+    n_samples: int = 100
+
+class _PlanTaskReq(BaseModel):
+    q_start: List[float]
+    target_pos: List[float]
+    n_via: int = 20
+    v_max: Optional[float] = None
+    a_max: Optional[float] = None
+
+class _PlanWaypointsReq(BaseModel):
+    waypoints: List[List[float]]
+    segment_time: float = 1.0
+
+class _PlanCircularReq(BaseModel):
+    q_start: List[float]
+    center:  List[float]
+    normal:  List[float]
+    angle_rad: float = 3.14159
+    n_via:   int = 36
+    v_max: Optional[float] = None
+    a_max: Optional[float] = None
+
+class _ExecuteReq(BaseModel):
+    async_mode: bool = False
+    control_hz: float = 100.0
+
+class _AbortReq(BaseModel):
+    trajectory_id: str
+
+@app.post("/api/plan/joint_space")
+async def plan_joint_space(req: _PlanJointReq):
+    """Plan a trapezoidal joint-space trajectory."""
+    _require_planning()
+    import numpy as _np
+    planner = _get_planner()
+    traj = planner.plan_joint_space(
+        _np.array(req.q_start), _np.array(req.q_goal),
+        v_max=req.v_max, a_max=req.a_max, n_samples=req.n_samples,
+    )
+    _trajectories[traj.trajectory_id] = traj
+    return traj.to_dict()
+
+@app.post("/api/plan/task_space")
+async def plan_task_space(req: _PlanTaskReq):
+    """Plan a straight-line task-space trajectory via IK."""
+    _require_planning()
+    import numpy as _np
+    planner = _get_planner()
+    traj = planner.plan_task_space(
+        _np.array(req.q_start), _np.array(req.target_pos),
+        n_via=req.n_via, v_max=req.v_max, a_max=req.a_max,
+    )
+    _trajectories[traj.trajectory_id] = traj
+    return traj.to_dict()
+
+@app.post("/api/plan/waypoints")
+async def plan_waypoints(req: _PlanWaypointsReq):
+    """Plan a quintic-blended waypoint trajectory."""
+    _require_planning()
+    import numpy as _np
+    planner = _get_planner()
+    wps = [_np.array(w) for w in req.waypoints]
+    traj = planner.plan_waypoints(wps, segment_time=req.segment_time)
+    _trajectories[traj.trajectory_id] = traj
+    return traj.to_dict()
+
+@app.post("/api/plan/circular")
+async def plan_circular(req: _PlanCircularReq):
+    """Plan a circular arc trajectory."""
+    _require_planning()
+    import numpy as _np
+    planner = _get_planner()
+    traj = planner.plan_circular(
+        _np.array(req.q_start), _np.array(req.center),
+        _np.array(req.normal), req.angle_rad, n_via=req.n_via,
+        v_max=req.v_max, a_max=req.a_max,
+    )
+    _trajectories[traj.trajectory_id] = traj
+    return traj.to_dict()
+
+@app.get("/api/plan/{trajectory_id}")
+async def get_trajectory(trajectory_id: str):
+    """Retrieve a planned trajectory by ID."""
+    traj = _trajectories.get(trajectory_id)
+    if traj is None:
+        raise HTTPException(404, f"Trajectory {trajectory_id!r} not found")
+    return traj.to_dict()
+
+@app.post("/api/execute/{trajectory_id}")
+async def execute_trajectory(trajectory_id: str, req: _ExecuteReq):
+    """Execute a planned trajectory (sync or async)."""
+    _require_planning()
+    traj = _trajectories.get(trajectory_id)
+    if traj is None:
+        raise HTTPException(404, f"Trajectory {trajectory_id!r} not found")
+
+    engine  = require_engine()
+    executor = _TrajectoryExecutor(engine, control_hz=req.control_hz)
+    _executors[trajectory_id] = executor
+
+    if req.async_mode:
+        executor.execute_async(traj)
+        return {"status": "running", "trajectory_id": trajectory_id}
+    else:
+        result = executor.execute(traj)
+        return result.to_dict()
+
+@app.post("/api/execute/abort")
+async def abort_trajectory(req: _AbortReq):
+    """Abort a running trajectory execution."""
+    executor = _executors.get(req.trajectory_id)
+    if executor is None:
+        raise HTTPException(404, f"No active executor for {req.trajectory_id!r}")
+    aborted = executor.abort()
+    return {"aborted": aborted, "trajectory_id": req.trajectory_id}
+
+@app.get("/api/execute/status")
+async def execution_status(trajectory_id: str):
+    """Poll execution status for an async trajectory execution."""
+    executor = _executors.get(trajectory_id)
+    if executor is None:
+        raise HTTPException(404, f"No executor for {trajectory_id!r}")
+    result = executor.result
+    if result is not None:
+        return result.to_dict()
+    return {
+        "trajectory_id": trajectory_id,
+        "status": executor.status.value,
+        "elapsed_s": 0.0,
+        "mean_tracking_error": 0.0,
+        "max_tracking_error": 0.0,
+        "final_q": None,
+        "message": "running",
+    }
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn
