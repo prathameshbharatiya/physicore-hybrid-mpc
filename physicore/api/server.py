@@ -1606,6 +1606,267 @@ async def execution_status(trajectory_id: str):
     }
 
 
+# ── Phase 7: Org / Team endpoints ────────────────────────────────────────────
+
+try:
+    from physicore.api.org import OrgStore as _OrgStore, get_org_store as _get_org_store
+    from physicore.api.audit import AuditLog as _AuditLog, get_audit_log as _get_audit_log
+    from physicore.api.metering import UsageMetering as _UsageMetering, get_metering as _get_metering
+    HAS_MULTI_TENANT = True
+except ImportError:
+    HAS_MULTI_TENANT = False
+
+
+def _org_store() -> "_OrgStore":
+    if not HAS_MULTI_TENANT:
+        raise HTTPException(503, "Multi-tenant module not available")
+    return _get_org_store()
+
+
+def _audit() -> "_AuditLog":
+    if not HAS_MULTI_TENANT:
+        raise HTTPException(503, "Audit module not available")
+    return _get_audit_log()
+
+
+def _metering() -> "_UsageMetering":
+    if not HAS_MULTI_TENANT:
+        raise HTTPException(503, "Metering module not available")
+    return _get_metering()
+
+
+def _log_action(user_id: str, org_id: str, action: str, resource: str = "",
+                details: Optional[Dict[str, Any]] = None, status: str = "ok") -> None:
+    try:
+        _audit().log(user_id, org_id, action, resource, details or {}, status=status)
+    except Exception:
+        pass
+
+
+class _CreateOrgReq(BaseModel):
+    name: str
+    owner_id: str
+    plan: str = "free"
+
+
+class _InviteReq(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class _ChangeRoleReq(BaseModel):
+    role: str
+
+
+@app.post("/api/orgs")
+async def create_org(req: _CreateOrgReq):
+    """Create a new organization."""
+    org = _org_store().create_org(req.name, req.owner_id, req.plan)
+    _log_action(req.owner_id, org.org_id, "org.create", f"org:{org.org_id}",
+                {"name": req.name, "plan": req.plan})
+    return org.to_dict()
+
+
+@app.get("/api/orgs/{org_id}")
+async def get_org(org_id: str):
+    """Get organization details."""
+    org = _org_store().get_org(org_id)
+    if org is None:
+        raise HTTPException(404, f"Org {org_id!r} not found")
+    return org.to_dict()
+
+
+@app.post("/api/orgs/{org_id}/invite")
+async def invite_member(org_id: str, req: _InviteReq,
+                        x_user_id: Optional[str] = None):
+    """Invite a user to the org by email."""
+    invite_id = _org_store().create_invite(org_id, req.email, req.role)
+    _log_action(x_user_id or "api", org_id, "org.invite",
+                f"org:{org_id}", {"email": req.email, "role": req.role})
+    return {"invite_id": invite_id, "email": req.email, "role": req.role}
+
+
+@app.get("/api/orgs/{org_id}/members")
+async def list_members(org_id: str):
+    """List all members of an organization."""
+    members = _org_store().get_members(org_id)
+    return [m.to_dict() for m in members]
+
+
+@app.put("/api/orgs/{org_id}/members/{uid}")
+async def change_member_role(org_id: str, uid: str, req: _ChangeRoleReq,
+                             x_user_id: Optional[str] = None):
+    """Change a member's role."""
+    mem = _org_store().change_role(org_id, uid, req.role)
+    if mem is None:
+        raise HTTPException(404, f"Member {uid!r} not found in org {org_id!r}")
+    _log_action(x_user_id or "api", org_id, "org.member.role_change",
+                f"org:{org_id}/user:{uid}", {"new_role": req.role})
+    return mem.to_dict()
+
+
+@app.delete("/api/orgs/{org_id}/members/{uid}")
+async def remove_member(org_id: str, uid: str, x_user_id: Optional[str] = None):
+    """Remove a member from the organization."""
+    removed = _org_store().remove_member(org_id, uid)
+    if not removed:
+        raise HTTPException(404, f"Member {uid!r} not found")
+    _log_action(x_user_id or "api", org_id, "org.member.remove",
+                f"org:{org_id}/user:{uid}", {})
+    return {"status": "removed", "user_id": uid}
+
+
+@app.get("/api/orgs/{org_id}/usage")
+async def org_usage(org_id: str):
+    """Get robots/plugins/storage usage vs quota."""
+    store = _org_store()
+    return store.get_usage(org_id)
+
+
+# ── Billing / Metering endpoints ───────────────────────────────────────────────
+
+@app.get("/api/billing/usage")
+async def billing_usage(org_id: str = "", period: str = "month"):
+    """Current org usage summary."""
+    m = _metering()
+    summary = m.get_usage(org_id, period=period)
+    return summary.to_dict()
+
+
+@app.get("/api/billing/quota")
+async def billing_quota(org_id: str = "", resource: Optional[str] = None):
+    """Quota status per resource (or all resources if resource not specified)."""
+    m = _metering()
+    if resource:
+        return m.check_quota(org_id, resource).to_dict()
+    return {k: v.to_dict() for k, v in m.all_quotas(org_id).items()}
+
+
+@app.get("/api/billing/steps_per_day")
+async def billing_steps_per_day(org_id: str = "", days: int = 30):
+    """Step counts per day for the given org."""
+    return _metering().steps_per_day(org_id, days=days)
+
+
+# ── Audit endpoints ────────────────────────────────────────────────────────────
+
+@app.get("/api/audit/events")
+async def audit_events(org_id: str = "", user_id: Optional[str] = None,
+                       action: Optional[str] = None,
+                       limit: int = 100, offset: int = 0):
+    """Paginated audit log for an org."""
+    events = _audit().query(
+        org_id, start_time=time.time() - 90 * 86400,
+        user_id=user_id, action=action, limit=limit, offset=offset,
+    )
+    return [e.to_dict() for e in events]
+
+
+@app.get("/api/audit/export.csv")
+async def audit_export_csv(org_id: str = "", period_days: int = 30):
+    """Download audit log as CSV."""
+    from fastapi.responses import Response
+    csv_content = _audit().export_csv(org_id, period_days=period_days)
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=audit_{org_id}.csv"},
+    )
+
+
+# ── Marketplace endpoints ──────────────────────────────────────────────────────
+
+try:
+    from physicore.sdk.marketplace import MarketplaceRegistry as _MktRegistry, get_marketplace as _get_mkt
+    HAS_MARKETPLACE = True
+except ImportError:
+    HAS_MARKETPLACE = False
+
+
+def _mkt() -> "_MktRegistry":
+    if not HAS_MARKETPLACE:
+        raise HTTPException(503, "Marketplace not available")
+    return _get_mkt()
+
+
+class _InstallReq(BaseModel):
+    version: str = "1.0.0"
+    target_dir: str = "./plugins"
+
+class _RateReq(BaseModel):
+    rating: float
+    text: str = ""
+    author_id: str = "anonymous"
+
+
+@app.get("/api/marketplace/search")
+async def marketplace_search(
+    q: str = "", category: Optional[str] = None,
+    free_only: bool = False, verified_only: bool = False, limit: int = 50,
+):
+    """Search the plugin marketplace."""
+    results = _mkt().search(
+        query=q, category=category or None,
+        free_only=free_only, verified_only=verified_only, limit=limit,
+    )
+    return [r.to_dict() for r in results]
+
+
+@app.get("/api/marketplace/{plugin_id}")
+async def marketplace_get(plugin_id: str):
+    """Get marketplace entry for a specific plugin."""
+    entry = _mkt().get(plugin_id)
+    if entry is None:
+        raise HTTPException(404, f"Plugin {plugin_id!r} not found")
+    return entry.to_dict()
+
+
+@app.post("/api/marketplace/{plugin_id}/install")
+async def marketplace_install(plugin_id: str, req: _InstallReq,
+                               x_user_id: Optional[str] = None,
+                               x_org_id: Optional[str] = None):
+    """Install a marketplace plugin."""
+    try:
+        dest = _mkt().install(plugin_id, req.version, req.target_dir)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    _log_action(x_user_id or "api", x_org_id or "", "plugin.install",
+                f"plugin:{plugin_id}:{req.version}", {"target_dir": req.target_dir})
+    return {"status": "installed", "plugin_id": plugin_id,
+            "version": req.version, "path": str(dest)}
+
+
+@app.post("/api/marketplace/submit")
+async def marketplace_submit(
+    plugin_zip_b64: str = "",
+    author_id: str = "anonymous",
+    category: str = "demo",
+    price: float = 0.0,
+):
+    """Submit a plugin to the marketplace (base64-encoded zip)."""
+    import base64
+    try:
+        plugin_bytes = base64.b64decode(plugin_zip_b64)
+    except Exception:
+        raise HTTPException(400, "Invalid base64 zip data")
+    try:
+        entry = _mkt().submit(plugin_bytes, author_id=author_id,
+                              category=category, price=price)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return entry.to_dict()
+
+
+@app.post("/api/marketplace/{plugin_id}/rate")
+async def marketplace_rate(plugin_id: str, req: _RateReq):
+    """Rate a marketplace plugin."""
+    try:
+        review = _mkt().rate(plugin_id, req.author_id, req.rating, req.text)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc))
+    return review.to_dict()
+
+
 def run():
     """Entry point for physicore-server console script."""
     import uvicorn
