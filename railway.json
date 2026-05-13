@@ -4,7 +4,7 @@
     "buildCommand": "pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "uvicorn physicore.api.server:app --host 0.0.0.0 --port $PORT",
+    "startCommand": "python -m physicore.api.server",
     "restartPolicyType": "ON_FAILURE"
   }
 }
