@@ -23,14 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps
-COPY setup.py ./
+COPY setup.py README.md ./
 COPY physicore/ ./physicore/
-RUN pip install --no-cache-dir -e ".[server]" || pip install --no-cache-dir \
-    fastapi \
-    uvicorn[standard] \
-    numpy \
-    pydantic \
-    && pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[api]"
 
 # Copy built frontend into the server's static directory
 COPY --from=frontend-builder /app/dist ./dist/
