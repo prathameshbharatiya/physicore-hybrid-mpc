@@ -23,10 +23,10 @@ interface ViolationEntry {
 }
 
 interface SafetyPanelProps {
-  apiBase?: string;  // defaults to 'http://localhost:8000'
+  apiBase?: string;  // defaults to 'https://physicore-hybrid-mpc-production.up.railway.app'
 }
 
-export const SafetyPanel: React.FC<SafetyPanelProps> = ({ apiBase = 'http://localhost:8000' }) => {
+export const SafetyPanel: React.FC<SafetyPanelProps> = ({ apiBase = 'https://physicore-hybrid-mpc-production.up.railway.app' }) => {
   // State
   const [status, setStatus] = useState<SafetyStatus | null>(null);
   const [loading, setLoading] = useState(false);
@@ -268,3 +268,4 @@ export const SafetyPanel: React.FC<SafetyPanelProps> = ({ apiBase = 'http://loca
 };
 
 export default SafetyPanel;
+

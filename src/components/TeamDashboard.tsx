@@ -130,7 +130,7 @@ const TABS = ['overview', 'members', 'usage', 'audit'] as const;
 type DashTab = typeof TABS[number];
 
 const TeamDashboard: React.FC<TeamDashboardProps> = ({
-  baseUrl = 'http://localhost:8000',
+  baseUrl = 'https://physicore-hybrid-mpc-production.up.railway.app',
   userId = '',
   userEmail = '',
 }) => {
@@ -531,3 +531,4 @@ const TeamDashboard: React.FC<TeamDashboardProps> = ({
 };
 
 export default TeamDashboard;
+

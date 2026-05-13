@@ -350,7 +350,7 @@ interface PluginDashboardProps {
 }
 
 const PluginDashboard: React.FC<PluginDashboardProps> = ({
-  apiBase = 'http://localhost:8000',
+  apiBase = 'https://physicore-hybrid-mpc-production.up.railway.app',
 }) => {
   const [plugins,   setPlugins]   = useState<PluginStatus[]>([]);
   const [panelMap,  setPanelMap]  = useState<Record<string, DashboardPanelSpec[]>>({});
@@ -493,3 +493,4 @@ const PluginDashboard: React.FC<PluginDashboardProps> = ({
 };
 
 export default PluginDashboard;
+

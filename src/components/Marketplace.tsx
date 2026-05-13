@@ -284,7 +284,7 @@ function PluginModal({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const Marketplace: React.FC<MarketplaceProps> = ({
-  baseUrl = 'http://localhost:8000',
+  baseUrl = 'https://physicore-hybrid-mpc-production.up.railway.app',
   userId = '',
   installDir = './plugins',
 }) => {
@@ -458,3 +458,4 @@ const Marketplace: React.FC<MarketplaceProps> = ({
 };
 
 export default Marketplace;
+

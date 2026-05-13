@@ -37,7 +37,7 @@ interface FleetHealthResponse {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = "https://physicore-hybrid-mpc-production.up.railway.app";
 const POLL_INTERVAL_MS = 500;
 
 const PLATFORM_DYNAMICS = [
@@ -469,3 +469,4 @@ const SummaryPill: React.FC<SummaryPillProps> = ({ label, value, colorClass }) =
     </span>
   </div>
 );
+

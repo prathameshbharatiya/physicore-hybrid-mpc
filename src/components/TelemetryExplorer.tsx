@@ -503,7 +503,7 @@ interface TelemetryExplorerProps {
 }
 
 const TelemetryExplorer: React.FC<TelemetryExplorerProps> = ({
-  apiBase = 'http://localhost:8000',
+  apiBase = 'https://physicore-hybrid-mpc-production.up.railway.app',
 }) => {
   const [sessions,       setSessions]       = useState<SessionRecord[]>([]);
   const [selected,       setSelected]       = useState<SessionRecord | null>(null);
@@ -628,3 +628,4 @@ const TelemetryExplorer: React.FC<TelemetryExplorerProps> = ({
 };
 
 export default TelemetryExplorer;
+

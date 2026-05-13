@@ -93,7 +93,7 @@ function StatusBadge({ status }: { status: string }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({
-  baseUrl = 'http://localhost:8000',
+  baseUrl = 'https://physicore-hybrid-mpc-production.up.railway.app',
   dof = 6,
 }) => {
   // ── Planning mode
@@ -527,3 +527,4 @@ const TrajectoryPanel: React.FC<TrajectoryPanelProps> = ({
 };
 
 export default TrajectoryPanel;
+
