@@ -1,2 +1,13 @@
-
+fastapi
+uvicorn[standard]
+pydantic
+numpy
+scipy
+websockets
+httpx
+python-multipart
 pyyaml
+aiofiles
+starlette
+typing-extensions
+google-generativeai
